@@ -2,29 +2,52 @@
   "expo": {
     "name": "7Ei Mission Control",
     "slug": "7ei-mission-control",
-    "version": "0.1.0",
+    "version": "0.9.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "scheme": "7ei",
     "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0a",
+      "resizeMode": "contain"
+    },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ai.7ei.missioncontrol"
+      "bundleIdentifier": "ai.7ei.missioncontrol",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used for profile photos",
+        "NSPhotoLibraryUsageDescription": "Used to upload files to Knowledge Base"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0a"
       },
-      "package": "ai.7ei.missioncontrol"
+      "package": "ai.ei7.missioncontrol",
+      "versionCode": 1,
+      "permissions": ["android.permission.VIBRATE", "android.permission.RECEIVE_BOOT_COMPLETED"]
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "static"
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      ["expo-notifications", {
+        "icon": "./assets/notification-icon.png",
+        "color": "#FFB800",
+        "defaultChannel": "default"
+      }]
     ],
-    "experiments": {
-      "typedRoutes": true
-    }
+    "experiments": { "typedRoutes": true },
+    "extra": { "eas": { "projectId": "7EI_EAS_PROJECT_ID" } },
+    "owner": "arturito7ei",
+    "updates": {
+      "url": "https://u.expo.dev/7EI_EAS_PROJECT_ID"
+    },
+    "runtimeVersion": { "policy": "appVersion" }
   }
 }
