@@ -1,109 +1,127 @@
-# 7Ei Mission Control App — Technical Architecture
+# 7Ei Mission Control — Technical Architecture
 
-## Stack Decision (v1)
+## System Overview
 
+```
+┌─────────────────────────────────────────────────────┐
+│              MOBILE / WEB CLIENT                    │
+│         (React Native + Next.js web view)           │
+└───────────────────┬─────────────────────────────────┘
+                    │ REST / WebSocket
+┌───────────────────▼─────────────────────────────────┐
+│                 API GATEWAY                         │
+│            (Next.js API routes or FastAPI)          │
+└──────┬───────────────────────────────┬──────────────┘
+       │                               │
+┌──────▼──────┐               ┌────────▼────────┐
+│  AGENT      │               │  INTEGRATION    │
+│  RUNTIME    │               │  LAYER          │
+│  SERVICE    │               │  (Google, Jira, │
+│             │               │  GitHub, etc.)  │
+└──────┬──────┘               └─────────────────┘
+       │
+┌──────▼──────────────────────────┐
+│  LLM ROUTER                     │
+│  (Claude / GPT / Gemini / Grok) │
+└──────┬──────────────────────────┘
+       │
+┌──────▼──────┐
+│  KNOWLEDGE  │
+│  BASE       │
+│  (Drive /   │
+│  Obsidian / │
+│  Pinecone)  │
+└─────────────┘
+```
+
+## Tech Stack (Recommended)
+
+### Frontend
 | Layer | Technology | Rationale |
 |-------|-----------|----------|
-| Mobile | React Native + Expo | Single codebase for iOS + Android |
-| Web/Desktop | Next.js (same component library) | Shared UI components with mobile |
-| UI Components | NativeWind (Tailwind) or Tamagui | Cross-platform styling — decide in Phase 1 |
-| Backend API | Next.js API Routes | Start simple, extract if needed |
-| Auth | Supabase Auth | OAuth, email, RLS integration |
-| Database | Supabase (PostgreSQL) | Managed, real-time subscriptions, storage built-in |
-| Real-time | Supabase Realtime | Live task log, agent status updates |
-| LLM Gateway | Anthropic, OpenAI, Google APIs | Direct API calls per agent config |
-| Vector DB | Pinecone | Knowledge base semantic search |
-| Storage | Google Drive API (v1) | Knowledge base file sync |
-| Notifications | Expo Push Notifications | Mobile alerts |
+| Mobile | React Native (Expo) | Single codebase for iOS + Android |
+| Web | Next.js 15 (App Router) | Same component logic, SSR |
+| State | Zustand | Lightweight, works with RN + Next |
+| UI Kit | NativeWind + Shadcn/ui (web) | Tailwind-based consistency |
+| Real-time | Socket.io / WebSocket | Live task logs, agent status |
 
----
+### Backend
+| Layer | Technology | Rationale |
+|-------|-----------|----------|
+| API | Next.js API Routes (MVP) → FastAPI (v2) | Fast start, migrate when needed |
+| Auth | Clerk or Supabase Auth | OAuth + social login |
+| DB | Supabase (PostgreSQL) | Real-time, hosted, open-source |
+| Queue | BullMQ (Redis) | Background agent task execution |
+| File Storage | Supabase Storage + Google Drive plugin | |
 
-## System Diagram
+### AI / Agent Layer
+| Component | Technology |
+|-----------|----------|
+| Agent orchestration | Vercel AI SDK or LangChain.js |
+| LLM routing | Per-agent config (model + API key) |
+| Vector DB | Pinecone |
+| Memory | Files in Google Drive / local (7Ei_OS compatible) |
+| Skills | Loaded from skill-library GitHub repo |
 
-```
-┌──────────────────────────────────────────────────────┐
-│                   CLIENT LAYER                       │
-│  React Native (iOS/Android)  +  Next.js (Web)        │
-└──────────────────────┬───────────────────────────────┘
-                       │ REST / WebSocket
-┌──────────────────────▼───────────────────────────────┐
-│                    API LAYER                         │
-│  Next.js API Routes                                  │
-│  Auth (Supabase)                                     │
-└──────┬─────────┬──────────┬──────────┬───────────────┘
-       │         │          │          │
-┌──────▼───┐ ┌───▼───┐ ┌────▼────┐ ┌──▼──────────────────┐
-│  DB      │ │Realtime│ │  LLM   │ │  Integrations        │
-│Supabase  │ │Subs    │ │Gateway  │ │  Google Drive        │
-│PostgreSQL│ │        │ │Claude   │ │  Telegram / Gmail    │
-│          │ │        │ │GPT      │ │  Jira / GitHub       │
-│          │ │        │ │Gemini   │ │  Pinecone            │
-└──────────┘ └───────┘ └─────────┘ └──────────────────────┘
-```
-
----
+### Integrations
+| Service | Method |
+|---------|-------|
+| Google Workspace | Google OAuth + REST APIs |
+| Jira / Atlassian | REST API (API token) |
+| GitHub | REST + GraphQL API |
+| Telegram | Bot API |
+| Obsidian | File sync (MCP or Drive plugin) |
+| Pinecone | REST API |
 
 ## Data Model (Core Entities)
 
 ```
 Organisation
-  └── has many Departments
-  └── has many Projects
-  └── has many Agents
+  └── Departments[]
+        └── Teams[]
+              └── Agents[]
+                    ├── LLM config[]
+                    ├── Skills[]
+                    ├── Integrations[]
+                    └── Memory (7Ei_OS tiered)
 
-Agent
-  └── belongs to Organisation + Department
-  └── has Identity (name, avatar, personality, CV, ToR)
-  └── has LLM Config (model, API key, parameters)
-  └── has Status (idle | active | paused | stopped)
-  └── has many Skills
-  └── has many Tasks
+Project
+  ├── Organisation (owner)
+  ├── Tasks[]
+  └── KnowledgeBase
 
 Task
-  └── belongs to Agent + Project
-  └── has Status (queued | running | done | blocked | failed)
-  └── has Execution Log (live output stream)
-
-KnowledgeBase
-  └── belongs to Organisation
-  └── has many Sources (GoogleDrive | LocalFile | Obsidian | Pinecone)
+  ├── AssignedAgent
+  ├── Status (pending / running / done / blocked)
+  ├── ExecutionLog[]
+  └── CostRecord
 
 CostRecord
-  └── belongs to Organisation / Department / Agent / Project
-  └── has LLM usage data (tokens, cost, model, timestamp)
+  ├── Agent
+  ├── LLM
+  ├── Tokens (input/output)
+  └── USD equivalent
 ```
 
----
+## Agent Runtime Architecture
 
-## Agent Runtime Environments
+Agents run as background workers (BullMQ jobs):
+1. Task created → queued
+2. Worker picks up task → calls assigned LLM(s) with context
+3. Agent uses skills (bash scripts, API calls, file reads)
+4. Output streamed back via WebSocket to client
+5. Cost recorded; memory updated per 7Ei_OS protocol
 
-| Environment | How It Works |
-|-------------|-------------|
-| Cloud (default) | Agent runs as a managed process on the app's backend |
-| Phone | Agent runs via React Native process with limited capabilities |
-| Physical machine | Agent connects via SSH or MCP server on the target machine |
-| VM / Cloud instance | Agent connects to a provisioned VM via API or MCP |
+## 7Ei_OS Integration
 
----
+This app is built around the 7Ei_OS architecture:
+- Agents follow the 5-layer knowledge model (L0–L4)
+- Memory protocol (4-tier) is implemented in storage layer
+- Governance tiers enforced at API level (auto / orchestrator / human)
+- Skills loaded from `Arturito7ei/skill-library`
 
-## Security Model
-
-- API keys stored encrypted in Supabase Vault (never in client)
-- Row-Level Security (RLS) on all DB tables — users only see their org's data
-- Agent actions governed by 7Ei_OS governance tiers (auto / orchestrator / human)
-- All external integrations use OAuth 2.0 where available
-- No credentials stored in Git
-
----
-
-## Knowledge Layer Mapping
-
-The app enforces the 7Ei_OS 5-layer knowledge model:
-
-| App Concept | Knowledge Layer |
-|-------------|----------------|
-| 7Ei_OS protocols | L0 (OS) |
-| Organisation settings, integrations | L1 (Org) |
-| Agent identity, personality, CV | L2 (Agent) |
-| Project files in Knowledge Base | L3 (Project) |
-| Live task logs, current session | L4 (Session) |
+## Security
+- All API keys encrypted at rest (Supabase Vault or equivalent)
+- No credentials stored client-side
+- Agent actions logged with full audit trail
+- External comms (email, social) require human approval (Tier 3)

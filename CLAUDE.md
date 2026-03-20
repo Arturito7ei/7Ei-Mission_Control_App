@@ -2,25 +2,31 @@
 
 ## Operating System
 Follow all protocols from 7Ei_OS (github.com/Arturito7ei/7Ei_OS).
-Key protocols: memory, workflow (plan → execute → verify), governance, learning.
+Key protocols: memory, workflow, learning, principles, governance.
 
 ## This Project
-- **Purpose:** Mobile + web app for managing AI-powered virtual organisations
-- **Roadmap:** `ROADMAP.md` — follow phases in order, check exit criteria before advancing
-- **Product spec:** `PRODUCT.md` — full feature and module definition
-- **Architecture:** `ARCHITECTURE.md` — stack and data model
-- **Stack:** React Native + Expo (mobile), Next.js (web), Supabase (DB + auth + realtime)
-- **Org:** `Arturito7ei` on GitHub
+- **Purpose:** Mobile-first AI virtual office platform (iOS, Android, Web)
+- **Tech stack:** React Native (Expo) + Next.js 15, Supabase, BullMQ, Vercel AI SDK
+- **Repo:** `Arturito7ei/7Ei-Mission_Control_App`
 - **Google Drive:** https://drive.google.com/drive/folders/1Yz2DtytbF63lbKuif51gk3M2SrZRjsyq
+- **Status:** Phase 0 — Foundation
 
 ## Conventions
 - Branch prefix: `claude/<description>-<session-id>`
-- Commit scopes: `app:`, `api:`, `ui:`, `db:`, `docs:`, `fix:`
-- Never commit `.env` or API keys
-- New modules get a spec doc in `docs/modules/` before code is written
-- Architecture decisions go in `docs/decisions/ADR-NNN-title.md`
-- Check `ROADMAP.md` phase exit criteria before starting the next phase
+- Commit prefix: `mc:` for this repo
+- All module specs live in `docs/modules/`
+- Architecture decisions live in `docs/decisions/ADR-NNN-*.md`
+- Follow `ROADMAP.md` phase order — do not jump ahead
 
-## Current Phase
-Phase 0 complete. Next: Phase 1 — Skeleton.
-Phase 1 starts with: scaffold React Native + Expo project.
+## Key Files
+- `PRODUCT.md` — full feature spec and module breakdown
+- `ARCHITECTURE.md` — technical stack and system design
+- `ROADMAP.md` — iteration plan with checkboxes
+- `docs/modules/` — per-module detailed specs
+- `docs/decisions/` — Architecture Decision Records
+
+## Agent Context
+- This app implements the 7Ei_OS agent model in a product
+- Agents in the app follow the same knowledge layer architecture (L0–L4)
+- The `skill-library` repo feeds the in-app skill module (M5)
+- Arturito7EiClaude is the primary agent working on this repo

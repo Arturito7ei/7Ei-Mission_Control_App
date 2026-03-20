@@ -1,151 +1,120 @@
-# 7Ei Mission Control App — Iteration Roadmap
+# 7Ei Mission Control — Roadmap
 
-## Strategy: Dogfood-First
+## Iteration Philosophy
 
-We build the app to run 7Ei itself. Every feature is proven on our own organisation before being shipped. This keeps scope tight and quality high.
+Build the thinnest useful slice at each phase. Every phase ships something real. No big-bang releases.
 
 ---
 
-## Phase 0 — Foundation ✅
-*Goal: Define the product before touching code.*
+## Phase 0 — Foundation (NOW)
+**Goal:** Repo, product definition, architecture, and project structure in place.
 
-- [x] Elevator pitch structured into product spec (`PRODUCT.md`)
-- [x] Technical architecture defined (`ARCHITECTURE.md`)
-- [x] Iteration roadmap created (`ROADMAP.md`)
-- [x] GitHub repo bootstrapped
+- [x] Elevator pitch captured and structured
+- [x] `PRODUCT.md` — full feature spec
+- [x] `ARCHITECTURE.md` — technical stack
+- [x] `ROADMAP.md` — iteration plan
+- [x] GitHub repo scaffolded (`7Ei-Mission_Control_App`)
 - [x] Google Drive project folder linked
-- [x] ADR-001: Tech stack decision documented
-- [x] Alignment with 7Ei_OS protocols documented in `CLAUDE.md`
+- [ ] Module specs written (`docs/modules/`)
+- [ ] ADR-001: Frontend framework decision
+- [ ] ADR-002: Backend framework decision
+- [ ] ADR-003: LLM routing strategy
+
+**Deliverable:** Full project definition committed. Ready to build.
 
 ---
 
-## Phase 1 — Skeleton (MVP Shell)
-*Goal: A running app that renders the core structure. No real AI yet.*
+## Phase 1 — MVP Shell (Mobile + Web, ~4 weeks)
+**Goal:** A working app shell with one agent (Arturito) you can talk to and assign tasks.
 
-**Deliverables:**
-- [ ] React Native + Expo project scaffolded
-- [ ] Next.js web project scaffolded (shared component approach)
-- [ ] Auth: login / signup with Supabase
-- [ ] Data model: Organisation, Department, Agent entities in Supabase
-- [ ] UI: Org chart view (basic, static)
-- [ ] UI: Agent list view with status badges
-- [ ] UI: Create Agent form (name, role, department, avatar)
-- [ ] CI: GitHub Actions for lint + test on every PR
+### M1 — Org & Agent Management (basic)
+- [ ] Create organisation
+- [ ] Create agent (name, role, avatar, LLM config)
+- [ ] Org chart view (simple tree)
+- [ ] Agent status (idle / active / paused)
 
-**Exit criteria:** A logged-in user can create an organisation, add departments, and create an Arturito agent — viewable on mobile and web.
+### M2 — Chat (basic)
+- [ ] In-app chat with a single agent
+- [ ] Message history
+- [ ] Agent responds via assigned LLM API
 
----
+### M6 — Tasks (basic)
+- [ ] Create task, assign to agent
+- [ ] Simple status: pending → running → done
+- [ ] Manual execution trigger
 
-## Phase 2 — Live Agent (First AI Response)
-*Goal: One agent, one LLM, one conversation.*
+### M7 — Live Log (basic)
+- [ ] Stream agent output to a log view
+- [ ] Filter by agent
 
-**Deliverables:**
-- [ ] LLM gateway: call Claude (or GPT) with agent identity injected into system prompt
-- [ ] In-app chat: human → agent → response
-- [ ] Agent personality and CV reflected in system prompt
-- [ ] Task log: record each LLM call as a task entry
-- [ ] Cost tracking: log token usage per call
+### Infrastructure
+- [ ] Auth (Clerk or Supabase)
+- [ ] DB schema (Supabase)
+- [ ] LLM router (Claude + OpenAI to start)
+- [ ] React Native (Expo) + Next.js web shell
 
-**Exit criteria:** A user can chat with Arturito, whose responses reflect the personality and role defined in the app.
-
----
-
-## Phase 3 — Multi-Agent Org
-*Goal: Arturito spawns and manages a team.*
-
-**Deliverables:**
-- [ ] Spawn agent flow: Arturito can create a subordinate agent via UI or chat command
-- [ ] Agent-to-agent task handoff (via task queue)
-- [ ] Department structure: agents grouped by department
-- [ ] Org chart view: interactive, shows agent status live
-- [ ] Board of Advisors module: define advisor personas
-- [ ] Agent pause/stop/delete lifecycle
-
-**Exit criteria:** Arturito exists alongside at least 3 department heads. Tasks can be routed between them.
+**Deliverable:** You can open the app, create Arturito, assign him a task, and watch him execute it.
 
 ---
 
-## Phase 4 — Knowledge Base
-*Goal: Agents can read and write to a shared knowledge base.*
+## Phase 2 — Org + Knowledge (~3 weeks)
+**Goal:** Multi-agent org with a connected knowledge base.
 
-**Deliverables:**
-- [ ] Google Drive integration: connect org Drive folder
-- [ ] Folder/subfolder browser in app
-- [ ] Agent can read files from Drive and reference them in responses
-- [ ] .md file sync: Obsidian vault read access
-- [ ] Basic Pinecone integration: embed and query documents
+- [ ] M1: Multi-department org with multiple agents
+- [ ] M1: Board of Advisors module
+- [ ] M4: Google Drive integration (read/write)
+- [ ] M4: .md file support
+- [ ] M5: Skill library browser + assign skills to agents
+- [ ] M8: Basic cost tracking (tokens per agent)
 
-**Exit criteria:** An agent asked about a document stored in Drive can answer accurately from its content.
-
----
-
-## Phase 5 — Task Management + Automation
-*Goal: Plan work and watch agents execute it.*
-
-**Deliverables:**
-- [ ] In-app Kanban board (To Do / In Progress / Blocked / Done)
-- [ ] Task creation and assignment to agents
-- [ ] Live execution log with real-time output streaming
-- [ ] Basic automation: trigger action on task status change
-- [ ] Jira plugin: bidirectional sync with O7MC project
-
-**Exit criteria:** A task created in the app is executed by the assigned agent; progress is visible live in the task log.
+**Deliverable:** A full virtual org with Arturito + 3–5 specialist agents, all connected to Google Drive.
 
 ---
 
-## Phase 6 — Skill Library
-*Goal: Agents can load and use shared skills.*
+## Phase 3 — Communication + Task Automation (~3 weeks)
+**Goal:** Agents communicate and execute tasks autonomously.
 
-**Deliverables:**
-- [ ] Skill library browser (from `Arturito7ei/skill-library`)
-- [ ] GitHub sync: pull skill updates from repo
-- [ ] Assign skills to agents
-- [ ] Skill execution: agent invokes a skill during task
-- [ ] Contribute skill: create a new skill from the app and open a GitHub PR
+- [ ] M3: Telegram plugin
+- [ ] M3: Gmail integration (read; send with human approval)
+- [ ] M6: Kanban board
+- [ ] M6: Jira plugin (read/write)
+- [ ] M6: Task automation (agent → agent handoff)
+- [ ] M7: Full execution log with output expandable per task
 
-**Exit criteria:** Arturito can load the `jira-openclaw` skill and create a Jira task via the skill.
-
----
-
-## Phase 7 — Cost Centre + Admin
-*Goal: Full visibility and control over spend and access.*
-
-**Deliverables:**
-- [ ] Cost dashboard: charts by org / dept / agent / project
-- [ ] Budget thresholds and alerts
-- [ ] Monthly reset with rollover config
-- [ ] CSV and Google Sheet export
-- [ ] Admin panel: manage members, permissions, integrations
-
-**Exit criteria:** A user can see the monthly AI spend broken down by agent and set a budget cap.
+**Deliverable:** Arturito can receive a brief via Telegram, decompose it into Jira tasks, assign to specialist agents, and execute.
 
 ---
 
-## Phase 8 — Communication Hub
-*Goal: Agents communicate across channels.*
+## Phase 4 — Cost Centre + Advanced Knowledge (~2 weeks)
+**Goal:** Full observability and semantic knowledge.
 
-**Deliverables:**
-- [ ] Telegram integration: agent sends and receives via Telegram
-- [ ] Gmail integration: agent can draft and (with human approval) send emails
-- [ ] Google Meet: schedule and join meeting from app
-- [ ] Notification centre: task updates, cost warnings, agent alerts
+- [ ] M8: Full cost dashboard (org / dept / agent / project toggles)
+- [ ] M8: Budget alerts and hard stops
+- [ ] M4: Pinecone integration (vector search)
+- [ ] M4: Obsidian sync (MCP or file)
+- [ ] M9: Integrations Hub UI (connect/disconnect services)
 
----
-
-## Beyond v1
-
-- WhatsApp integration
-- Microsoft 365 environment (Teams, OneDrive, Outlook)
-- Local machine / Raspberry Pi agent runtime
-- Open-source LLM support (Ollama, local inference)
-- Multi-org / white-label mode
-- App Store + Play Store release
+**Deliverable:** Full cost visibility. Semantic search across org knowledge. Obsidian vault live.
 
 ---
 
-## Principles for Building
+## Phase 5 — Scale + Polish (~ongoing)
+**Goal:** Multi-machine agents, VM spawning, Microsoft 365, desktop app.
 
-1. **One phase at a time** — never skip. Each phase exit criteria must be met before starting the next.
-2. **Dogfood continuously** — 7Ei runs on this app from Phase 2 onwards.
-3. **Modular from day one** — integrations are plugins, not hard dependencies.
-4. **7Ei_OS first** — all agent behaviour follows the protocols in `7Ei_OS`.
+- [ ] Agent on remote machine / VM (cloud runtime)
+- [ ] Microsoft 365 integration (OneDrive, Teams, Outlook)
+- [ ] Desktop app (Tauri or Electron)
+- [ ] Agent marketplace (import community agents)
+- [ ] Public skill library contributions
+
+---
+
+## Decisions Needed Before Phase 1 Starts
+
+| Decision | Options | Owner |
+|----------|---------|-------|
+| Frontend framework | Expo (RN) + Next.js vs Flutter + Next.js | Human |
+| Backend | Next.js API Routes vs FastAPI | Human |
+| Auth provider | Clerk vs Supabase Auth | Human |
+| First LLM | Claude only vs Claude + OpenAI | Human |
+| Hosting | Vercel + Supabase vs self-hosted | Human |
