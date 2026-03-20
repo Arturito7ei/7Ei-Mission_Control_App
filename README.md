@@ -23,8 +23,7 @@ You (Human)
 ```
 
 Each agent can be assigned:
-- A name and avatar
-- A personality, CV/profile, and terms of reference
+- A name, avatar, role, personality, CV/profile, and terms of reference
 - One or many LLMs (Claude, GPT, Gemini, Grok, others) via API
 - A specific skill set from the shared skill library
 - Access to tools and integrations
@@ -41,36 +40,6 @@ Each agent can be assigned:
 | **Cost Centre** | API usage dashboard — per org, department, agent, or project. |
 | **Skill Library** | Browse, sync, and personalise skills from GitHub. |
 | **Project Management** | Kanban boards + Jira plugin. |
-
-## Repository Structure
-
-```
-7Ei-Mission_Control_App/
-├── README.md                  # This file
-├── PRD.md                     # Product Requirements Document
-├── ITERATION_PLAN.md          # Sprint-by-sprint build plan
-├── docs/
-│   ├── architecture/          # System design, ADRs
-│   ├── modules/               # Per-module specs
-│   └── integrations/          # Third-party integration docs
-├── app/                       # React Native app source
-├── web/                       # Next.js web desktop source
-├── backend/                   # API + agent runtime backend
-└── skills/                    # Skill library (git submodule → skill-library)
-```
-
-## Tech Stack (Proposed — Confirmed in Sprint 0)
-
-| Layer | Technology |
-|-------|------------|
-| Mobile | React Native (iOS + Android) |
-| Web Desktop | Next.js |
-| Backend/API | Node.js + TypeScript |
-| Agent Runtime | Claude API (primary), modular LLM adapters |
-| Database | SQLite (local) + Supabase (cloud) |
-| Knowledge | Google Drive API, Obsidian MCP, Pinecone |
-| Auth | Google OAuth |
-| CI/CD | GitHub Actions + Vercel |
 
 ## Operating System
 
