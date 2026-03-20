@@ -10,7 +10,7 @@ import { AgentAvatar } from '../../components/AgentAvatar'
 
 export default function HomeScreen() {
   const router = useRouter()
-  const { currentOrg, orgs, agents, tasks, setOrgs, setCurrentOrg, setAgents, setTasks, departments, setDepartments } = useStore()
+  const { currentOrg, orgs, agents, tasks, setOrgs, setCurrentOrg, setAgents, setTasks, departments, setDepartments, setProjects } = useStore()
   const [refreshing, setRefreshing] = useState(false)
 
   const loadData = useCallback(async () => {
@@ -20,14 +20,13 @@ export default function HomeScreen() {
       if (orgList.length > 0) {
         const org = orgList[0]
         setCurrentOrg(org)
-        const [{ agents: agentList }, { tasks: taskList }, { departments: deptList }] = await Promise.all([
+        const [{ agents: agentList }, { tasks: taskList }, { departments: deptList }, { projects: projList }] = await Promise.all([
           api.agents.list(org.id),
           api.tasks.list(org.id),
           api.orgs.departments.list(org.id),
+          api.projects.list(org.id),
         ])
-        setAgents(agentList)
-        setTasks(taskList)
-        setDepartments(deptList)
+        setAgents(agentList); setTasks(taskList); setDepartments(deptList); setProjects(projList)
       }
     } catch (e) { console.error(e) }
   }, [])
@@ -37,17 +36,16 @@ export default function HomeScreen() {
 
   const activeAgents = agents.filter(a => a.status === 'active')
   const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress')
-  const doneTasks = tasks.filter(t => t.status === 'done')
   const totalCost = tasks.reduce((s, t) => s + (t.costUsd ?? 0), 0)
 
   if (!currentOrg) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emoji}>🏢</Text>
+        <Text style={styles.bigEmoji}>🏢</Text>
         <Text style={styles.emptyTitle}>No organisation yet</Text>
         <Text style={styles.emptySubtitle}>Create your first org to get started</Text>
-        <TouchableOpacity style={styles.createBtn} onPress={() => router.push('/org/create')}>
-          <Text style={styles.createBtnText}>Create Organisation</Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/org/create')}>
+          <Text style={styles.primaryBtnText}>Create Organisation</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.push('/onboarding')}>
           <Text style={styles.tourLink}>Take a tour first →</Text>
@@ -62,12 +60,12 @@ export default function HomeScreen() {
       contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent} />}
     >
-      {/* Org header */}
+      {/* Org header with switcher */}
       <View style={styles.orgHeader}>
-        <View>
+        <TouchableOpacity style={styles.orgNameBtn} onPress={() => router.push('/org/switch')}>
           <Text style={styles.orgName}>{currentOrg.name}</Text>
-          <Text style={styles.orgSub}>{agents.length} agents · {departments.length} depts · {tasks.length} tasks</Text>
-        </View>
+          <Text style={styles.switchHint}>↕</Text>
+        </TouchableOpacity>
         <View style={styles.orgActions}>
           <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/org-chart')}>
             <Text style={styles.iconBtnText}>📊</Text>
@@ -77,25 +75,14 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      <Text style={styles.orgSub}>{agents.length} agents · {departments.length} depts · {tasks.length} tasks</Text>
 
-      {/* Stats row */}
+      {/* Stats */}
       <View style={styles.statsRow}>
-        <Card style={styles.statCard}>
-          <Text style={styles.statNum}>{agents.length}</Text>
-          <Text style={styles.statLabel}>Agents</Text>
-        </Card>
-        <Card style={styles.statCard}>
-          <Text style={[styles.statNum, { color: Colors.active }]}>{activeAgents.length}</Text>
-          <Text style={styles.statLabel}>Active</Text>
-        </Card>
-        <Card style={styles.statCard}>
-          <Text style={[styles.statNum, { color: Colors.warning }]}>{pendingTasks.length}</Text>
-          <Text style={styles.statLabel}>In Progress</Text>
-        </Card>
-        <Card style={styles.statCard}>
-          <Text style={[styles.statNum, { color: Colors.accent }]}>${totalCost.toFixed(3)}</Text>
-          <Text style={styles.statLabel}>Spent</Text>
-        </Card>
+        <Card style={styles.statCard}><Text style={styles.statNum}>{agents.length}</Text><Text style={styles.statLabel}>Agents</Text></Card>
+        <Card style={styles.statCard}><Text style={[styles.statNum, { color: Colors.active }]}>{activeAgents.length}</Text><Text style={styles.statLabel}>Active</Text></Card>
+        <Card style={styles.statCard}><Text style={[styles.statNum, { color: Colors.warning }]}>{pendingTasks.length}</Text><Text style={styles.statLabel}>In Progress</Text></Card>
+        <Card style={styles.statCard}><Text style={[styles.statNum, { color: Colors.accent }]}>${totalCost.toFixed(3)}</Text><Text style={styles.statLabel}>Spent</Text></Card>
       </View>
 
       {/* Agent squad */}
@@ -103,9 +90,7 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Agent Squad</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/agents')}>
-              <Text style={styles.sectionLink}>See all →</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/agents')}><Text style={styles.sectionLink}>See all →</Text></TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {agents.slice(0, 8).map(agent => (
@@ -128,9 +113,7 @@ export default function HomeScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Activity</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/tasks')}>
-              <Text style={styles.sectionLink}>See all →</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/tasks')}><Text style={styles.sectionLink}>See all →</Text></TouchableOpacity>
           </View>
           {tasks.slice(0, 4).map(task => (
             <Card key={task.id} style={styles.taskCard}>
@@ -138,9 +121,7 @@ export default function HomeScreen() {
                 <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
                 <StatusBadge status={task.status} />
               </View>
-              {task.costUsd != null && (
-                <Text style={styles.taskCost}>${task.costUsd.toFixed(5)} · {task.tokensUsed?.toLocaleString()} tok</Text>
-              )}
+              {task.costUsd != null && <Text style={styles.taskCost}>${task.costUsd.toFixed(5)} · {task.tokensUsed?.toLocaleString()} tok</Text>}
             </Card>
           ))}
         </View>
@@ -154,9 +135,11 @@ export default function HomeScreen() {
             { label: '🤖 New Agent', path: '/agents/create' },
             { label: '💼 New Project', path: '/projects/create' },
             { label: '📊 Org Chart', path: '/org-chart' },
-            { label: '📚 Knowledge', path: '/(tabs)/knowledge' },
             { label: '⚡ Skills', path: '/skills' },
+            { label: '🔗 Jira', path: '/jira' },
             { label: '📬 Comms', path: '/(tabs)/comms' },
+            { label: '💸 Usage', path: '/usage' },
+            { label: '🏢 Switch Org', path: '/org/switch' },
           ].map(({ label, path }) => (
             <TouchableOpacity key={path} style={styles.quickBtn} onPress={() => router.push(path as any)}>
               <Text style={styles.quickBtnText}>{label}</Text>
@@ -172,15 +155,17 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: Colors.bg },
   content: { padding: Space.lg, gap: Space.lg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg, padding: Space.xl, gap: Space.md },
-  emoji: { fontSize: 56 },
+  bigEmoji: { fontSize: 56 },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: Colors.text },
   emptySubtitle: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center' },
-  createBtn: { backgroundColor: Colors.accent, paddingHorizontal: Space.xl, paddingVertical: Space.md, borderRadius: Radius.md, marginTop: Space.md },
-  createBtnText: { fontSize: 15, fontWeight: '700', color: '#000' },
+  primaryBtn: { backgroundColor: Colors.accent, paddingHorizontal: Space.xl, paddingVertical: Space.md, borderRadius: Radius.md, marginTop: Space.md },
+  primaryBtnText: { fontSize: 15, fontWeight: '700', color: '#000' },
   tourLink: { fontSize: 14, color: Colors.accent, marginTop: Space.sm },
   orgHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  orgNameBtn: { flexDirection: 'row', alignItems: 'center', gap: Space.xs },
   orgName: { fontSize: 26, fontWeight: '800', color: Colors.text },
-  orgSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
+  switchHint: { fontSize: 18, color: Colors.textMuted, marginTop: 2 },
+  orgSub: { fontSize: 13, color: Colors.textSecondary, marginTop: -Space.sm },
   orgActions: { flexDirection: 'row', gap: Space.sm },
   iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
   iconBtnText: { fontSize: 16 },
