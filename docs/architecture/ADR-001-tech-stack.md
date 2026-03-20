@@ -10,7 +10,7 @@ We need to choose the core technology stack for:
 1. Mobile app (iOS + Android)
 2. Web desktop app
 3. Backend API + agent runtime
-4. Database
+4. Database and storage
 
 ## Decision
 
@@ -35,10 +35,11 @@ We need to choose the core technology stack for:
 
 ## Consequences
 
-- React Native components can be shared with Next.js via a shared `packages/ui` library
+- React Native components can share logic with Next.js via a shared `packages/ui` library
 - TypeScript end-to-end reduces runtime bugs
 - Google OAuth requires an approved Google Cloud project
 - SQLite means offline mode works out of the box
+- Supabase sync is optional — app works fully offline-first
 
 ## Review Date
 
