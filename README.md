@@ -1,52 +1,54 @@
 # 7Ei Mission Control App
 
-A modular virtual office — orchestrated by AI agents, managed from your phone.
+A modular virtual office in your pocket. Spin up an AI organisation with a Chief of Staff agent and grow it modularly — adding departments, tools, integrations, and cloud agents as needed.
 
-## What This Is
+## Stack
 
-7Ei Mission Control is a mobile-first (iOS + Android) application that lets you spin up and operate a complete virtual organisation from your phone. You start with one AI agent (Arturito, Chief of Staff) and grow modularly — adding departments, agents, tools, knowledge bases, and cloud infrastructure as you need them.
+| Layer | Technology |
+|-------|----------|
+| Mobile | React Native + Expo SDK 51 |
+| Web | Next.js 15 (App Router) |
+| Backend | Node.js + TypeScript + Fastify |
+| Database | SQLite (dev) / Turso (prod) |
+| Auth | Clerk (Google OAuth) |
+| LLM | Anthropic Claude (streaming via WebSocket) |
+| Monorepo | npm workspaces |
 
-A web desktop view mirrors the mobile experience for power users.
+## Modules
 
-## Core Concept
+| Module | Status |
+|--------|--------|
+| Org Manager (create org, departments, grid view) | ✅ |
+| Agent Studio (create/configure/chat with agents) | ✅ |
+| Agent Templates (Arturito, Dept heads, Silver Board) | ✅ |
+| Org Chart (visual hierarchy) | ✅ |
+| Task Log (live feed, filters, cost details) | ✅ |
+| Cost Centre (charts by agent / day / period) | ✅ |
+| Kanban Board (per project, 4 columns) | ✅ |
+| Skill Library (browse, sync from GitHub, assign) | ✅ |
+| Knowledge Base (Google Drive integration) | ✅ (structure) |
+| Web Dashboard (sidebar, agents, tasks, costs) | ✅ |
+| Communications Hub (Telegram, Gmail) | 🔲 Sprint 7 |
 
+## Quick Start
+
+See `docs/SPRINT-STATUS.md` for detailed setup instructions.
+
+```bash
+# Backend
+cd backend && cp .env.example .env  # add your keys
+npm install && npm run dev
+
+# Mobile
+cd app && cp .env.example .env.local  # add Clerk key
+npm install && npx expo start
+
+# Web
+cd web && cp .env.example .env.local  # add Clerk keys
+npm install && npm run dev
 ```
-You (Human)
-  └── Arturito (Chief of Staff / Master Orchestrator)
-        ├── Head of Development
-        ├── Head of Marketing
-        ├── Head of Operations
-        ├── Head of Finance
-        ├── Head of R&D
-        ├── Silver Board of Advisors (10+ expert personas)
-        └── [Any custom department — modular]
-```
 
-Each agent can be assigned:
-- A name, avatar, role, personality, CV/profile, and terms of reference
-- One or many LLMs (Claude, GPT, Gemini, Grok, others) via API
-- A specific skill set from the shared skill library
-- Access to tools and integrations
-
-## Key Modules
-
-| Module | Description |
-|--------|-------------|
-| **Org Manager** | Create orgs, projects, teams. Grid and org chart views. |
-| **Agent Studio** | Create, configure, pause, and delete agents. Assign LLMs and skills. |
-| **Communications Hub** | In-app chat, Google Chat/Meet, email, Telegram, WhatsApp plugins. |
-| **Knowledge Base** | Google Drive, OneDrive, Dropbox, Obsidian, Pinecone — modular. |
-| **Task & Execution Log** | Live task feed, filter by agent and status. |
-| **Cost Centre** | API usage dashboard — per org, department, agent, or project. |
-| **Skill Library** | Browse, sync, and personalise skills from GitHub. |
-| **Project Management** | Kanban boards + Jira plugin. |
-
-## Operating System
-
-All agents follow protocols from [7Ei_OS](https://github.com/Arturito7ei/7Ei_OS).
-
-## Status
-
-🟡 **Sprint 0 — Foundation** (current)
-
-See `ITERATION_PLAN.md` for the full roadmap.
+## Org
+- **GitHub:** [Arturito7ei](https://github.com/Arturito7ei)
+- **OS:** Follows [7Ei_OS](https://github.com/Arturito7ei/7Ei_OS) protocols
+- **Owner:** arturito@7ei.ai
