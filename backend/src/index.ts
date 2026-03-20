@@ -7,6 +7,10 @@ import { setupDatabase } from './db/setup'
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, knowledgeRoutes } from './routes/all'
 import { commsRoutes } from './routes/comms'
 import { notificationRoutes } from './routes/notifications'
+import { jiraRoutes } from './routes/jira'
+import { memoryRoutes } from './routes/memory'
+import { multiOrgRoutes } from './routes/multi-org'
+import { usageRoutes } from './middleware/ratelimit'
 
 const app = Fastify({ logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' } })
 
@@ -18,7 +22,6 @@ async function start() {
   await app.register(websocket)
   await app.register(clerkPlugin)
   await setupDatabase()
-
   await app.register(orgRoutes)
   await app.register(agentRoutes)
   await app.register(taskRoutes)
@@ -28,16 +31,18 @@ async function start() {
   await app.register(knowledgeRoutes)
   await app.register(commsRoutes)
   await app.register(notificationRoutes)
-
-  app.get('/health', async () => ({ status: 'ok', version: '0.3.0', ts: new Date().toISOString() }))
+  await app.register(jiraRoutes)
+  await app.register(memoryRoutes)
+  await app.register(multiOrgRoutes)
+  await app.register(usageRoutes)
+  app.get('/health', async () => ({ status: 'ok', version: '0.4.0', ts: new Date().toISOString() }))
   app.setErrorHandler((error, _req, reply) => {
     app.log.error(error)
     reply.code(error.statusCode ?? 500).send({ error: error.message ?? 'Internal server error' })
   })
-
   const port = Number(process.env.PORT) || 3001
   await app.listen({ port, host: '0.0.0.0' })
-  console.log(`🚀 7Ei backend → http://localhost:${port}`)
+  console.log(`\ud83d\ude80 7Ei backend \u2192 http://localhost:${port}`)
 }
 
 start().catch(err => { console.error(err); process.exit(1) })
