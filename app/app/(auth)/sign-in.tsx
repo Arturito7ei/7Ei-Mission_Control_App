@@ -1,6 +1,7 @@
 import { useOAuth } from '@clerk/clerk-expo'
 import { useRouter } from 'expo-router'
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native'
+import { Colors, Space, Radius } from '../../constants/colors'
 
 export default function SignIn() {
   const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' })
@@ -20,19 +21,34 @@ export default function SignIn() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>7Ei Mission Control</Text>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.badge}>
+        <Text style={styles.badgeText}>7Ei</Text>
+      </View>
+      <Text style={styles.title}>Mission Control</Text>
       <Text style={styles.subtitle}>Your modular virtual office</Text>
-      <TouchableOpacity style={styles.button} onPress={handleSignIn}>
+      <View style={styles.spacer} />
+      <Text style={styles.tagline}>Spin up an AI org.{"\n"}Run it from your phone.</Text>
+      <View style={styles.spacer} />
+      <TouchableOpacity style={styles.button} onPress={handleSignIn} activeOpacity={0.85}>
+        <Text style={styles.googleIcon}>G</Text>
         <Text style={styles.buttonText}>Continue with Google</Text>
       </TouchableOpacity>
+      <Text style={styles.terms}>By continuing you agree to our Terms of Service</Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#0a0a0a' },
-  title: { fontSize: 28, fontWeight: '700', color: '#ffffff', marginBottom: 8 },
-  subtitle: { fontSize: 16, color: '#888888', marginBottom: 48 },
-  button: { backgroundColor: '#ffffff', paddingHorizontal: 32, paddingVertical: 14, borderRadius: 8 },
-  buttonText: { fontSize: 16, fontWeight: '600', color: '#0a0a0a' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl, backgroundColor: Colors.bg },
+  badge: { width: 72, height: 72, borderRadius: 20, backgroundColor: Colors.accent, alignItems: 'center', justifyContent: 'center', marginBottom: Space.lg },
+  badgeText: { fontSize: 28, fontWeight: '800', color: '#000' },
+  title: { fontSize: 32, fontWeight: '800', color: Colors.text, letterSpacing: -0.5 },
+  subtitle: { fontSize: 16, color: Colors.textSecondary, marginTop: Space.xs },
+  spacer: { height: Space.xxl },
+  tagline: { fontSize: 22, fontWeight: '700', color: Colors.text, textAlign: 'center', lineHeight: 32 },
+  button: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.text, paddingHorizontal: Space.xl, paddingVertical: Space.md + 2, borderRadius: Radius.md, gap: Space.sm, width: '100%', justifyContent: 'center' },
+  googleIcon: { fontSize: 16, fontWeight: '800', color: '#4285F4' },
+  buttonText: { fontSize: 16, fontWeight: '600', color: '#000' },
+  terms: { fontSize: 12, color: Colors.textMuted, marginTop: Space.lg, textAlign: 'center' },
 })
