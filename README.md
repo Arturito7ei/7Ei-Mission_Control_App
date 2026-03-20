@@ -1,34 +1,83 @@
 # 7Ei Mission Control App
 
-A modular virtual office platform for managing AI agent organisations — from your phone.
+A modular virtual office — orchestrated by AI agents, managed from your phone.
 
 ## What This Is
 
-7Ei Mission Control is a mobile-first (iOS + Android) app with a web/desktop companion view. It lets you build, manage, and operate a full AI-powered virtual organisation: agents, departments, knowledge, tasks, and costs — all from one interface.
+7Ei Mission Control is a mobile-first (iOS + Android) application that lets you spin up and operate a complete virtual organisation from your phone. You start with one AI agent (Arturito, Chief of Staff) and grow modularly — adding departments, agents, tools, knowledge bases, and cloud infrastructure as you need them.
 
-The chief agent is **Arturito** — a master orchestrator who can spawn and manage an entire org: development, marketing, operations, finance, R&D, and a modular board of advisors.
+A web desktop view mirrors the mobile experience for power users.
 
-## Quick Links
+## Core Concept
 
-- **Product Definition:** `PRODUCT.md` — full feature spec and module breakdown
-- **Architecture:** `ARCHITECTURE.md` — technical stack and system design
-- **Roadmap:** `ROADMAP.md` — iteration plan (MVP → v1 → v2)
-- **OS Layer:** [7Ei_OS](https://github.com/Arturito7ei/7Ei_OS) — agent protocols this app is built around
+```
+You (Human)
+  └── Arturito (Chief of Staff / Master Orchestrator)
+        ├── Head of Development
+        ├── Head of Marketing
+        ├── Head of Operations
+        ├── Head of Finance
+        ├── Head of R&D
+        ├── Silver Board of Advisors (10+ expert personas)
+        └── [Any custom department — modular]
+```
 
-## Repo Structure
+Each agent can be assigned:
+- A name and avatar
+- A personality, CV/profile, and terms of reference
+- One or many LLMs (Claude, GPT, Gemini, Grok, others) via API
+- A specific skill set from the shared skill library
+- Access to tools and integrations
+
+## Key Modules
+
+| Module | Description |
+|--------|-------------|
+| **Org Manager** | Create orgs, projects, teams. Grid and org chart views. |
+| **Agent Studio** | Create, configure, pause, and delete agents. Assign LLMs and skills. |
+| **Communications Hub** | In-app chat, Google Chat/Meet, email, Telegram, WhatsApp plugins. |
+| **Knowledge Base** | Google Drive, OneDrive, Dropbox, Obsidian, Pinecone — modular. |
+| **Task & Execution Log** | Live task feed, filter by agent and status. |
+| **Cost Centre** | API usage dashboard — per org, department, agent, or project. |
+| **Skill Library** | Browse, sync, and personalise skills from GitHub. |
+| **Project Management** | Kanban boards + Jira plugin. |
+
+## Repository Structure
 
 ```
 7Ei-Mission_Control_App/
-├── README.md
-├── PRODUCT.md           # Full product definition
-├── ARCHITECTURE.md      # Technical architecture
-├── ROADMAP.md           # Iteration plan
-├── CLAUDE.md            # Agent instructions for working on this repo
-└── docs/
-    ├── modules/         # Per-module specs
-    └── decisions/       # ADRs
+├── README.md                  # This file
+├── PRD.md                     # Product Requirements Document
+├── ITERATION_PLAN.md          # Sprint-by-sprint build plan
+├── docs/
+│   ├── architecture/          # System design, ADRs
+│   ├── modules/               # Per-module specs
+│   └── integrations/          # Third-party integration docs
+├── app/                       # React Native app source
+├── web/                       # Next.js web desktop source
+├── backend/                   # API + agent runtime backend
+└── skills/                    # Skill library (git submodule → skill-library)
 ```
+
+## Tech Stack (Proposed — Confirmed in Sprint 0)
+
+| Layer | Technology |
+|-------|------------|
+| Mobile | React Native (iOS + Android) |
+| Web Desktop | Next.js |
+| Backend/API | Node.js + TypeScript |
+| Agent Runtime | Claude API (primary), modular LLM adapters |
+| Database | SQLite (local) + Supabase (cloud) |
+| Knowledge | Google Drive API, Obsidian MCP, Pinecone |
+| Auth | Google OAuth |
+| CI/CD | GitHub Actions + Vercel |
+
+## Operating System
+
+All agents follow protocols from [7Ei_OS](https://github.com/Arturito7ei/7Ei_OS).
 
 ## Status
 
-`[PHASE 0 — FOUNDATION]` — Product definition, architecture, and roadmap in place. Building begins next.
+🟡 **Sprint 0 — Foundation** (current)
+
+See `ITERATION_PLAN.md` for the full roadmap.
