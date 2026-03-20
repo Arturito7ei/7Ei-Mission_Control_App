@@ -20,7 +20,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export interface Org { id: string; name: string; description?: string; logoUrl?: string; ownerId: string; createdAt: string }
+export interface Org { id: string; name: string; description?: string; logoUrl?: string; ownerId: string; createdAt: string; agentCount?: number; activeAgents?: number; taskCount?: number; pendingTasks?: number }
 export interface Department { id: string; orgId: string; name: string; createdAt: string }
 export interface Agent { id: string; orgId: string; departmentId?: string; name: string; role: string; personality?: string; cv?: string; termsOfReference?: string; llmModel: string; skills: string[]; status: string; avatarEmoji: string; agentType: string; advisorPersona?: string; createdAt: string }
 export interface Message { id: string; agentId: string; taskId?: string; role: string; content: string; createdAt: string; agentName?: string; agentEmoji?: string }
@@ -32,14 +32,19 @@ export interface CostData { agentId?: string; agentName?: string; avatarEmoji?: 
 export interface Notification { id: string; type: string; title: string; body: string; agentEmoji: string; agentName: string; cost?: number; timestamp: string }
 export interface GmailThread { id: string; messages: GmailMessage[] }
 export interface GmailMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; snippet: string; body: string }
+export interface JiraIssue { id: string; key: string; summary: string; status?: string; priority?: string; issueType?: string; assignee?: string; created: string; updated: string; url?: string }
+export interface MemoryEntry { key: string; value: string; createdAt: string; updatedAt: string }
+export interface UsageStats { requestsThisMinute: number; tokensToday: number; costToday: number; concurrentTasks: number; limits: Record<string, number> }
 
 export const api = {
   orgs: {
     list: () => request<{ orgs: Org[] }>('/api/orgs'),
+    listForSwitch: () => request<{ orgs: Org[] }>('/api/orgs/switch/list'),
     create: (d: { name: string; description?: string }) => request<{ org: Org }>('/api/orgs', { method: 'POST', body: JSON.stringify(d) }),
     get: (id: string) => request<{ org: Org }>(`/api/orgs/${id}`),
     update: (id: string, d: Partial<Org>) => request(`/api/orgs/${id}`, { method: 'PATCH', body: JSON.stringify(d) }),
     delete: (id: string) => request(`/api/orgs/${id}`, { method: 'DELETE' }),
+    duplicate: (id: string, name?: string) => request<{ orgId: string; name: string; agentsCopied: number }>(`/api/orgs/${id}/duplicate`, { method: 'POST', body: JSON.stringify({ name }) }),
     departments: {
       list: (orgId: string) => request<{ departments: Department[] }>(`/api/orgs/${orgId}/departments`),
       create: (orgId: string, name: string) => request<{ department: Department }>(`/api/orgs/${orgId}/departments`, { method: 'POST', body: JSON.stringify({ name }) }),
@@ -57,7 +62,15 @@ export const api = {
     messages: (id: string) => request<{ messages: Message[] }>(`/api/agents/${id}/messages`),
     assignSkill: (agentId: string, skillId: string) => request(`/api/agents/${agentId}/skills`, { method: 'POST', body: JSON.stringify({ skillId }) }),
     chat: (id: string, input: string, history?: Array<{ role: string; content: string }>) =>
-      request<{ output: string; taskId: string; tokensUsed: number; costUsd: number }>(`/api/agents/${id}/chat`, { method: 'POST', body: JSON.stringify({ input, history }) }),
+      request<{ output: string; taskId: string; tokensUsed: number; costUsd: number; memorySaved?: Record<string, string> }>(`/api/agents/${id}/chat`, { method: 'POST', body: JSON.stringify({ input, history }) }),
+    transfer: (agentId: string, targetOrgId: string) => request(`/api/agents/${agentId}/transfer`, { method: 'POST', body: JSON.stringify({ targetOrgId }) }),
+    clone: (agentId: string, targetOrgId: string) => request<{ agent: Agent }>(`/api/agents/${agentId}/clone`, { method: 'POST', body: JSON.stringify({ targetOrgId }) }),
+    memory: {
+      get: (agentId: string) => request<{ memory: Record<string, MemoryEntry>; count: number }>(`/api/agents/${agentId}/memory`),
+      set: (agentId: string, key: string, value: string) => request(`/api/agents/${agentId}/memory`, { method: 'POST', body: JSON.stringify({ key, value }) }),
+      delete: (agentId: string, key: string) => request(`/api/agents/${agentId}/memory/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+      clear: (agentId: string) => request(`/api/agents/${agentId}/memory`, { method: 'DELETE' }),
+    },
   },
   tasks: {
     list: (orgId: string, filters?: { agentId?: string; status?: string; projectId?: string }) => {
@@ -111,6 +124,26 @@ export const api = {
   notifications: {
     register: (userId: string, token: string) => request('/api/notifications/register', { method: 'POST', body: JSON.stringify({ userId, token }) }),
     list: (orgId: string) => request<{ notifications: Notification[] }>(`/api/orgs/${orgId}/notifications`),
+  },
+  jira: {
+    connect: (orgId: string, d: { domain: string; email: string; apiToken: string; defaultProjectKey?: string }) =>
+      request<{ ok: boolean; jiraUser: string }>(`/api/orgs/${orgId}/jira/connect`, { method: 'POST', body: JSON.stringify(d) }),
+    status: (orgId: string) => request<{ connected: boolean; domain?: string; defaultProjectKey?: string }>(`/api/orgs/${orgId}/jira/status`),
+    disconnect: (orgId: string) => request(`/api/orgs/${orgId}/jira/connect`, { method: 'DELETE' }),
+    issues: (orgId: string, filters?: { projectKey?: string; status?: string; maxResults?: number }) => {
+      const p = new URLSearchParams(Object.fromEntries(Object.entries(filters ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])))
+      return request<{ issues: JiraIssue[]; total: number }>(`/api/orgs/${orgId}/jira/issues?${p}`)
+    },
+    createIssue: (orgId: string, d: { summary: string; description?: string; issueType?: string; priority?: string; agentId?: string }) =>
+      request<{ issue: { id: string; key: string; url: string } }>(`/api/orgs/${orgId}/jira/issues`, { method: 'POST', body: JSON.stringify(d) }),
+    addComment: (orgId: string, key: string, body: string) => request(`/api/orgs/${orgId}/jira/issues/${key}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+    transitions: (orgId: string, key: string) => request<{ transitions: any[] }>(`/api/orgs/${orgId}/jira/issues/${key}/transitions`),
+    transition: (orgId: string, key: string, transitionId: string) => request(`/api/orgs/${orgId}/jira/issues/${key}/transitions`, { method: 'POST', body: JSON.stringify({ transitionId }) }),
+    sync: (orgId: string, agentId: string, projectKey?: string) => request<{ synced: number }>(`/api/orgs/${orgId}/jira/sync`, { method: 'POST', body: JSON.stringify({ agentId, projectKey }) }),
+    fromTask: (orgId: string, taskId: string) => request<{ issue: { key: string; url: string } }>(`/api/orgs/${orgId}/jira/from-task/${taskId}`, { method: 'POST' }),
+  },
+  usage: {
+    get: (orgId: string) => request<{ usage: UsageStats }>(`/api/orgs/${orgId}/usage`),
   },
 }
 
