@@ -22,7 +22,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export interface Org { id: string; name: string; description?: string; logoUrl?: string; ownerId: string; createdAt: string; agentCount?: number; activeAgents?: number; taskCount?: number; pendingTasks?: number }
 export interface Department { id: string; orgId: string; name: string; createdAt: string }
-export interface Agent { id: string; orgId: string; departmentId?: string; name: string; role: string; personality?: string; cv?: string; termsOfReference?: string; llmModel: string; skills: string[]; status: string; avatarEmoji: string; agentType: string; advisorPersona?: string; createdAt: string }
+export interface Agent { id: string; orgId: string; departmentId?: string; name: string; role: string; personality?: string; cv?: string; termsOfReference?: string; llmModel: string; llmProvider: string; skills: string[]; status: string; avatarEmoji: string; agentType: string; advisorPersona?: string; createdAt: string }
 export interface Message { id: string; agentId: string; taskId?: string; role: string; content: string; createdAt: string; agentName?: string; agentEmoji?: string }
 export interface Task { id: string; agentId: string; orgId: string; projectId?: string; title: string; input?: string; output?: string; status: string; priority: string; kanbanColumn: string; tokensUsed?: number; costUsd?: number; durationMs?: number; llmModel?: string; createdAt: string }
 export interface Project { id: string; orgId: string; name: string; description?: string; createdAt: string }
@@ -33,8 +33,11 @@ export interface Notification { id: string; type: string; title: string; body: s
 export interface GmailThread { id: string; messages: GmailMessage[] }
 export interface GmailMessage { id: string; threadId: string; from: string; to: string; subject: string; date: string; snippet: string; body: string }
 export interface JiraIssue { id: string; key: string; summary: string; status?: string; priority?: string; issueType?: string; assignee?: string; created: string; updated: string; url?: string }
+export interface JiraEvent { id: string; type: string; issueKey?: string; issueSummary?: string; issueStatus?: string; timestamp: string }
 export interface MemoryEntry { key: string; value: string; createdAt: string; updatedAt: string }
-export interface UsageStats { requestsThisMinute: number; tokensToday: number; costToday: number; concurrentTasks: number; limits: Record<string, number> }
+export interface UsageStats { requestsThisMinute: number; tokensToday: number; costToday: number; concurrentTasks: number; limits: Record<string, number>; backend?: string }
+export interface SearchResult { id: string; score: number; name: string; type: string; externalUrl: string }
+export interface ModelInfo { id: string; label: string; tier: string }
 
 export const api = {
   orgs: {
@@ -62,7 +65,8 @@ export const api = {
     messages: (id: string) => request<{ messages: Message[] }>(`/api/agents/${id}/messages`),
     assignSkill: (agentId: string, skillId: string) => request(`/api/agents/${agentId}/skills`, { method: 'POST', body: JSON.stringify({ skillId }) }),
     chat: (id: string, input: string, history?: Array<{ role: string; content: string }>) =>
-      request<{ output: string; taskId: string; tokensUsed: number; costUsd: number; memorySaved?: Record<string, string> }>(`/api/agents/${id}/chat`, { method: 'POST', body: JSON.stringify({ input, history }) }),
+      request<{ output: string; taskId: string; tokensUsed: number; costUsd: number; memorySaved?: Record<string, string>; provider?: string }>(
+        `/api/agents/${id}/chat`, { method: 'POST', body: JSON.stringify({ input, history }) }),
     transfer: (agentId: string, targetOrgId: string) => request(`/api/agents/${agentId}/transfer`, { method: 'POST', body: JSON.stringify({ targetOrgId }) }),
     clone: (agentId: string, targetOrgId: string) => request<{ agent: Agent }>(`/api/agents/${agentId}/clone`, { method: 'POST', body: JSON.stringify({ targetOrgId }) }),
     memory: {
@@ -104,6 +108,7 @@ export const api = {
     browse: (orgId: string, folderId: string, token: string) => request<{ files: any[] }>(`/api/orgs/${orgId}/knowledge/browse?folderId=${folderId}&accessToken=${token}`),
     save: (orgId: string, d: any) => request(`/api/orgs/${orgId}/knowledge`, { method: 'POST', body: JSON.stringify(d) }),
     delete: (itemId: string) => request(`/api/knowledge/${itemId}`, { method: 'DELETE' }),
+    search: (orgId: string, q: string, topK = 5) => request<{ results: SearchResult[]; query: string }>(`/api/orgs/${orgId}/knowledge/search?q=${encodeURIComponent(q)}&topK=${topK}`),
   },
   comms: {
     inbox: (orgId: string, limit = 50) => request<{ messages: Message[] }>(`/api/orgs/${orgId}/inbox?limit=${limit}`),
@@ -141,6 +146,11 @@ export const api = {
     transition: (orgId: string, key: string, transitionId: string) => request(`/api/orgs/${orgId}/jira/issues/${key}/transitions`, { method: 'POST', body: JSON.stringify({ transitionId }) }),
     sync: (orgId: string, agentId: string, projectKey?: string) => request<{ synced: number }>(`/api/orgs/${orgId}/jira/sync`, { method: 'POST', body: JSON.stringify({ agentId, projectKey }) }),
     fromTask: (orgId: string, taskId: string) => request<{ issue: { key: string; url: string } }>(`/api/orgs/${orgId}/jira/from-task/${taskId}`, { method: 'POST' }),
+    events: (orgId: string) => request<{ events: JiraEvent[]; count: number }>(`/api/orgs/${orgId}/jira/events`),
+    webhookUrl: (orgId: string) => request<{ url: string; instructions: string[] }>(`/api/orgs/${orgId}/jira/webhook-url`),
+  },
+  models: {
+    list: () => request<{ models: Record<string, ModelInfo[]> }>('/api/models'),
   },
   usage: {
     get: (orgId: string) => request<{ usage: UsageStats }>(`/api/orgs/${orgId}/usage`),
@@ -150,4 +160,9 @@ export const api = {
 export function createAgentStream(agentId: string): WebSocket {
   const wsUrl = BASE_URL.replace(/^http/, 'ws')
   return new WebSocket(`${wsUrl}/api/agents/${agentId}/stream`)
+}
+
+export function createJiraLiveStream(orgId: string): WebSocket {
+  const wsUrl = BASE_URL.replace(/^http/, 'ws')
+  return new WebSocket(`${wsUrl}/api/orgs/${orgId}/jira/live`)
 }

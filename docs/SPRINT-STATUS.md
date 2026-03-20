@@ -1,96 +1,127 @@
 # Sprint Status — 7Ei Mission Control App
 
 **Last updated:** 2026-03-20
-**Version:** 0.4.0 (backend) / 0.9.0 (mobile)
+**Backend:** v0.5.0 · **Mobile:** v0.9.0 · **Web:** v0.1.0
 
 ---
 
 ## Sprint 0–8 — Complete ✅
-See previous entries. All core modules shipped.
-
----
+Core platform: auth, org/agent/task/project CRUD, Claude streaming, kanban, org chart, skill library, knowledge base, cost centre, comms hub (Gmail/Telegram/Meet), push notifications.
 
 ## Sprint 9 — Production Readiness ✅
+Jira integration, agent long-term memory, rate limiting, multi-org switcher, EAS build config.
 
-### Jira Integration
-- `POST /api/orgs/:orgId/jira/connect` — connect with Atlassian domain + API token
-- `GET /api/orgs/:orgId/jira/issues` — list issues (JQL, filters, pagination)
-- `POST /api/orgs/:orgId/jira/issues` — create issue (syncs to local tasks)
-- `POST /api/orgs/:orgId/jira/sync` — pull open issues → local task queue
-- `POST /api/orgs/:orgId/jira/from-task/:taskId` — push completed task → Jira
-- Transitions, comments, and update endpoints
-- Mobile: full Jira screen (connect / browse / create)
-- Web: Jira tab in dashboard
-- Default project key: O7MC
+## Sprint 10 — Design System ✅
+Full 7Ei token system (dark/light), glassmorphism, color-blind safe status indicators, all components migrated.
 
-### Agent Long-Term Memory
-- Memory stored in `agents.memory_long_term` (JSON, persisted to DB)
-- Auto-extracted from agent output: `[REMEMBER: key = value]` tags
-- Memory injected into every system prompt
-- CRUD API: get / set / bulk-set / delete / clear per agent
-- Mobile: Memory screen with entry list, add form, delete, clear all
-- Memory count badge on agent detail tab
-- Agent executor: strips memory tags from visible output
+## Sprint 11 — Final Production Features ✅
 
-### Rate Limiting & Usage Caps
-- Sliding window: requests per minute per org
-- Daily budget: tokens/day + cost/day per org
-- Concurrent task slots per org
-- All limits configurable via env vars
-- `GET /api/orgs/:orgId/usage` — current stats
-- Mobile: Usage screen with progress bars + limit info
-- Web: Usage tab in dashboard
+### Multi-Model LLM Router
+- `backend/src/services/llm-router.ts` — unified streaming API across providers
+- Anthropic (Claude Sonnet 4, Opus 4, Haiku 4.5)
+- OpenAI (GPT-4o, GPT-4o Mini) — activate with `OPENAI_API_KEY`
+- Google Gemini (2.0 Flash, 1.5 Pro) — activate with `GEMINI_API_KEY`
+- `GET /api/models` — list all available models by provider
+- Agent create screen: provider picker + model picker per provider
+- Agent executor fully provider-agnostic
 
-### Multi-Org Switcher
-- `GET /api/orgs/switch/list` — enriched org list (agent count, active, pending)
-- `POST /api/agents/:agentId/transfer` — move agent to another org
-- `POST /api/agents/:agentId/clone` — copy agent to another org
-- `POST /api/orgs/:orgId/duplicate` — deep-copy org (org + depts + agents)
-- Mobile: Org switcher screen with stats, duplicate, settings links
-- Home screen: org name tappable to open switcher (↕ indicator)
+### Pinecone Vector Search
+- `backend/src/services/vector-search.ts` — embeddings (OpenAI text-embedding-3-small) + Pinecone serverless
+- Automatic index creation on startup
+- Documents indexed on save, deleted on remove
+- `GET /api/orgs/:orgId/knowledge/search?q=...` — semantic search
+- Knowledge tab: search bar with semantic results + match score %
+- Graceful fallback (stub embeddings) when no keys set
 
-### EAS Build Configuration
-- `app/eas.json` — development / preview / production profiles
-- `app/app.json` — v0.9.0, bundle ID `ai.7ei.missioncontrol`, push notif config
-- iOS + Android configured for App Store / Play Store submission
+### Memory Compression
+- Auto-triggers when agent memory exceeds 50 entries
+- Compresses to ≤30 entries using Claude Haiku (cheap, fast)
+- Preserves oldest timestamps; merges related entries
+- Non-blocking (failure = warning, not crash)
 
----
+### Redis Rate Limiting
+- `backend/src/middleware/ratelimit.ts` — Redis client with in-memory fallback
+- Set `REDIS_URL=redis://...` to enable distributed limiting
+- Usage stats include `backend: 'redis' | 'memory'`
+- Async Redis sync (non-blocking, doesn't slow requests)
 
-## Remaining for v1.0 production
+### Jira Webhooks (inbound real-time)
+- `POST /api/jira/webhook/:orgId` — receives issue:created/updated/deleted
+- Status sync: Jira status changes update local task status
+- `GET /api/orgs/:orgId/jira/events` — last 100 events
+- WebSocket live stream: `WS /api/orgs/:orgId/jira/live`
+- `GET /api/orgs/:orgId/jira/webhook-url` — setup instructions
 
-- [ ] `EAS_PROJECT_ID` and `APPLE_TEAM_ID` placeholders need real values
-- [ ] App Store screenshots and metadata
-- [ ] Pinecone vector search for knowledge base (Sprint 10)
-- [ ] Gmail OAuth flow on mobile (full PKCE flow via Expo AuthSession)
-- [ ] Agent memory compression (summarise when > 50 entries)
-- [ ] Redis-backed rate limiting (replace in-memory store)
-- [ ] Multi-model support: OpenAI GPT-4o, Gemini (stub exists in schema)
-- [ ] Jira webhook (inbound real-time issue updates)
+### Gmail OAuth on Mobile (PKCE)
+- `app/app/gmail/index.tsx` — full Gmail screen
+- Expo AuthSession + PKCE code flow
+- Redirect URI: `7ei://gmail/callback`
+- Scopes: gmail.readonly + gmail.send + openid
+- Thread browser + compose + send
+- Requires `EXPO_PUBLIC_GOOGLE_CLIENT_ID` in app env
 
 ---
 
-## Setup (Sprint 9 additions)
+## v1.0 Checklist
 
+- [x] All core modules built (0–11)
+- [x] Multi-model: Anthropic + OpenAI + Gemini
+- [x] Semantic knowledge search (Pinecone)
+- [x] Agent memory with auto-compression
+- [x] Rate limiting (in-memory + Redis)
+- [x] Jira full integration (REST + webhooks + real-time)
+- [x] Gmail OAuth on mobile
+- [x] Design system (dark + light, color-blind safe)
+- [x] EAS build config
+- [ ] Fill `EAS_PROJECT_ID` + `APPLE_TEAM_ID` placeholders
+- [ ] App Store screenshots + metadata
+- [ ] Production Turso DB (replace SQLite)
+- [ ] Deploy backend to Fly.io / Railway
+- [ ] Connect real Pinecone index
+- [ ] Connect Redis (Upstash recommended)
+
+---
+
+## Environment variables — full reference
+
+### Backend
 ```bash
-# Add to backend/.env
-RATE_LIMIT_RPM=60
-RATE_LIMIT_TOKENS_DAY=500000
-RATE_LIMIT_COST_DAY=5.0
-RATE_LIMIT_CONCURRENT=5
+# Required
+CLERK_SECRET_KEY=sk_test_...
+ANTHROPIC_API_KEY=sk-ant-...
 
-# Jira connection (optional — can also set per-org via POST /api/orgs/:id/jira/connect)
+# Optional — enable extra LLM providers
+OPENAI_API_KEY=sk-...          # GPT-4o
+GEMINI_API_KEY=AIza...         # Gemini
+
+# Optional — enable semantic search
+PINECONE_API_KEY=...
+PINECONE_PROJECT_ID=...
+PINECONE_ENVIRONMENT=us-east-1-aws
+
+# Optional — enable distributed rate limiting
+REDIS_URL=redis://localhost:6379
+
+# Optional — Jira
 JIRA_DOMAIN=your-org
 JIRA_EMAIL=you@company.com
-JIRA_API_TOKEN=xxx
-JIRA_DEFAULT_PROJECT=O7MC
+JIRA_API_TOKEN=...
+
+# Server
+PORT=3001
+PUBLIC_URL=https://api.7ei.ai
+```
+
+### Mobile
+```bash
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+EXPO_PUBLIC_API_URL=http://localhost:3001
+EXPO_PUBLIC_GOOGLE_CLIENT_ID=...  # for Gmail OAuth
 ```
 
 ### EAS build
 ```bash
 cd app
-npm install -g eas-cli
-eas login
-eas build --platform ios --profile development    # dev build
-eas build --platform all --profile production      # App Store
-eas submit --platform ios --profile production     # submit
+eas build --platform ios --profile production
+eas submit --platform ios
 ```
