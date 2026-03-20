@@ -22,7 +22,7 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 
 ## 3. Platforms
 
-- **Primary:** iOS + Android mobile app (React Native)
+- **Primary:** iOS + Android mobile app (React Native / Expo)
 - **Secondary:** Web desktop (Next.js) — mirrors mobile, adds power-user views
 
 ## 4. Module Specifications
@@ -62,7 +62,7 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
   - Head of Finance
   - Head of R&D
   - Silver Board Advisor (expert persona)
-- Silver Board: up to 10+ advisors, each with a persona (real, historical, fictional, domain expert)
+- **Silver Board:** Up to 10+ advisors, each with a persona (real, historical, fictional, or domain expert — living, dead, or imaginary)
 
 ### 4.3 Communications Hub
 
@@ -74,8 +74,8 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
   - Google Chat
   - Google Meet (schedule + launch)
   - Email (Gmail integration)
-  - Telegram (private rooms)
-  - WhatsApp (via WhatsApp Business API)
+  - Telegram (private rooms / bot)
+  - WhatsApp (via WhatsApp Business API — v2)
 - Notification routing: surface agent messages in preferred channel
 - Message history per agent and per project
 
@@ -86,15 +86,15 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 **Requirements:**
 - Storage backends (modular, user-selects at setup):
   - Google Drive (primary v1)
-  - OneDrive
-  - Dropbox
-  - Local machine / physical drive
-  - Private server
+  - OneDrive (v2)
+  - Dropbox (v2)
+  - Local machine / physical drive (v2)
+  - Private server (v2)
 - Folder/subfolder structure per org and project
 - Share folders with agents
 - Markdown (.md) file support — view, edit, share
 - Obsidian vault integration (via MCP)
-- Vector search with Pinecone (for semantic agent queries)
+- Vector search with Pinecone (for semantic agent queries — v2)
 - Import/export documents
 
 ### 4.5 Task & Execution Log
@@ -103,9 +103,9 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 
 **Requirements:**
 - Live feed of tasks being executed
-- Filter by: agent, status (pending/in_progress/done/blocked), project, date
-- Task detail view: full input, output, LLM used, tokens consumed, duration
-- Error/blocked task alerts
+- Filter by: agent, status (pending / in_progress / done / blocked), project, date
+- Task detail view: full input, output, LLM used, tokens consumed, duration, cost
+- Error / blocked task alerts
 - Export log as CSV or JSON
 
 ### 4.6 Cost Centre
@@ -114,11 +114,7 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 
 **Requirements:**
 - Aggregate API usage data (per LLM provider)
-- Breakdown views:
-  - Per organisation
-  - Per department
-  - Per agent
-  - Per project
+- Breakdown views: per organisation / department / agent / project
 - Time range toggles (daily / weekly / monthly)
 - Budget thresholds with alerts (80% warning, 100% hard stop)
 - Visual: bar charts, trend lines
@@ -142,11 +138,11 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 
 **Requirements:**
 - Kanban board per project (To Do / In Progress / Done / Blocked)
-- Create tasks with: title, description, assignee (human or agent), priority, due date
+- Create tasks: title, description, assignee (human or agent), priority, due date
 - Automate task execution: assign task to agent → agent executes → reports result
-- Jira plugin: sync tasks bidirectionally with Jira (project key: O7MC)
+- Jira plugin: sync tasks bidirectionally (project key: O7MC)
 - Basic dependency tracking (task blocks task)
-- Sprint/milestone grouping
+- Sprint / milestone grouping
 
 ## 5. Non-Functional Requirements
 
@@ -155,15 +151,15 @@ A modular virtual office in your pocket. Anyone — solo founder, small team, en
 | Mobile performance | < 2s load for main screens |
 | Agent response latency | < 5s for most agent queries |
 | Offline capability | Read-only mode when offline |
-| Security | OAuth 2.0 auth, no credentials in client |
+| Security | OAuth 2.0 auth; no credentials in client code |
 | Privacy | User data stays in chosen storage backend |
 | Extensibility | All major components are pluggable modules |
 
 ## 6. Out of Scope (v1)
 
 - Native desktop apps (macOS, Windows)
-- Self-hosted LLMs (v2 stretch)
-- Real-time voice agent interaction (v2)
+- Self-hosted LLMs
+- Real-time voice agent interaction
 - Financial transaction capabilities
 - Multi-tenant SaaS billing
 
