@@ -1,11 +1,13 @@
 import { useOAuth } from '@clerk/clerk-expo'
 import { useRouter } from 'expo-router'
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native'
-import { Colors, Space, Radius } from '../../constants/colors'
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar, Image } from 'react-native'
+import { useTheme } from '../../constants/theme'
+import { Space, Radius, FontSize, FontWeight } from '../../constants/colors'
 
 export default function SignIn() {
   const { startOAuthFlow } = useOAuth({ strategy: 'oauth_google' })
   const router = useRouter()
+  const { theme, mode } = useTheme()
 
   const handleSignIn = async () => {
     try {
@@ -14,41 +16,73 @@ export default function SignIn() {
         await setActive({ session: createdSessionId })
         router.replace('/(tabs)')
       }
-    } catch (err) {
-      console.error('OAuth error:', err)
-    }
+    } catch (err) { console.error('OAuth error:', err) }
   }
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.badge}>
-        <Text style={styles.badgeText}>7Ei</Text>
+    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      <StatusBar barStyle={mode === 'dark' ? 'light-content' : 'dark-content'} />
+
+      {/* Logo — 7 hexagons */}
+      <View style={[styles.logoWrap, { borderColor: theme.accentBorder }]}>
+        <Text style={[styles.logoText, { color: theme.accent }]}>7Ei</Text>
       </View>
-      <Text style={styles.title}>Mission Control</Text>
-      <Text style={styles.subtitle}>Your modular virtual office</Text>
+
+      <Text style={[styles.title, { color: theme.text }]}>Mission Control</Text>
+      <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Your modular virtual office</Text>
+
       <View style={styles.spacer} />
-      <Text style={styles.tagline}>Spin up an AI org.{"\n"}Run it from your phone.</Text>
+
+      {/* Tagline */}
+      <View style={[styles.taglineBox, { backgroundColor: theme.accentDim, borderColor: theme.accentBorder }]}>
+        <Text style={[styles.tagline, { color: theme.text }]}>
+          Spin up an AI org.{"\n"}Run it from your phone.
+        </Text>
+      </View>
+
       <View style={styles.spacer} />
-      <TouchableOpacity style={styles.button} onPress={handleSignIn} activeOpacity={0.85}>
-        <Text style={styles.googleIcon}>G</Text>
-        <Text style={styles.buttonText}>Continue with Google</Text>
+
+      {/* Google sign-in */}
+      <TouchableOpacity
+        style={[styles.googleBtn, { backgroundColor: theme.text }]}
+        onPress={handleSignIn}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.googleG}>G</Text>
+        <Text style={[styles.googleLabel, { color: theme.bg }]}>Continue with Google</Text>
       </TouchableOpacity>
-      <Text style={styles.terms}>By continuing you agree to our Terms of Service</Text>
+
+      <Text style={[styles.terms, { color: theme.textMuted }]}>
+        By continuing you agree to our Terms of Service
+      </Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl, backgroundColor: Colors.bg },
-  badge: { width: 72, height: 72, borderRadius: 20, backgroundColor: Colors.accent, alignItems: 'center', justifyContent: 'center', marginBottom: Space.lg },
-  badgeText: { fontSize: 28, fontWeight: '800', color: '#000' },
-  title: { fontSize: 32, fontWeight: '800', color: Colors.text, letterSpacing: -0.5 },
-  subtitle: { fontSize: 16, color: Colors.textSecondary, marginTop: Space.xs },
-  spacer: { height: Space.xxl },
-  tagline: { fontSize: 22, fontWeight: '700', color: Colors.text, textAlign: 'center', lineHeight: 32 },
-  button: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.text, paddingHorizontal: Space.xl, paddingVertical: Space.md + 2, borderRadius: Radius.md, gap: Space.sm, width: '100%', justifyContent: 'center' },
-  googleIcon: { fontSize: 16, fontWeight: '800', color: '#4285F4' },
-  buttonText: { fontSize: 16, fontWeight: '600', color: '#000' },
-  terms: { fontSize: 12, color: Colors.textMuted, marginTop: Space.lg, textAlign: 'center' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Space.xl },
+  logoWrap: {
+    width: 72, height: 72, borderRadius: 18,
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Space.lg,
+  },
+  logoText: { fontSize: 26, fontWeight: FontWeight.heavy, letterSpacing: -1 },
+  title: { fontSize: FontSize.huge, fontWeight: FontWeight.heavy, letterSpacing: -0.8, marginBottom: 6 },
+  subtitle: { fontSize: FontSize.lg, marginBottom: 0 },
+  spacer: { height: Space.xxxl },
+  taglineBox: {
+    borderRadius: Radius.lg, borderWidth: 0.5,
+    padding: Space.lg, width: '100%', alignItems: 'center',
+  },
+  tagline: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, textAlign: 'center', lineHeight: 30 },
+  googleBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: Space.sm,
+    paddingHorizontal: Space.xl, paddingVertical: Space.md + 2,
+    borderRadius: Radius.md, width: '100%', justifyContent: 'center',
+  },
+  googleG: { fontSize: FontSize.lg, fontWeight: FontWeight.heavy, color: '#4285F4' },
+  googleLabel: { fontSize: FontSize.lg, fontWeight: FontWeight.semibold },
+  terms: { fontSize: FontSize.xs, marginTop: Space.lg, textAlign: 'center' },
 })

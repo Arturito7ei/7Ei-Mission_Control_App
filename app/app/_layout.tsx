@@ -2,9 +2,11 @@ import { ClerkProvider, useAuth } from '@clerk/clerk-expo'
 import * as SecureStore from 'expo-secure-store'
 import { Slot, useRouter, useSegments } from 'expo-router'
 import { useEffect, useRef } from 'react'
+import { StatusBar } from 'expo-status-bar'
 import { setTokenGetter } from '../lib/api'
-import * as Notifications from 'expo-notifications'
 import { api } from '../lib/api'
+import { useColorScheme } from 'react-native'
+import * as Notifications from 'expo-notifications'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true }),
@@ -19,13 +21,13 @@ function AuthGuard() {
   const { isLoaded, isSignedIn, getToken, userId } = useAuth()
   const segments = useSegments()
   const router = useRouter()
+  const scheme = useColorScheme()
   const notifRegistered = useRef(false)
 
   useEffect(() => {
     setTokenGetter(() => getToken())
   }, [getToken])
 
-  // Register push notifications
   useEffect(() => {
     if (!isSignedIn || notifRegistered.current) return
     notifRegistered.current = true
@@ -36,19 +38,23 @@ function AuthGuard() {
           const token = (await Notifications.getExpoPushTokenAsync()).data
           await api.notifications.register(userId!, token)
         }
-      } catch (e) { /* non-critical */ }
+      } catch {}
     })()
   }, [isSignedIn, userId])
 
   useEffect(() => {
     if (!isLoaded) return
     const inAuth = segments[0] === '(auth)'
-    const inOnboarding = segments[0] === 'onboarding'
     if (!isSignedIn && !inAuth) router.replace('/(auth)/sign-in')
     if (isSignedIn && inAuth) router.replace('/(tabs)')
   }, [isLoaded, isSignedIn, segments])
 
-  return <Slot />
+  return (
+    <>
+      <StatusBar style={scheme === 'light' ? 'dark' : 'light'} />
+      <Slot />
+    </>
+  )
 }
 
 export default function RootLayout() {
