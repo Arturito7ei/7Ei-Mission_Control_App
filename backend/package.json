@@ -1,0 +1,28 @@
+{
+  "name": "@7ei/backend",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^4.27.0",
+    "@fastify/cors": "^9.0.0",
+    "@fastify/websocket": "^8.0.0",
+    "@clerk/fastify": "^1.0.0",
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@libsql/client": "^0.6.0",
+    "drizzle-orm": "^0.30.0",
+    "zod": "^3.22.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0",
+    "drizzle-kit": "^0.20.0"
+  }
+}

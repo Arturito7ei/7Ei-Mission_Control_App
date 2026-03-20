@@ -1,0 +1,20 @@
+{
+  "name": "7ei-mission-control",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "app",
+    "web",
+    "backend"
+  ],
+  "scripts": {
+    "dev:app": "npm run dev --workspace=app",
+    "dev:web": "npm run dev --workspace=web",
+    "dev:backend": "npm run dev --workspace=backend",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}

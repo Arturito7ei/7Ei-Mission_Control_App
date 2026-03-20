@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "7Ei Mission Control",
+    "slug": "7ei-mission-control",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "7ei",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.7ei.missioncontrol"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "ai.7ei.missioncontrol"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
