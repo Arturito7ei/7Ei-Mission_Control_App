@@ -1,20 +1,34 @@
 import { View, Text, StyleSheet } from 'react-native'
-import { Colors } from '../constants/colors'
+import { useTheme, priorityColor } from '../constants/theme'
+import { FontSize, Radius, Space } from '../constants/colors'
 
-const PRIORITY_COLORS: Record<string, string> = {
-  highest: Colors.highest, high: Colors.high, medium: Colors.medium, low: Colors.low, lowest: Colors.lowest,
+// Color + icon — color-blind safe
+const PRIORITY_ICONS: Record<string, string> = {
+  highest: '⬆⬆', high: '⬆', medium: '→', low: '⬇', lowest: '⬇⬇',
 }
 
 export function PriorityBadge({ priority }: { priority: string }) {
-  const color = PRIORITY_COLORS[priority] ?? Colors.textMuted
+  const { theme } = useTheme()
+  const color = priorityColor(priority, theme)
+  const icon  = PRIORITY_ICONS[priority] ?? '→'
+
   return (
-    <View style={[styles.badge, { backgroundColor: color + '22', borderColor: color + '44' }]}>
-      <Text style={[styles.label, { color }]}>{priority}</Text>
+    <View style={[styles.badge, { backgroundColor: color + '14', borderColor: color + '40' }]}>
+      <Text style={[styles.label, { color }]}>{icon} {priority}</Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, borderWidth: 1 },
-  label: { fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+  badge: {
+    paddingHorizontal: Space.sm + 2,
+    paddingVertical: 3,
+    borderRadius: Radius.pill,
+    borderWidth: 0.5,
+  },
+  label: {
+    fontSize: FontSize.xs,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
 })

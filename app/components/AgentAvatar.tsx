@@ -1,23 +1,54 @@
 import { View, Text, StyleSheet } from 'react-native'
-import { Colors } from '../constants/colors'
+import { useTheme } from '../constants/theme'
+import { Dark } from '../constants/colors'
 
 interface Props { emoji: string; size?: number; status?: string }
 
-const STATUS_RING: Record<string, string> = { active: Colors.active, paused: Colors.paused, stopped: Colors.error }
-
 export function AgentAvatar({ emoji, size = 44, status }: Props) {
-  const ring = status ? STATUS_RING[status] : undefined
+  const { theme } = useTheme()
+
+  // Ring color: active = purple, paused = yellow, stopped = red (with icon elsewhere)
+  const ringColor = (() => {
+    if (!status || status === 'idle') return undefined
+    if (status === 'active' || status === 'in_progress') return theme.statusActive
+    if (status === 'paused') return theme.statusWarning
+    if (status === 'stopped' || status === 'failed') return theme.statusError
+    return undefined
+  })()
+
+  const ringWidth = ringColor ? 1.5 : 0.5
+  const ringC = ringColor ?? theme.borderLight
+
   return (
     <View style={[
-      styles.container,
-      { width: size, height: size, borderRadius: size / 2 },
-      ring && { borderColor: ring, borderWidth: 2 },
+      styles.outer,
+      {
+        width: size + (ringColor ? 4 : 0),
+        height: size + (ringColor ? 4 : 0),
+        borderRadius: (size + (ringColor ? 4 : 0)) / 2,
+        borderColor: ringC,
+        borderWidth: ringWidth,
+        backgroundColor: ringColor ? ringColor + '18' : 'transparent',
+        padding: ringColor ? 2 : 0,
+      },
     ]}>
-      <Text style={{ fontSize: size * 0.45 }}>{emoji}</Text>
+      <View style={[
+        styles.inner,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: theme.surfaceHigh,
+          borderColor: theme.border,
+        },
+      ]}>
+        <Text style={{ fontSize: size * 0.48 }}>{emoji}</Text>
+      </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { backgroundColor: Colors.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
+  outer: { alignItems: 'center', justifyContent: 'center' },
+  inner: { alignItems: 'center', justifyContent: 'center', borderWidth: 0.5 },
 })
