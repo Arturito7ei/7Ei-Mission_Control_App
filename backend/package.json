@@ -6,6 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "node --test --experimental-strip-types src/tests/*.test.ts",
+    "test:watch": "node --test --watch --experimental-strip-types src/tests/*.test.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",

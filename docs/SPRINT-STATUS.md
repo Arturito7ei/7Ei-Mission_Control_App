@@ -1,86 +1,85 @@
 # Sprint Status — 7Ei Mission Control App
 
-**Last updated:** 2026-03-23
-**Backend:** v0.6.0 · **Mobile:** v0.9.0 · **Web:** v0.1.0
+**Last updated:** 2026-03-23  
+**Backend:** v0.6.0 · **Mobile:** v1.0.0 · **Web:** v1.0.0
 
 ---
 
-## Sprints 0–11 — Complete ✅
-All core modules, design system, Jira, memory, multi-model, Pinecone, Redis, Gmail OAuth.
+## Sprints 0–13 — Complete ✅
+All features, design system, deployment infra, launch polish.
 
 ---
 
-## Sprint 12 — Production Hardening + New Features ✅
+## Sprint 14 — Launch Readiness ✅
 
-### Deployment
-- `backend/Dockerfile` — multi-stage, Alpine, healthcheck
-- `backend/fly.toml` — Fly.io Frankfurt (closest to Zürich), 512MB, auto-stop
-- `backend/railway.toml` — Railway fallback option
-- `web/vercel.json` — Vercel Frankfurt region, security headers
-- `.github/workflows/deploy.yml` — auto-deploy backend (Fly) + web (Vercel) on push to main
-- `docs/DEPLOY.md` — step-by-step: Fly.io, Turso, Upstash Redis, Pinecone, EAS, CI/CD, custom domains
+### Landing page (`web/app/page.tsx`)
+- Full marketing page at `7ei.ai`
+- Sticky nav with glassmorphism blur
+- Hero with animated hexagon mark
+- 8 feature cards, model grid (6 models × 3 providers)
+- How it works (4 steps), open source section, CTA, footer
+- Fully responsive, dark (#070707) with purple (#893BFF) accents
+- No external libraries — pure Next.js + inline styles
 
-### Database
-- `backend/drizzle.config.ts` — Drizzle Kit config for migrations
-- `backend/src/db/migrations/0001_init.sql` — canonical SQL migration file
-- `backend/src/db/schema.ts` — added `scheduledTasks` + `webhooks` tables with indexes
+### Global Search (`app/app/search/index.tsx`)
+- Instant cross-entity search: agents, tasks, projects, skills
+- Fuzzy match on name, role, title, description, input/output
+- StatusBadge + PriorityBadge on results
+- Quick-access links when query is empty
+- Auto-focus on open, cancel button
 
-### Scheduled Tasks Engine
-- `backend/src/services/scheduler.ts` — 1-minute tick, cron parser, auto-start on server boot
-- `GET /api/orgs/:orgId/scheduled` — list schedules
-- `POST /api/orgs/:orgId/scheduled` — create (with cron preview endpoint)
-- `PATCH /api/scheduled/:id` — enable/disable, update cron
-- `GET /api/scheduled/preview?cron=...` — preview next run time
-- Mobile: full scheduled tasks screen (presets, custom cron, toggle, delete)
+### Deep Links (`app/lib/deep-links.ts`)
+- `7ei://agent/:id` → agent chat
+- `7ei://project/:id` → project board
+- `7ei://jira` → Jira screen
+- `7ei://search` → global search
+- `7ei://onboarding`, `7ei://settings`, `7ei://scheduled`
+- Cold-start + warm-start support via `Linking.getInitialURL()`
+- `7ei://gmail/callback` handled by Expo AuthSession automatically
 
-### Agent Orchestration Protocol
-- `backend/src/services/orchestrator.ts` — `[DELEGATE: AgentName | task]` parsing
-- Arturito auto-routes tasks to specialist agents via delegation tags
-- Results synthesised into a single response automatically
-- Parallel execution of all delegations (Promise.allSettled)
-- System prompt update for orchestrator agents
+### Backend Tests (`backend/src/tests/`)
+- `scheduler.test.ts` — cron parsing, calcNextRun, field matching (16 assertions)
+- `memory.test.ts` — extract/format memory, edge cases (12 assertions)
+- `orchestrator.test.ts` — delegate parsing, stripping (10 assertions)
+- `outbound-webhooks.test.ts` — parse/strip webhook tags (8 assertions)
+- `llm-router.test.ts` — cost calc, model catalogue validation (9 assertions)
+- Run: `npm test` (Node 20 native test runner, no jest dependency)
+- All tests run in CI (`test.yml` workflow: backend tests + mobile typecheck + web build)
 
-### Outbound Webhooks
-- `backend/src/services/outbound-webhooks.ts` — platform events + agent-triggered calls
-- Platform events: task.done, task.failed, agent.active, agent.idle, message.created
-- Agent protocol: `[WEBHOOK: https://... | {"json":"payload"}]` in response
-- HMAC-SHA256 signatures (X-7Ei-Signature header)
-- 10s timeout, non-blocking delivery
-- `GET /api/orgs/:orgId/webhooks` — list (secrets masked)
-- `POST /api/orgs/:orgId/webhooks` — create
-- `POST /api/webhooks/:id/test` — ping test
-- Mobile: full webhooks screen (create, test, delete, event picker)
+### Performance Utilities (`app/lib/performance.ts`)
+- `LIST_PERF_PROPS` — standard FlatList perf config
+- `fixedHeightLayout()` — `getItemLayout` factory
+- `throttle()` / `debounce()` — search and input optimisation
+- `memoItem()` — typed memo wrapper for list items
 
-### Security
-- `@fastify/helmet` added — security headers on all responses
-- `trustProxy: true` for Fly.io / Railway proxy
-- Production CORS: locked to 7ei.ai domains
-- Healthcheck + readiness endpoints
+### Zustand Store (`app/store/index.ts`)
+- Added `skills` slice with `setSkills`
+- Added `updateTask`, `addTask` for optimistic updates
+- Added `isLoading` / `setIsLoading` / `error` / `setError` UI state
 
-### App Store Metadata
-- `docs/APP_STORE.md` — full iOS + Android metadata, screenshot guide
+### CI Additions
+- `.github/workflows/test.yml` — runs on push + PR:
+  - Backend: typecheck + unit tests
+  - Mobile: TypeScript typecheck
+  - Web: Next.js build
 
 ---
 
-## v1.0 Final Checklist
+## 🎉 v1.0 is code-complete
 
-- [x] All features built (Sprints 0–12)
-- [x] Dockerfile + Fly.io config
-- [x] Vercel config + security headers
-- [x] CI/CD auto-deploy workflow
-- [x] Drizzle migrations
-- [x] Scheduled tasks
-- [x] Agent orchestration
-- [x] Outbound webhooks
-- [x] Security hardening (helmet, CORS, HMAC)
-- [x] App Store metadata
-- [x] Deployment guide
-- [ ] Run `eas init` → fill `EAS_PROJECT_ID`
-- [ ] Fill `APPLE_TEAM_ID` in `eas.json`
-- [ ] Add GitHub secrets (FLY_API_TOKEN, VERCEL_TOKEN, etc.)
-- [ ] `turso db create 7ei-production` → set DATABASE_URL
-- [ ] Create Pinecone index (7ei-knowledge, dim=1536)
-- [ ] Create Upstash Redis (eu-central-1)
-- [ ] `flyctl deploy` → verify `/health`
-- [ ] `vercel --prod` → verify app.7ei.ai
-- [ ] EAS production build + App Store submission
+Every feature is built. Every screen exists. Tests pass. Infra is configured.
+
+**10 ops tasks remaining to go live:**
+
+| Task | Command / Location |
+|------|-------------------|
+| EAS Project ID | `cd app && eas init` |
+| Apple Team ID | developer.apple.com → add to `eas.json` |
+| GitHub CI secrets | Settings → Secrets: `FLY_API_TOKEN`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` |
+| Turso DB | `turso db create 7ei-production --location fra` |
+| Pinecone index | console.pinecone.io → 7ei-knowledge, dim=1536, cosine, AWS us-east-1 |
+| Upstash Redis | console.upstash.com → eu-central-1 |
+| Deploy backend | `flyctl secrets set ... && flyctl deploy` |
+| Deploy web | `vercel --prod` |
+| Build mobile | `eas build --platform all --profile production` |
+| Submit to stores | `eas submit --platform all --profile production` |
