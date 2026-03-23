@@ -101,3 +101,30 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   backend: text('backend').notNull().default('google_drive'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
+
+export const scheduledTasks = sqliteTable('scheduled_tasks', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  title: text('title').notNull(),
+  input: text('input'),
+  cron: text('cron').notNull(),
+  timezone: text('timezone').notNull().default('UTC'),
+  enabled: integer('enabled').notNull().default(1),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
+  nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
+  runCount: integer('run_count').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const webhooks = sqliteTable('webhooks', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  secret: text('secret'),
+  events: text('events', { mode: 'json' }).$type<string[]>().default([]),
+  enabled: integer('enabled').notNull().default(1),
+  lastTriggeredAt: integer('last_triggered_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
