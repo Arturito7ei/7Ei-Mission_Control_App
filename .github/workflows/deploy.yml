@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
 
-# Only run one deploy at a time — cancel any in-progress run on new push
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
@@ -13,33 +12,20 @@ jobs:
   deploy-backend:
     name: Deploy backend → Fly.io
     runs-on: ubuntu-latest
-    # Skip entirely if FLY_API_TOKEN secret is not set yet
     if: ${{ secrets.FLY_API_TOKEN != '' }}
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check FLY_API_TOKEN
-        run: |
-          if [ -z "$FLY_API_TOKEN" ]; then
-            echo "⚠️  FLY_API_TOKEN secret is not set — skipping deploy."
-            echo "   Add it at: github.com/Arturito7ei/7Ei-Mission_Control_App/settings/secrets/actions"
-            exit 0
-          fi
-          echo "✓ FLY_API_TOKEN present"
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Install dependencies
-        run: npm ci
-
+        run: npm install
       - name: Build
         run: npm run build
-
+      - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only
         env:
@@ -48,34 +34,17 @@ jobs:
   deploy-web:
     name: Deploy web → Vercel
     runs-on: ubuntu-latest
-    # Skip entirely if VERCEL_TOKEN secret is not set yet
     if: ${{ secrets.VERCEL_TOKEN != '' }}
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check VERCEL_TOKEN
-        run: |
-          if [ -z "$VERCEL_TOKEN" ]; then
-            echo "⚠️  VERCEL_TOKEN secret is not set — skipping deploy."
-            echo "   Add it at: github.com/Arturito7ei/7Ei-Mission_Control_App/settings/secrets/actions"
-            exit 0
-          fi
-          echo "✓ VERCEL_TOKEN present"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-
       - name: Install dependencies
-        run: npm ci
-
+        run: npm install
       - name: Deploy to Vercel
         run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
