@@ -10,9 +10,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "allowImportingTsExtensions": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noEmit": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist", "src/tests"]

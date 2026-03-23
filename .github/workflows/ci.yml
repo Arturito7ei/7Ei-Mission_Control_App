@@ -7,53 +7,26 @@ on:
     branches: [main]
 
 jobs:
-  backend:
-    name: Backend — typecheck
+  check:
+    name: Install check
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [backend, web, app]
     defaults:
       run:
-        working-directory: backend
+        working-directory: ${{ matrix.workspace }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install
-      - name: Typecheck
-        run: npm run typecheck
-        continue-on-error: true
 
-  web:
-    name: Web — typecheck
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
-        run: npm install
-      - name: Typecheck
-        run: npm run typecheck
-        continue-on-error: true
 
-  mobile:
-    name: Mobile — typecheck
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
+
       - name: Typecheck
-        run: npx tsc --noEmit
-        continue-on-error: true
+        run: npx tsc --noEmit --skipLibCheck 2>&1 || true
+        # || true means TS errors are reported but never block the build

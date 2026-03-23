@@ -12,41 +12,39 @@ jobs:
   deploy-backend:
     name: Deploy backend → Fly.io
     runs-on: ubuntu-latest
+    # Only runs when secret is configured
     if: ${{ secrets.FLY_API_TOKEN != '' }}
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
+
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
+
+      - name: Deploy
+        # --remote-only = Fly builds the Docker image in the cloud
+        # No local npm install / tsc needed here at all
+        run: flyctl deploy --remote-only --app 7ei-backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        working-directory: backend
 
   deploy-web:
     name: Deploy web → Vercel
     runs-on: ubuntu-latest
     if: ${{ secrets.VERCEL_TOKEN != '' }}
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
-        run: npm install
+
+      - name: Install web dependencies
+        run: npm install --legacy-peer-deps
+        working-directory: web
+
       - name: Deploy to Vercel
-        run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
+        working-directory: web
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
