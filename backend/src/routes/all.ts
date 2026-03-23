@@ -4,6 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, and, desc, gte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
+import { upsertDocument } from '../services/vector-search'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -20,7 +21,16 @@ export const AGENT_TEMPLATES = {
 // ─── ORGS ────────────────────────────────────────────────────────────────────
 
 export async function orgRoutes(app: FastifyInstance) {
-  const OrgSchema = z.object({ name: z.string().min(1).max(100), description: z.string().optional(), logoUrl: z.string().url().optional() })
+  const OrgSchema = z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().optional(),
+    logoUrl: z.string().url().optional(),
+    mission: z.string().optional(),
+    culture: z.string().optional(),
+    deployMode: z.enum(['cloud', 'local']).optional(),
+    cloudProvider: z.enum(['aws', 'aws_ch', 'gcp', 'gcp_ch', 'azure', 'oracle']).optional(),
+    preferredLlm: z.enum(['claude', 'gpt4o', 'gemini']).optional(),
+  })
 
   app.get('/api/orgs', async (req) => {
     const userId = (req as any).auth?.userId ?? ''
@@ -29,9 +39,85 @@ export async function orgRoutes(app: FastifyInstance) {
   app.post('/api/orgs', async (req, reply) => {
     const userId = (req as any).auth?.userId ?? 'anon'
     const body = OrgSchema.parse(req.body)
-    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date() }
+    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date(), mission: body.mission ?? null, culture: body.culture ?? null, deployMode: body.deployMode ?? null, cloudProvider: body.cloudProvider ?? null, preferredLlm: body.preferredLlm ?? null, deployConfig: {} }
     await db.insert(schema.organisations).values(org)
-    reply.code(201); return { org }
+
+    // 1. Embed org knowledge into Pinecone (fire-and-forget)
+    if (body.mission || body.culture) {
+      const knowledgeText = [
+        body.mission ? `Mission & Vision: ${body.mission}` : '',
+        body.culture ? `Culture & Principles: ${body.culture}` : '',
+      ].filter(Boolean).join('\n\n')
+      upsertDocument({
+        id: `${org.id}_onboarding`,
+        orgId: org.id,
+        text: knowledgeText,
+        name: 'Onboarding — Mission & Culture',
+        type: 'onboarding',
+      }).catch(err => console.warn('Pinecone upsert failed (non-critical):', err))
+    }
+
+    // 2. Auto-create Arturito
+    const arturitoId = randomUUID()
+    const arturitoTOR = [
+      `You are Arturito, Chief of Staff at ${body.name}.`,
+      body.mission ? `Organisation mission: ${body.mission}` : '',
+      body.culture ? `Culture: ${body.culture}` : '',
+      'You orchestrate all agents, route tasks, and maintain strategic oversight.',
+      'When asked to create agents, propose a full profile (name, role, TOR) using org context.',
+    ].filter(Boolean).join('\n')
+
+    await db.insert(schema.agents).values({
+      id: arturitoId,
+      orgId: org.id,
+      departmentId: null,
+      name: 'Arturito',
+      role: 'Chief of Staff & Agent Orchestrator',
+      personality: 'Direct, strategic. Routes tasks efficiently. Speaks in first person.',
+      cv: null,
+      termsOfReference: arturitoTOR,
+      llmProvider: body.preferredLlm === 'gpt4o' ? 'openai'
+                 : body.preferredLlm === 'gemini' ? 'google'
+                 : 'anthropic',
+      llmModel: body.preferredLlm === 'gpt4o' ? 'gpt-4o'
+              : body.preferredLlm === 'gemini' ? 'gemini-2.0-flash'
+              : 'claude-sonnet-4-20250514',
+      skills: [],
+      status: 'idle',
+      avatarEmoji: '🎯',
+      agentType: 'standard',
+      advisorPersona: null,
+      memoryLongTerm: null,
+      createdAt: new Date(),
+    })
+
+    // 3. First specialist agent (if selected)
+    const FIRST_AGENT_TEMPLATES: Record<string, { name: string; role: string; emoji: string }> = {
+      marketing:   { name: 'Maya', role: 'Head of Marketing',   emoji: '📣' },
+      engineering: { name: 'Dev',  role: 'Head of Engineering', emoji: '💻' },
+      finance:     { name: 'CFO',  role: 'Head of Finance',     emoji: '📊' },
+      operations:  { name: 'Ops',  role: 'Head of Operations',  emoji: '⚙️' },
+    }
+    const firstRole = (req.body as any).firstAgentRole
+    if (firstRole && FIRST_AGENT_TEMPLATES[firstRole]) {
+      const tmpl = FIRST_AGENT_TEMPLATES[firstRole]
+      await db.insert(schema.agents).values({
+        id: randomUUID(), orgId: org.id, departmentId: null,
+        name: tmpl.name, role: tmpl.role,
+        personality: null, cv: null,
+        termsOfReference: `You are ${tmpl.name}, ${tmpl.role} at ${body.name}.`,
+        llmProvider: 'anthropic',
+        llmModel: 'claude-sonnet-4-20250514',
+        skills: [], status: 'idle',
+        avatarEmoji: tmpl.emoji, agentType: 'standard',
+        advisorPersona: null, memoryLongTerm: null,
+        createdAt: new Date(),
+      })
+    }
+
+    // 4. Return org + arturitoId
+    reply.code(201)
+    return { org, arturitoId }
   })
   app.get('/api/orgs/:orgId', async (req, reply) => {
     const { orgId } = req.params as any

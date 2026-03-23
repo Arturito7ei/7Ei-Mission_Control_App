@@ -43,7 +43,7 @@ export const api = {
   orgs: {
     list: () => request<{ orgs: Org[] }>('/api/orgs'),
     listForSwitch: () => request<{ orgs: Org[] }>('/api/orgs/switch/list'),
-    create: (d: { name: string; description?: string }) => request<{ org: Org }>('/api/orgs', { method: 'POST', body: JSON.stringify(d) }),
+    create: (d: { name: string; description?: string; mission?: string; culture?: string; deployMode?: string; cloudProvider?: string; preferredLlm?: string; firstAgentRole?: string }) => request<{ org: Org; arturitoId?: string }>('/api/orgs', { method: 'POST', body: JSON.stringify(d) }),
     get: (id: string) => request<{ org: Org }>(`/api/orgs/${id}`),
     update: (id: string, d: Partial<Org>) => request(`/api/orgs/${id}`, { method: 'PATCH', body: JSON.stringify(d) }),
     delete: (id: string) => request(`/api/orgs/${id}`, { method: 'DELETE' }),
