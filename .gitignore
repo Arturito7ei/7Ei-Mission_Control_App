@@ -1,30 +1,47 @@
 # Dependencies
 node_modules/
-.npm
-
-# Environment
-.env
-.env.*
-!.env.example
+.pnp/
+.pnp.js
 
 # Build outputs
 dist/
+build/
 .next/
-expo-dist/
-*.tsbuildinfo
+out/
 
-# Expo
+# Environment files — NEVER commit these
+.env
+.env.local
+.env.production
+.env.*.local
+backend/.env.production
+app/.env.local
+web/.env.local
+
+# EAS / Expo
 .expo/
-expo-env.d.ts
+dist/
+native/
 
-# Database
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# Turso / SQLite
 *.db
 *.db-shm
 *.db-wal
 
-# OS
+# macOS
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
 
 # IDE
 .idea/
@@ -32,6 +49,19 @@ Thumbs.db
 *.swp
 *.swo
 
+# Vercel
+.vercel/
+
+# TypeScript
+*.tsbuildinfo
+
 # Logs
 *.log
-npm-debug.log*
+logs/
+
+# Coverage
+coverage/
+
+# Misc
+.cache/
+tmp/
