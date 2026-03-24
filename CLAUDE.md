@@ -5,6 +5,74 @@
 
 ---
 
+## Skill / Plugin Routing
+
+Claude Code has installed skills that should be activated **automatically** based on user intent.
+Pick the **most specific** skill first. If multiple match, chain them (e.g., code-review → playwright → vercel).
+
+### Intent → Skill mapping
+
+| User intent (trigger phrases) | Skill | Anti-triggers (do NOT use) |
+|---|---|---|
+| "review code", "check this PR", "security audit", "lint my changes" | **code-review** | General questions about code style |
+| "run e2e tests", "write playwright test", "browser test", "test this flow" | **playwright** | Unit tests (use Node.js test runner) |
+| "deploy to vercel", "preview deploy", "check build logs", "vercel status" | **vercel** | Fly.io deploys (use existing CI) |
+| "deploy to aws", "set up ecs", "create rds", "aws infrastructure" | **deploy-on-aws** | Serverless-only tasks |
+| "lambda function", "serverless", "api gateway", "sam deploy", "sst" | **aws-serverless** | Full ECS/EC2 workloads |
+| "migrate to aws", "move from fly", "move from heroku", "migration plan" | **migration-to-aws** | Already on AWS |
+| "design this screen", "figma to code", "ui component", "responsive layout" | **frontend-design** | Backend-only API work |
+| "jira ticket", "create issue", "sprint status", "confluence page" | **atlassian** | GitHub Issues (use MCP github tools) |
+| "create a skill", "new plugin", "add a hook", "extend claude" | **skill-creator** | Using existing skills |
+| "run autonomously", "ralph loop", "keep going until done", "loop this" | **ralph-loop** | Single-step tasks |
+| Complex multi-file tasks, parallel work, deep research | **superpowers** | Simple single-file edits |
+
+### Precedence rules
+
+1. **Most specific wins** — "deploy lambda" → `aws-serverless`, not `deploy-on-aws`.
+2. **Project-native first** — Reuse existing patterns in this repo before generating new architecture.
+3. **Review before deploy** — When feasible, run `code-review` + `playwright` before any deploy skill.
+4. **Chain when needed** — E.g., `frontend-design` → `playwright` → `code-review` → `vercel` for a full UI feature.
+5. **Fallback** — If no skill matches, work directly with tools. Don't force a skill.
+
+### Skill activation
+
+- Skills in `~/.claude/skills/` are loaded automatically.
+- Ralph loop is a Stop hook — activate via `~/.claude/ralph-loop-ctl.sh start "prompt"`.
+- Vercel and Atlassian use MCP tools (prefixed `mcp__`).
+
+---
+
+## Preflight checklist (before any implementation)
+
+- [ ] Read the relevant files before editing (never edit blind)
+- [ ] Check if the task is already covered by an existing Phase 0/1/2 task below
+- [ ] Verify the change doesn't conflict with "DO NOT DO" rules
+- [ ] Identify which skill(s) apply — consult the mapping table above
+- [ ] For DB changes: check `schema.ts` and existing migrations first
+- [ ] For API changes: check existing routes in `all.ts` for pattern consistency
+
+## Post-change validation checklist
+
+- [ ] Run tests: `cd backend && npm install && node --test --experimental-strip-types src/tests/*.test.ts`
+- [ ] Verify CI workflows still pass (don't break ci.yml / test.yml / deploy.yml)
+- [ ] Run `code-review` skill on your own diff for security + quality
+- [ ] For UI changes: verify on both mobile (Expo) and web (Next.js) if applicable
+- [ ] For API changes: test with curl or the test suite — confirm request/response shape
+- [ ] Commit with descriptive message, push to the designated feature branch
+
+---
+
+## Safety rules
+
+- **Never** perform destructive git operations (force push, reset --hard, branch -D) without explicit user confirmation.
+- **Never** expose secrets, tokens, or API keys in code, logs, or commits. Use env vars or Secrets Manager.
+- **Never** skip tests or disable CI checks to make a deploy work.
+- **Never** modify `.github/workflows/` unless the task explicitly requires it.
+- **Never** deploy to production without user saying "deploy to production" — previews are OK.
+- **Ask** concise clarification only when genuinely blocked by ambiguity. Don't ask if you can infer.
+
+---
+
 ## Quick orientation
 
 ```
