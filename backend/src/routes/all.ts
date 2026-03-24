@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
 import { streamLLM } from '../services/llm-router'
+import { buildAuthUrl, exchangeCode } from '../services/google-auth'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -330,6 +331,25 @@ export async function taskRoutes(app: FastifyInstance) {
     await db.delete(schema.tasks).where(eq(schema.tasks.id, (req.params as any).taskId))
     reply.code(204)
   })
+
+  app.post('/api/tasks/:taskId/execute', async (req, reply) => {
+    const { taskId } = req.params as any
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    if (!task.agentId) return reply.code(400).send({ error: 'Task has no assigned agent' })
+    if (task.status === 'done') return reply.code(400).send({ error: 'Task already completed' })
+
+    reply.code(202)
+
+    // Fire-and-forget execution
+    executeAgentTask({
+      agentId: task.agentId,
+      taskId: task.id,
+      input: task.input ?? task.title,
+    }).catch(err => console.warn('Task execution failed:', err))
+
+    return { taskId, status: 'executing' }
+  })
 }
 
 // ─── PROJECTS ────────────────────────────────────────────────────────────────
@@ -565,5 +585,45 @@ export async function knowledgeRoutes(app: FastifyInstance) {
 
     reply.code(201)
     return { item: { id: itemId, name, type, chunkCount: chunks.length } }
+  })
+}
+
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+
+export async function authRoutes(app: FastifyInstance) {
+  app.get('/api/orgs/:orgId/auth/google', async (req) => {
+    const { orgId } = req.params as any
+    return { url: buildAuthUrl(orgId) }
+  })
+
+  app.get('/api/auth/google/callback', async (req, reply) => {
+    const { code, state: orgId } = req.query as any
+    if (!code || !orgId) return reply.code(400).send({ error: 'Missing code or state' })
+    const tokens = await exchangeCode(code)
+    const existing = await db.query.oauthTokens.findFirst({
+      where: and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google'))
+    })
+    if (existing) {
+      await db.update(schema.oauthTokens).set({
+        accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+      }).where(eq(schema.oauthTokens.id, existing.id))
+    } else {
+      await db.insert(schema.oauthTokens).values({
+        id: randomUUID(), orgId, provider: 'google',
+        accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt, scopes: 'drive.readonly drive.file',
+        createdAt: new Date(),
+      })
+    }
+    reply.redirect(`${process.env.ALLOWED_ORIGINS?.split(',')[0] ?? '/'}/knowledge?connected=google`)
+  })
+
+  app.get('/api/orgs/:orgId/auth/google/status', async (req) => {
+    const { orgId } = req.params as any
+    const token = await db.query.oauthTokens.findFirst({
+      where: and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google'))
+    })
+    return { connected: !!token, expiresAt: token?.expiresAt ?? null }
   })
 }

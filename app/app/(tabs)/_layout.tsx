@@ -58,7 +58,7 @@ export default function TabLayout() {
       <Tabs.Screen name="tasks"     options={{ title: 'Tasks',  tabBarIcon: ({ focused }) => <TabIcon emoji="📋" focused={focused} /> }} />
       <Tabs.Screen name="comms"     options={{ title: 'Comms',  tabBarIcon: ({ focused }) => <TabIcon emoji="📬" focused={focused} /> }} />
       <Tabs.Screen name="costs"     options={{ title: 'Costs',  tabBarIcon: ({ focused }) => <TabIcon emoji="💰" focused={focused} /> }} />
-      <Tabs.Screen name="knowledge" options={{ href: null }} />
+      <Tabs.Screen name="knowledge" options={{ title: 'KB', tabBarIcon: ({ focused }) => <TabIcon emoji="📚" focused={focused} /> }} />
     </Tabs>
   )
 }

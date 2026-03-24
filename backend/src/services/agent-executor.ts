@@ -1,5 +1,5 @@
 import { db, schema } from '../db/client'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { getMemory, formatMemoryForPrompt, extractMemoryInstructions, bulkSetMemory, compressMemoryIfNeeded } from './memory'
 import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot, checkMonthlyBudget } from '../middleware/ratelimit'
 import { streamLLM, calcCost } from './llm-router'
@@ -7,6 +7,7 @@ import { searchKnowledge } from './vector-search'
 import { parseDelegateDirectives, stripDelegateDirectives, executeDelegations, buildSynthesisPrompt } from './orchestrator'
 import { parseAgentWebhooks, stripAgentWebhooks, executeAgentWebhooks } from './outbound-webhooks'
 import { fireWebhook } from './outbound-webhooks'
+import { ensureFreshToken, searchDriveFiles } from './google-auth'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -57,7 +58,41 @@ export async function executeAgentTask(opts: {
     const memoryBlock = formatMemoryForPrompt(memory)
     const isOrchestrator = agent.role.toLowerCase().includes('orchestrator') ||
                            agent.role.toLowerCase().includes('chief of staff')
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext)
+
+    // Fetch available agents list for orchestrator system prompt
+    let availableAgents: Array<{ name: string; role: string }> = []
+    if (isOrchestrator) {
+      const orgAgents = await db.select({ name: schema.agents.name, role: schema.agents.role })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.orgId, agent.orgId)))
+      availableAgents = orgAgents.filter(a => a.name !== agent.name)
+    }
+
+    // Fetch Drive context if Google is connected for this org
+    let driveContext = ''
+    try {
+      const oauthToken = await db.query.oauthTokens.findFirst({
+        where: and(eq(schema.oauthTokens.orgId, agent.orgId), eq(schema.oauthTokens.provider, 'google'))
+      })
+      if (oauthToken?.refreshToken) {
+        const fresh = await ensureFreshToken(oauthToken)
+        if (fresh.accessToken !== oauthToken.accessToken) {
+          await db.update(schema.oauthTokens)
+            .set({ accessToken: fresh.accessToken, expiresAt: fresh.expiresAt })
+            .where(eq(schema.oauthTokens.id, oauthToken.id))
+        }
+        const driveResults = await searchDriveFiles(fresh.accessToken, input, 3)
+        if (driveResults.length > 0) {
+          driveContext = '=== GOOGLE DRIVE DOCUMENTS ===\n' +
+            driveResults.map(r => `[${r.name}]: ${r.snippet}`).join('\n') +
+            '\n=== END DRIVE DOCS ==='
+        }
+      }
+    } catch (err) {
+      console.warn('Drive context fetch failed (non-critical):', err)
+    }
+
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents)
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
@@ -140,12 +175,14 @@ export async function executeAgentTask(opts: {
   }
 }
 
-function buildSystemPrompt(
+export function buildSystemPrompt(
   agent: typeof schema.agents.$inferSelect,
   memoryBlock: string,
   isOrchestrator: boolean,
   org?: typeof schema.organisations.$inferSelect | null,
   ragContext?: string,
+  driveContext?: string,
+  availableAgents?: Array<{ name: string; role: string }>,
 ): string {
   const lines: string[] = []
 
@@ -158,6 +195,9 @@ function buildSystemPrompt(
   }
   if (ragContext) {
     lines.push(ragContext, '')
+  }
+  if (driveContext) {
+    lines.push(driveContext, '')
   }
 
   if (agent.agentType === 'advisor' && agent.advisorPersona) {
@@ -182,9 +222,13 @@ function buildSystemPrompt(
     'Outbound webhooks: include [WEBHOOK: https://url | {"json":"payload"}] to call external APIs (stripped from visible output).',
   )
   if (isOrchestrator) {
+    if (availableAgents && availableAgents.length > 0) {
+      lines.push('', 'Available agents you can delegate to:')
+      availableAgents.forEach(a => lines.push(`• ${a.name} — ${a.role}`))
+    }
     lines.push(
       '',
-      'Orchestration: you can delegate tasks to specialist agents. Include [DELEGATE: AgentName | task description] in your response.',
+      'Orchestration: include [DELEGATE: AgentName | task description] in your response.',
       'Example: [DELEGATE: Dev | Write a TypeScript function to validate email addresses]',
       'Example: [DELEGATE: Maya | Draft a tweet announcing our new feature]',
       'Results are synthesised automatically. Delegate to max 3 agents per response.',

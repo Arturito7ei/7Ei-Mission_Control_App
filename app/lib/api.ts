@@ -109,6 +109,8 @@ export const api = {
     save: (orgId: string, d: any) => request(`/api/orgs/${orgId}/knowledge`, { method: 'POST', body: JSON.stringify(d) }),
     delete: (itemId: string) => request(`/api/knowledge/${itemId}`, { method: 'DELETE' }),
     search: (orgId: string, q: string, topK = 5) => request<{ results: SearchResult[]; query: string }>(`/api/orgs/${orgId}/knowledge/search?q=${encodeURIComponent(q)}&topK=${topK}`),
+    upload: (orgId: string, body: { name: string; content: string }) =>
+      request(`/api/orgs/${orgId}/knowledge/upload`, { method: 'POST', body: JSON.stringify(body) }),
   },
   comms: {
     inbox: (orgId: string, limit = 50) => request<{ messages: Message[] }>(`/api/orgs/${orgId}/inbox?limit=${limit}`),
