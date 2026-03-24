@@ -80,7 +80,7 @@ export interface AgentWebhookCall { url: string; payload: Record<string, unknown
 
 export function parseAgentWebhooks(output: string): AgentWebhookCall[] {
   const calls: AgentWebhookCall[] = []
-  const pattern = /\[WEBHOOK:\s*(https?:\/\/[^\s|\]]+)\s*\|\s*([^\]]+)\]/gi
+  const pattern = /\[WEBHOOK:\s*(https:\/\/[^\s|\]]+)\s*\|\s*([^\]]+)\]/gi
   let match
   while ((match = pattern.exec(output)) !== null) {
     const url  = match[1].trim()

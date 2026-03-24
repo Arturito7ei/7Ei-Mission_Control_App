@@ -1,7 +1,7 @@
 import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { getMemory, formatMemoryForPrompt, extractMemoryInstructions, bulkSetMemory, compressMemoryIfNeeded } from './memory'
-import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot } from '../middleware/ratelimit'
+import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot, checkMonthlyBudget } from '../middleware/ratelimit'
 import { streamLLM, calcCost } from './llm-router'
 import { searchKnowledge } from './vector-search'
 import { parseDelegateDirectives, stripDelegateDirectives, executeDelegations, buildSynthesisPrompt } from './orchestrator'
@@ -12,6 +12,7 @@ export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
   memorySaved?: Record<string, string>; provider?: string
   delegations?: string[]  // names of agents delegated to
+  budgetWarning?: { percentUsed: number; remaining: number }
 }
 
 export async function executeAgentTask(opts: {
@@ -105,6 +106,11 @@ export async function executeAgentTask(opts: {
 
     recordUsage(agent.orgId, tokensUsed, costUsd)
 
+    const budgetCheck = await checkMonthlyBudget(agent.orgId)
+    const budgetWarning = budgetCheck.percentUsed > 80
+      ? { percentUsed: budgetCheck.percentUsed, remaining: budgetCheck.remaining }
+      : undefined
+
     await db.update(schema.tasks).set({
       output: cleanedOutput, status: 'done', tokensUsed, costUsd,
       durationMs, llmModel: model, completedAt: new Date(),
@@ -120,6 +126,7 @@ export async function executeAgentTask(opts: {
       output: cleanedOutput, tokensUsed, costUsd, durationMs, provider,
       memorySaved: Object.keys(toSave).length > 0 ? toSave : undefined,
       delegations: delegatedAgentNames.length > 0 ? delegatedAgentNames : undefined,
+      budgetWarning,
     }
     onDone?.(execResult)
     return execResult

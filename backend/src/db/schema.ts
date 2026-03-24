@@ -13,6 +13,7 @@ export const organisations = sqliteTable('organisations', {
   cloudProvider: text('cloud_provider'),
   preferredLlm: text('preferred_llm'),
   deployConfig: text('deploy_config', { mode: 'json' }).$type<Record<string, string>>().default({}),
+  budgetMonthlyUsd: real('budget_monthly_usd'),
 })
 
 export const departments = sqliteTable('departments', {

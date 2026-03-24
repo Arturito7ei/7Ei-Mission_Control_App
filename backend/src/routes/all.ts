@@ -223,7 +223,7 @@ export async function agentRoutes(app: FastifyInstance) {
     await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'user', content: input, createdAt: new Date() })
     const result = await executeAgentTask({ agentId, taskId, input, conversationHistory: history ?? [] })
     await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-    return { output: result.output, taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd }
+    return { output: result.output, taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }
   })
   app.get('/api/agents/:agentId/stream', { websocket: true }, async (socket: any, req: any) => {
     socket.on('message', async (raw: Buffer) => {
@@ -241,11 +241,16 @@ export async function agentRoutes(app: FastifyInstance) {
           onToken: (token) => socket.send(JSON.stringify({ type: 'token', data: token })),
           onDone: async (result) => {
             await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-            socket.send(JSON.stringify({ type: 'done', taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd }))
+            socket.send(JSON.stringify({ type: 'done', taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }))
           },
         })
       } catch (err: any) { socket.send(JSON.stringify({ type: 'error', data: err.message })) }
     })
+  })
+  app.get('/api/orgs/:orgId/agents/advisors', async (req) => {
+    const { orgId } = req.params as any
+    return { agents: await db.select().from(schema.agents)
+      .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.agentType, 'advisor'))) }
   })
   app.post('/api/orgs/:orgId/agents/propose', async (req, reply) => {
     const { orgId } = req.params as any
@@ -388,6 +393,43 @@ export async function costRoutes(app: FastifyInstance) {
       return { costs: Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date)), period, groupBy, totals }
     }
     return { costs: totals, period, groupBy }
+  })
+  app.get('/api/orgs/:orgId/costs/summary', async (req) => {
+    const { orgId } = req.params as any
+    const now = new Date()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86400000)
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+
+    const allTasks = await db.select({
+      costUsd: schema.tasks.costUsd,
+      tokensUsed: schema.tasks.tokensUsed,
+      createdAt: schema.tasks.createdAt,
+    }).from(schema.tasks).where(and(eq(schema.tasks.orgId, orgId), gte(schema.tasks.createdAt, startOfMonth)))
+
+    const sumPeriod = (since: Date) => {
+      const filtered = allTasks.filter(t => (t.createdAt as Date) >= since)
+      return {
+        cost: filtered.reduce((s, t) => s + (t.costUsd ?? 0), 0),
+        tokens: filtered.reduce((s, t) => s + (t.tokensUsed ?? 0), 0),
+        tasks: filtered.length,
+      }
+    }
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    const monthData = sumPeriod(startOfMonth)
+    const budgetLimit = org?.budgetMonthlyUsd ?? null
+
+    return {
+      today: sumPeriod(startOfToday),
+      week: sumPeriod(startOfWeek),
+      month: monthData,
+      budget: {
+        monthlyLimitUsd: budgetLimit,
+        usedThisMonth: monthData.cost,
+        percentUsed: budgetLimit ? Math.round((monthData.cost / budgetLimit) * 100) : null,
+      },
+    }
   })
 }
 

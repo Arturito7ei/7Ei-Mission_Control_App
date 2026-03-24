@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'node:test'
+import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { calcNextRun, matchCronField } from '../services/scheduler'
 
@@ -88,6 +88,3 @@ describe('matchCronField', () => {
     assert.ok(!matchCronField('0-30/10', 40, 0, 59))
   })
 })
-
-// Export for matchCronField to be importable
-export { matchCronField }
