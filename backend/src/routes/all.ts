@@ -5,6 +5,7 @@ import { eq, and, desc, gte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
+import { streamLLM } from '../services/llm-router'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -246,6 +247,41 @@ export async function agentRoutes(app: FastifyInstance) {
       } catch (err: any) { socket.send(JSON.stringify({ type: 'error', data: err.message })) }
     })
   })
+  app.post('/api/orgs/:orgId/agents/propose', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { role } = req.body as any
+    if (!role) return reply.code(400).send({ error: 'role is required' })
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+
+    const prompt = [
+      `You are proposing an agent profile for the role: ${role}`,
+      org.mission ? `Organisation mission: ${org.mission}` : '',
+      org.culture  ? `Culture: ${org.culture}` : '',
+      '',
+      'Return a JSON object with exactly these keys:',
+      '{ "name": string, "role": string, "termsOfReference": string, "cv": string, "avatarEmoji": string }',
+      'Return ONLY the JSON object. No preamble, no markdown.',
+    ].filter(Boolean).join('\n')
+
+    let fullOutput = ''
+    await streamLLM({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      system: 'You are an expert org designer. Output valid JSON only.',
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 1024,
+      onToken: (t) => { fullOutput += t },
+    })
+
+    try {
+      const json = JSON.parse(fullOutput.replace(/```json|```/g, '').trim())
+      return { proposal: json }
+    } catch {
+      return reply.code(500).send({ error: 'LLM returned invalid JSON', raw: fullOutput })
+    }
+  })
 }
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -408,6 +444,19 @@ export async function skillRoutes(app: FastifyInstance) {
 
 // ─── KNOWLEDGE ───────────────────────────────────────────────────────────────
 
+function chunkText(text: string, wordsPerChunk: number, overlapWords: number): string[] {
+  const words = text.split(/\s+/)
+  const chunks: string[] = []
+  const step = wordsPerChunk - overlapWords
+  for (let i = 0; i < words.length; i += step) {
+    chunks.push(words.slice(i, i + wordsPerChunk).join(' '))
+    if (i + wordsPerChunk >= words.length) break
+  }
+  return chunks.length > 0 ? chunks : [text]
+}
+
+export { chunkText }
+
 export async function knowledgeRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/knowledge/browse', async (req, reply) => {
     const { orgId } = req.params as any
@@ -443,5 +492,36 @@ export async function knowledgeRoutes(app: FastifyInstance) {
   app.delete('/api/knowledge/:itemId', async (req, reply) => {
     await db.delete(schema.knowledgeItems).where(eq(schema.knowledgeItems.id, (req.params as any).itemId))
     reply.code(204)
+  })
+  app.post('/api/orgs/:orgId/knowledge/embed', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { name, text, type = 'document' } = req.body as any
+    if (!name || !text) return reply.code(400).send({ error: 'name and text are required' })
+
+    const chunks = chunkText(text, 500, 50)
+    const itemId = randomUUID()
+
+    await db.insert(schema.knowledgeItems).values({
+      id: itemId, orgId, name, type,
+      mimeType: 'text/plain',
+      externalId: null, externalUrl: null,
+      parentId: null, content: text.slice(0, 2000),
+      backend: 'text',
+      createdAt: new Date(),
+    })
+
+    // Fire-and-forget embedding
+    const embedPromises = chunks.map((chunk, i) =>
+      upsertDocument({
+        id: `${itemId}_chunk_${i}`,
+        orgId, text: chunk,
+        name: chunks.length > 1 ? `${name} (part ${i + 1})` : name,
+        type,
+      }).catch(err => console.warn('Embed chunk failed:', err))
+    )
+    Promise.all(embedPromises).catch(() => {})
+
+    reply.code(201)
+    return { item: { id: itemId, name, type, chunkCount: chunks.length } }
   })
 }
