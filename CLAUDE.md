@@ -1,7 +1,7 @@
 # 7Ei Mission Control — Claude Code Technical Requirements
 
 > **Read this file first.** It is the authoritative guide for all implementation work on this repo.
-> Work through tasks in Phase 0 → 1 → 2 order. Run tests after every task. Never skip tasks.
+> Sprints 1–2 (Phase 0–2) are **complete**. Phase 3 tasks are below. Run tests after every task. Never skip tasks.
 
 ---
 
@@ -26,28 +26,68 @@ Monorepo (npm workspaces)
 |---|---|
 | `backend/src/routes/all.ts` | All main API routes: orgs, agents, tasks, projects, costs, skills, knowledge |
 | `backend/src/services/agent-executor.ts` | Core LLM execution loop. `executeAgentTask()` + `buildSystemPrompt()` |
-| `backend/src/services/llm-router.ts` | Unified streaming: Anthropic / OpenAI / Gemini |
+| `backend/src/services/orchestrator.ts` | Agent-to-agent delegation: `parseDelegateDirectives()` + `executeDelegations()` + `buildSynthesisPrompt()` |
+| `backend/src/services/llm-router.ts` | Unified streaming: Anthropic / OpenAI / Gemini. `streamLLM()` + `calcCost()` |
 | `backend/src/services/vector-search.ts` | Pinecone: `embedText()` / `upsertDocument()` / `searchKnowledge()` |
+| `backend/src/services/memory.ts` | Agent long-term memory: `getMemory()` / `bulkSetMemory()` / `compressMemoryIfNeeded()` |
+| `backend/src/services/outbound-webhooks.ts` | Webhook parsing + execution: `parseAgentWebhooks()` / `fireWebhook()` |
+| `backend/src/middleware/ratelimit.ts` | Budget enforcement: `checkDailyBudget()` / `recordUsage()` / `acquireTaskSlot()` |
 | `backend/src/db/schema.ts` | Drizzle ORM schema. Source of truth for DB shape. |
 | `backend/src/db/migrations/` | SQL migration files. Run in order. |
-| `app/app/onboarding/index.tsx` | ✅ Arturito onboarding wizard (just built) |
-| `app/app/org/create.tsx` | ✅ Org creation screen (pre-fills from onboarding config) |
-| `app/store/index.ts` | ✅ Zustand store with OnboardingConfig type |
+| `app/app/(tabs)/_layout.tsx` | Tab bar: Home, Agents, Tasks, Comms, Costs (knowledge tab hidden via `href: null`) |
+| `app/app/(tabs)/knowledge.tsx` | Knowledge screen with semantic search (exists but hidden from tab bar) |
+| `app/app/onboarding/index.tsx` | Arturito onboarding wizard |
+| `app/app/org/create.tsx` | Org creation screen (pre-fills from onboarding config) |
+| `app/store/index.ts` | Zustand store with OnboardingConfig type |
 
 ---
 
-## Current state: what is MISSING
+## Current state: what is DONE
 
-These are the gaps. Every task below addresses one gap.
+### Sprint 1 (Phase 0–2) — All 10 tasks complete
 
-1. **`organisations` table missing columns** — `mission`, `culture`, `deployMode`, `cloudProvider`, `preferredLlm`, `deployConfig`
-2. **`POST /api/orgs` discards onboarding fields** — schema collects them, route throws them away
-3. **Arturito is not auto-created when an org is created** — must happen immediately, seeded with mission+culture
-4. **`buildSystemPrompt()` does not inject org context** — mission/culture never reach the LLM
-5. **`searchKnowledge()` is never called in the chat flow** — RAG is implemented but not wired
-6. **No `/knowledge/embed` endpoint** — cannot upload text to Pinecone from the app
-7. **`app/org/create.tsx` does not pass onboarding fields to the API** — form collects them, `api.orgs.create()` ignores them
-8. **After org creation, app navigates to `/(tabs)` instead of Arturito's chat**
+| Task | Description | Status |
+|---|---|---|
+| DB-001 | Onboarding columns on `organisations` table | ✅ |
+| ORG-001 | Persist onboarding fields in `POST /api/orgs` | ✅ |
+| ORG-002 | Auto-create Arturito + first agent on org creation | ✅ |
+| APP-001 | Pass full onboarding config to `POST /api/orgs` | ✅ |
+| APP-002 | Navigate to Arturito chat after org creation | ✅ |
+| AG-002 | Inject org knowledge into `buildSystemPrompt()` | ✅ |
+| AG-003 | Wire RAG retrieval into every agent chat call | ✅ |
+| KB-001 | `POST /api/orgs/:orgId/knowledge/embed` endpoint | ✅ |
+| AG-004 | `POST /api/orgs/:orgId/agents/propose` endpoint | ✅ |
+| LLM-001 | Per-org API key override in `llm-router.ts` | ✅ |
+
+### Sprint 2 — All 5 work orders complete
+
+| Work Order | Description | Status |
+|---|---|---|
+| FIX-001 | Test fixes + stabilisation | ✅ |
+| COST-001 | Cost centre with agent/day/project grouping, budget enforcement | ✅ |
+| AGENT-001 | Multi-agent templates + Silver Board advisors + orchestrator delegation | ✅ |
+| SKILL-001 | Skill library sync from GitHub, assign to agents, in-app browse | ✅ |
+| BUDGET-001 | Budget alerts (80% warning, 100% hard stop) + daily rate limiting | ✅ |
+
+### Test suite: 114 pass, 0 fail
+
+### Key capabilities now working
+
+- Onboarding persistence (mission, culture, deployMode, cloudProvider, preferredLlm)
+- Arturito auto-creation with org context seeded into TOR
+- Org context injection into `buildSystemPrompt()` (mission + culture)
+- RAG retrieval via Pinecone in every agent chat call
+- Knowledge embedding with chunking (`chunkText()` with overlap)
+- Agent proposal via LLM (`/agents/propose`)
+- Per-org API key override (org `deployConfig` → LLM router)
+- Cost tracking per agent/project/day with budget alerts
+- Multi-agent orchestration: `[DELEGATE: AgentName | task]` protocol
+- Silver Board advisors with persona embodiment
+- Skill library sync from `Arturito7ei/skill-library`
+- Outbound webhooks: `[WEBHOOK: url | payload]` protocol
+- Agent long-term memory: `[REMEMBER: key = value]` protocol
+- Task Kanban: todo → in_progress → blocked → done
+- WebSocket streaming for real-time chat
 
 ---
 
@@ -92,399 +132,267 @@ if (!agent) return reply.code(404).send({ error: 'Agent not found' })
 
 ---
 
-## PHASE 0 — Tasks (do these first, in order)
+## PHASE 3 — Google Drive Integration + Agent Task Routing
 
-### DB-001 — Add onboarding columns to organisations table
-
-**Files:** `backend/src/db/schema.ts` + create `backend/src/db/migrations/0002_onboarding_columns.sql`
-
-Add to `organisations` table in schema.ts (after `createdAt`):
-```typescript
-mission:       text('mission'),
-culture:       text('culture'),
-deployMode:    text('deploy_mode'),
-cloudProvider: text('cloud_provider'),
-preferredLlm:  text('preferred_llm'),
-deployConfig:  text('deploy_config', { mode: 'json' }).$type<Record<string, string>>().default({}),
-```
-
-Create migration SQL:
-```sql
--- 0002_onboarding_columns.sql
-ALTER TABLE organisations ADD COLUMN mission TEXT;
-ALTER TABLE organisations ADD COLUMN culture TEXT;
-ALTER TABLE organisations ADD COLUMN deploy_mode TEXT;
-ALTER TABLE organisations ADD COLUMN cloud_provider TEXT;
-ALTER TABLE organisations ADD COLUMN preferred_llm TEXT;
-ALTER TABLE organisations ADD COLUMN deploy_config TEXT DEFAULT '{}';
-```
-
-**Accept:** All columns nullable. Existing tests still pass. `npx drizzle-kit push` succeeds.
+**Sprint goal:** An org can connect Google Drive, upload/view documents in-app, agents can read Drive content during chat, and Arturito can assign tasks to specialist agents that auto-execute and report results.
 
 ---
 
-### ORG-001 — Persist onboarding fields in POST /api/orgs
+### DRIVE-001 — Google OAuth backend (token exchange + refresh)
 
-**File:** `backend/src/routes/all.ts` — `orgRoutes()`
+**Files:** Create `backend/src/services/google-auth.ts` + add routes to `backend/src/routes/all.ts`
 
-Extend `OrgSchema` with:
+**Step 1:** Create `backend/src/services/google-auth.ts`:
 ```typescript
-mission:       z.string().optional(),
-culture:       z.string().optional(),
-deployMode:    z.enum(['cloud', 'local']).optional(),
-cloudProvider: z.enum(['aws', 'aws_ch', 'gcp', 'gcp_ch', 'azure', 'oracle']).optional(),
-preferredLlm:  z.enum(['claude', 'gpt4o', 'gemini']).optional(),
-```
+// Google OAuth 2.0 helper
+// Scopes: https://www.googleapis.com/auth/drive.readonly
+//         https://www.googleapis.com/auth/drive.file
 
-Add to the `org` object in the POST handler:
-```typescript
-mission:       body.mission       ?? null,
-culture:       body.culture       ?? null,
-deployMode:    body.deployMode    ?? null,
-cloudProvider: body.cloudProvider ?? null,
-preferredLlm:  body.preferredLlm  ?? null,
-deployConfig:  {},
-```
-
-**Accept:** `POST /api/orgs` with `{ name, mission, culture }` → `GET /api/orgs/:id` returns those fields.
-
----
-
-### ORG-002 — Auto-create Arturito + first agent on org creation
-
-**File:** `backend/src/routes/all.ts` — POST /api/orgs handler  
-**Import at top:** `import { upsertDocument } from '../services/vector-search'`
-
-After `db.insert(organisations)`, add:
-
-```typescript
-// 1. Embed org knowledge into Pinecone (fire-and-forget)
-if (body.mission || body.culture) {
-  const knowledgeText = [
-    body.mission ? `Mission & Vision: ${body.mission}` : '',
-    body.culture  ? `Culture & Principles: ${body.culture}` : '',
-  ].filter(Boolean).join('\n\n')
-  upsertDocument({
-    id: `${org.id}_onboarding`,
-    orgId: org.id,
-    text: knowledgeText,
-    name: 'Onboarding — Mission & Culture',
-    type: 'onboarding',
-  }).catch(err => console.warn('Pinecone upsert failed (non-critical):', err))
+export function buildAuthUrl(orgId: string): string {
+  // Build Google OAuth consent URL with state=orgId
+  // redirect_uri = process.env.PUBLIC_URL + '/api/auth/google/callback'
+  // scope = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file'
 }
 
-// 2. Auto-create Arturito
-const arturitoId = randomUUID()
-const arturitoTOR = [
-  `You are Arturito, Chief of Staff at ${body.name}.`,
-  body.mission ? `Organisation mission: ${body.mission}` : '',
-  body.culture  ? `Culture: ${body.culture}` : '',
-  'You orchestrate all agents, route tasks, and maintain strategic oversight.',
-  'When asked to create agents, propose a full profile (name, role, TOR) using org context.',
-].filter(Boolean).join('\n')
-
-await db.insert(schema.agents).values({
-  id: arturitoId,
-  orgId: org.id,
-  departmentId: null,
-  name: 'Arturito',
-  role: 'Chief of Staff & Agent Orchestrator',
-  personality: 'Direct, strategic. Routes tasks efficiently. Speaks in first person.',
-  cv: null,
-  termsOfReference: arturitoTOR,
-  llmProvider: body.preferredLlm === 'gpt4o' ? 'openai'
-             : body.preferredLlm === 'gemini' ? 'google'
-             : 'anthropic',
-  llmModel: body.preferredLlm === 'gpt4o' ? 'gpt-4o'
-          : body.preferredLlm === 'gemini' ? 'gemini-2.0-flash'
-          : 'claude-sonnet-4-20250514',
-  skills: [],
-  status: 'idle',
-  avatarEmoji: '🎯',
-  agentType: 'standard',
-  advisorPersona: null,
-  memoryLongTerm: null,
-  createdAt: new Date(),
-})
-
-// 3. First specialist agent (if selected)
-const FIRST_AGENT_TEMPLATES: Record<string, { name: string; role: string; emoji: string }> = {
-  marketing:   { name: 'Maya', role: 'Head of Marketing',   emoji: '📣' },
-  engineering: { name: 'Dev',  role: 'Head of Engineering', emoji: '💻' },
-  finance:     { name: 'CFO',  role: 'Head of Finance',     emoji: '📊' },
-  operations:  { name: 'Ops',  role: 'Head of Operations',  emoji: '⚙️' },
-}
-const firstRole = (req.body as any).firstAgentRole
-if (firstRole && FIRST_AGENT_TEMPLATES[firstRole]) {
-  const tmpl = FIRST_AGENT_TEMPLATES[firstRole]
-  await db.insert(schema.agents).values({
-    id: randomUUID(), orgId: org.id, departmentId: null,
-    name: tmpl.name, role: tmpl.role,
-    personality: null, cv: null,
-    termsOfReference: `You are ${tmpl.name}, ${tmpl.role} at ${body.name}.`,
-    llmProvider: 'anthropic',
-    llmModel: 'claude-sonnet-4-20250514',
-    skills: [], status: 'idle',
-    avatarEmoji: tmpl.emoji, agentType: 'standard',
-    advisorPersona: null, memoryLongTerm: null,
-    createdAt: new Date(),
-  })
+export async function exchangeCode(code: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
+  // POST https://oauth2.googleapis.com/token
+  // Return access_token, refresh_token, expiry
 }
 
-// 4. Return org + arturitoId
-reply.code(201)
-return { org, arturitoId }
+export async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; expiresAt: Date }> {
+  // POST https://oauth2.googleapis.com/token with grant_type=refresh_token
+}
 ```
 
-**Accept:** `POST /api/orgs` returns `{ org, arturitoId }`. Arturito agent exists immediately. `firstAgentRole='marketing'` creates a second agent.
-
----
-
-### APP-001 — Pass full onboarding config to POST /api/orgs
-
-**File:** `app/app/org/create.tsx` — `handleCreate()`
-
-Find the `api.orgs.create()` call. Add:
+**Step 2:** Add `oauthTokens` table to `backend/src/db/schema.ts`:
 ```typescript
-const { org, arturitoId } = await api.orgs.create({
-  name: name.trim(),
-  description: description || undefined,
-  mission:        onboardingConfig?.mission        || undefined,
-  culture:        onboardingConfig?.culture        || undefined,
-  deployMode:     onboardingConfig?.deployMode     || undefined,
-  cloudProvider:  onboardingConfig?.cloudProvider  || undefined,
-  preferredLlm:   onboardingConfig?.preferredLlm   || undefined,
-  firstAgentRole: onboardingConfig?.firstAgentRole || undefined,
+export const oauthTokens = sqliteTable('oauth_tokens', {
+  id:           text('id').primaryKey(),
+  orgId:        text('org_id').notNull(),
+  provider:     text('provider').notNull(),         // 'google'
+  accessToken:  text('access_token').notNull(),
+  refreshToken: text('refresh_token'),
+  expiresAt:    integer('expires_at', { mode: 'timestamp' }),
+  scopes:       text('scopes'),
+  createdAt:    integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 ```
 
-Also update the `api.orgs.create` type in `app/lib/api.ts` to accept these fields if it is typed.
-
-**Accept:** After creation, `GET /api/orgs/:id` returns mission and culture correctly.
-
----
-
-### APP-002 — Navigate to Arturito chat after org creation
-
-**File:** `app/app/org/create.tsx` — success path in `handleCreate()`
-
-Replace `router.replace('/(tabs)')` with:
+**Step 3:** Add routes in `all.ts` (new `authRoutes()` function):
 ```typescript
-setOrgs([...orgs, org])
-setCurrentOrg(org)
-if (arturitoId) {
-  router.replace(`/agents/${arturitoId}?firstTime=true`)
-} else {
-  router.replace('/(tabs)')
-}
-```
+app.get('/api/orgs/:orgId/auth/google', async (req, reply) => {
+  // Return { url: buildAuthUrl(orgId) }
+})
 
-**File:** `app/app/agents/[id].tsx` — add first-time welcome trigger:
-```typescript
-const { id: agentId, firstTime } = useLocalSearchParams<{ id: string; firstTime?: string }>()
+app.get('/api/auth/google/callback', async (req, reply) => {
+  // Exchange code, store tokens in oauthTokens table, redirect to app
+})
 
-useEffect(() => {
-  if (firstTime === 'true' && messages.length === 0) {
-    sendMessage('Hello Arturito, I just set up our organisation. Please introduce yourself and tell me what you can help me with today.')
-  }
-}, [firstTime])
-```
-
-**Accept:** After org creation, app opens on Arturito chat screen. Arturito sends a greeting (LLM-generated, not hardcoded).
-
----
-
-## PHASE 1 — Tasks (after Phase 0 is complete and tested)
-
-### AG-002 — Inject org knowledge into buildSystemPrompt()
-
-**File:** `backend/src/services/agent-executor.ts`
-
-**Step 1:** After agent lookup, add org lookup:
-```typescript
-const org = await db.query.organisations.findFirst({
-  where: eq(schema.organisations.id, agent.orgId)
+app.get('/api/orgs/:orgId/auth/google/status', async (req, reply) => {
+  // Return { connected: boolean, expiresAt }
 })
 ```
 
-**Step 2:** Extend `buildSystemPrompt` signature to accept `org` parameter:
-```typescript
-function buildSystemPrompt(
-  agent: typeof schema.agents.$inferSelect,
-  memoryBlock: string,
-  isOrchestrator: boolean,
-  org?: typeof schema.organisations.$inferSelect | null,
-  ragContext?: string,
-): string {
-  const lines: string[] = []
-  
-  // ADD AT THE VERY TOP — before agent identity:
-  if (org?.mission || org?.culture) {
-    lines.push('=== ORGANISATION CONTEXT ===')
-    if (org.mission) lines.push(`Mission & Vision: ${org.mission}`)
-    if (org.culture)  lines.push(`Culture & Principles: ${org.culture}`)
-    lines.push('=== END ORGANISATION CONTEXT ===', '')
-  }
-  if (ragContext) {
-    lines.push(ragContext, '')
-  }
-  
-  // ... rest of existing function unchanged ...
-}
-```
+**Env vars required:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 
-**Accept:** Arturito answers questions about 'our mission' correctly when mission is set. Null mission = no context block.
+**Accept:** OAuth flow completes. Token stored in DB. `/status` returns `{ connected: true }`. Token auto-refreshes when expired.
 
 ---
 
-### AG-003 — Wire RAG retrieval into every agent chat call
+### DRIVE-002 — Agent reads Drive docs during chat (RAG bridge)
 
-**File:** `backend/src/services/agent-executor.ts`  
-**Import:** `import { searchKnowledge } from './vector-search'`
+**File:** `backend/src/services/agent-executor.ts` — `executeAgentTask()`
 
-After org lookup, before `buildSystemPrompt`:
+After the existing RAG search block (around line ~35 in `executeAgentTask`), add a Google Drive document fetch step:
+
 ```typescript
-let ragContext = ''
-if (process.env.PINECONE_API_KEY) {
+// After RAG retrieval, also fetch relevant Drive docs if Google is connected
+let driveContext = ''
+const oauthToken = await db.query.oauthTokens.findFirst({
+  where: and(eq(schema.oauthTokens.orgId, agent.orgId), eq(schema.oauthTokens.provider, 'google'))
+})
+if (oauthToken) {
   try {
-    const results = await searchKnowledge(input, agent.orgId, 5)
-    if (results.length > 0) {
-      ragContext = '=== RELEVANT KNOWLEDGE ===\n' +
-        results.map(r => `[${r.name}] (relevance: ${r.score.toFixed(2)})`).join('\n') +
-        '\n=== END RELEVANT KNOWLEDGE ==='
+    const token = await ensureFreshToken(oauthToken)  // from google-auth.ts
+    // Search Drive for files matching the user's input (use Drive API search)
+    const driveResults = await searchDriveFiles(token.accessToken, input, 3)
+    if (driveResults.length > 0) {
+      driveContext = '=== GOOGLE DRIVE DOCUMENTS ===\n' +
+        driveResults.map(r => `[${r.name}]: ${r.snippet}`).join('\n') +
+        '\n=== END DRIVE DOCS ==='
     }
   } catch (err) {
-    console.warn('RAG retrieval failed (non-critical):', err)
-    // Never throw — agent still works without RAG
+    console.warn('Drive context fetch failed (non-critical):', err)
   }
 }
 ```
 
-**Accept:** Agent works normally when `PINECONE_API_KEY` is not set. When set and docs are embedded, context appears in responses.
+Then pass `driveContext` into `buildSystemPrompt()`:
+```typescript
+const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext)
+```
+
+Add `searchDriveFiles()` helper to `google-auth.ts`:
+```typescript
+export async function searchDriveFiles(accessToken: string, query: string, maxResults: number) {
+  // GET https://www.googleapis.com/drive/v3/files?q=fullText contains '...'
+  // For each result, fetch first 500 chars of content via export/download
+  // Return [{ name, snippet }]
+}
+```
+
+**Accept:** Agent references Drive document content in responses when Google is connected. Works normally without Google connected.
 
 ---
 
-### KB-001 — Add POST /api/orgs/:orgId/knowledge/embed endpoint
+### DRIVE-003 — Upload + view .md files in-app
 
 **File:** `backend/src/routes/all.ts` — `knowledgeRoutes()`
 
-Add this endpoint and helper function:
+Add upload endpoint:
 ```typescript
-function chunkText(text: string, wordsPerChunk: number, overlapWords: number): string[] {
-  const words = text.split(/\s+/)
-  const chunks: string[] = []
-  const step = wordsPerChunk - overlapWords
-  for (let i = 0; i < words.length; i += step) {
-    chunks.push(words.slice(i, i + wordsPerChunk).join(' '))
-    if (i + wordsPerChunk >= words.length) break
-  }
-  return chunks.length > 0 ? chunks : [text]
-}
-
-app.post('/api/orgs/:orgId/knowledge/embed', async (req, reply) => {
+app.post('/api/orgs/:orgId/knowledge/upload', async (req, reply) => {
   const { orgId } = req.params as any
-  const { name, text, type = 'document' } = req.body as any
-  if (!name || !text) return reply.code(400).send({ error: 'name and text are required' })
+  const { name, content, mimeType = 'text/markdown' } = req.body as any
+  if (!name || !content) return reply.code(400).send({ error: 'name and content required' })
 
-  const chunks = chunkText(text, 500, 50)
-  const itemId = randomUUID()
-
-  await db.insert(schema.knowledgeItems).values({
-    id: itemId, orgId, name, type,
-    mimeType: 'text/plain',
-    externalId: null, externalUrl: null,
-    parentId: null, content: text.slice(0, 2000),
-    backend: 'text',
+  const item = {
+    id: randomUUID(), orgId, name, type: 'document',
+    mimeType, externalId: null, externalUrl: null,
+    parentId: null, content,
+    backend: 'upload',
     createdAt: new Date(),
-  })
+  }
+  await db.insert(schema.knowledgeItems).values(item)
 
-  // Fire-and-forget embedding
-  const embedPromises = chunks.map((chunk, i) =>
-    upsertDocument({
-      id: `${itemId}_chunk_${i}`,
-      orgId, text: chunk,
-      name: chunks.length > 1 ? `${name} (part ${i + 1})` : name,
-      type,
-    }).catch(err => console.warn('Embed chunk failed:', err))
-  )
-  Promise.all(embedPromises).catch(() => {})
+  // Also embed for RAG (fire-and-forget)
+  upsertDocument({ id: item.id, orgId, text: content, name, type: 'document' })
+    .catch(err => console.warn('Embed failed:', err))
 
   reply.code(201)
-  return { item: { id: itemId, name, type, chunkCount: chunks.length } }
+  return { item }
+})
+
+app.get('/api/knowledge/:itemId/content', async (req, reply) => {
+  const { itemId } = req.params as any
+  const item = await db.query.knowledgeItems.findFirst({ where: eq(schema.knowledgeItems.id, itemId) })
+  if (!item) return reply.code(404).send({ error: 'Not found' })
+  return { content: item.content, name: item.name, mimeType: item.mimeType }
 })
 ```
 
-**Accept:** POST with 1000-word text returns `chunkCount: 2`. Knowledge item appears in GET list.
+**Accept:** Upload a .md file → appears in knowledge list → can read content back → appears in RAG search results.
 
 ---
 
-## PHASE 2 — Tasks (after Phase 1 is complete and tested)
+### KB-TAB-001 — Show Knowledge tab in mobile app
 
-### AG-004 — POST /api/orgs/:orgId/agents/propose
+**File:** `app/app/(tabs)/_layout.tsx`
 
-**File:** `backend/src/routes/all.ts` — `agentRoutes()`  
-**Import at top if missing:** `import { streamLLM } from '../services/llm-router'`
+Change the knowledge tab from hidden to visible:
+```typescript
+// BEFORE:
+<Tabs.Screen name="knowledge" options={{ href: null }} />
+
+// AFTER:
+<Tabs.Screen name="knowledge" options={{ title: 'KB', tabBarIcon: ({ focused }) => <TabIcon emoji="📚" focused={focused} /> }} />
+```
+
+**File:** `app/app/(tabs)/knowledge.tsx`
+
+Add an upload button to the header that opens a text input modal for pasting .md content:
+```typescript
+// Add to ListHeaderComponent — an "Upload .md" button
+<TouchableOpacity
+  style={[styles.uploadBtn, { backgroundColor: theme.accent }]}
+  onPress={() => setShowUploadModal(true)}
+>
+  <Text style={{ color: '#fff', fontWeight: '600' }}>+ Upload .md</Text>
+</TouchableOpacity>
+```
+
+Add a modal with `name` + `content` fields that calls `POST /api/orgs/:orgId/knowledge/upload`.
+
+**Accept:** Knowledge tab visible in bottom bar. User can upload .md content. Files appear in the list and are searchable.
+
+---
+
+### TASK-001 — Agent task auto-execution (assign → execute → report)
+
+**File:** `backend/src/routes/all.ts` — `taskRoutes()`
+
+Add an execution endpoint:
+```typescript
+app.post('/api/tasks/:taskId/execute', async (req, reply) => {
+  const { taskId } = req.params as any
+  const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+  if (!task) return reply.code(404).send({ error: 'Task not found' })
+  if (!task.agentId) return reply.code(400).send({ error: 'Task has no assigned agent' })
+  if (task.status === 'done') return reply.code(400).send({ error: 'Task already completed' })
+
+  // Execute asynchronously — return immediately with 202
+  reply.code(202)
+
+  // Fire-and-forget execution
+  executeAgentTask({
+    agentId: task.agentId,
+    taskId: task.id,
+    input: task.input ?? task.title,
+  }).catch(err => console.warn('Task execution failed:', err))
+
+  return { taskId, status: 'executing' }
+})
+```
+
+**Accept:** `POST /api/tasks/:taskId/execute` → returns 202 → task moves to `in_progress` → agent executes → task moves to `done` with output.
+
+---
+
+### ROUTE-001 — Arturito task routing (orchestrator creates + assigns + executes)
+
+**File:** `backend/src/services/orchestrator.ts` — extend `executeDelegations()`
+
+Currently `executeDelegations()` calls `executeAgentTask()` synchronously for each delegation. Extend it to also create a proper task entry with the parent reference:
 
 ```typescript
-app.post('/api/orgs/:orgId/agents/propose', async (req, reply) => {
-  const { orgId } = req.params as any
-  const { role } = req.body as any
-  if (!role) return reply.code(400).send({ error: 'role is required' })
+// In executeDelegations(), after the existing task insert, add parentTaskId tracking:
+// Add to tasks insert: parentTaskId field (requires schema update below)
 
-  const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
-  if (!org) return reply.code(404).send({ error: 'Org not found' })
+// After task completes, fire webhook with result summary:
+await fireWebhook('delegation.complete', orgId, {
+  parentTaskId,
+  delegatedTo: agent.name,
+  taskId,
+  outputPreview: result.output.slice(0, 200),
+})
+```
 
-  const prompt = [
-    `You are proposing an agent profile for the role: ${role}`,
-    org.mission ? `Organisation mission: ${org.mission}` : '',
-    org.culture  ? `Culture: ${org.culture}` : '',
-    '',
-    'Return a JSON object with exactly these keys:',
-    '{ "name": string, "role": string, "termsOfReference": string, "cv": string, "avatarEmoji": string }',
-    'Return ONLY the JSON object. No preamble, no markdown.',
-  ].filter(Boolean).join('\n')
+**File:** `backend/src/db/schema.ts` — Add `parentTaskId` to tasks table:
+```typescript
+parentTaskId: text('parent_task_id'),
+```
 
-  let fullOutput = ''
-  await streamLLM({
-    provider: 'anthropic',
-    model: 'claude-sonnet-4-20250514',
-    system: 'You are an expert org designer. Output valid JSON only.',
-    messages: [{ role: 'user', content: prompt }],
-    maxTokens: 1024,
-    onToken: (t) => { fullOutput += t },
-  })
+**Migration:** `0003_parent_task_id.sql`:
+```sql
+ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;
+```
 
-  try {
-    const json = JSON.parse(fullOutput.replace(/```json|```/g, '').trim())
-    return { proposal: json }
-  } catch {
-    return reply.code(500).send({ error: 'LLM returned invalid JSON', raw: fullOutput })
+**File:** `backend/src/services/agent-executor.ts` — Update `buildSystemPrompt()`:
+
+For the orchestrator, include available agents in the system prompt so Arturito knows who to delegate to:
+```typescript
+if (isOrchestrator) {
+  const orgAgents = await db.select({ name: schema.agents.name, role: schema.agents.role })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, agent.orgId), ne(schema.agents.id, agent.id)))
+  if (orgAgents.length > 0) {
+    lines.push('', 'Available agents for delegation:')
+    orgAgents.forEach(a => lines.push(`• ${a.name} — ${a.role}`))
   }
-})
+}
 ```
 
-**Accept:** Returns valid JSON with all 5 keys. Handles LLM parse failure with 500 + raw output.
-
----
-
-### LLM-001 — Per-org API key override in llm-router.ts
-
-**File:** `backend/src/services/llm-router.ts`
-
-Add `orgApiKey?: string` to `LLMStreamOpts`. Use it in all three stream functions:
-```typescript
-// streamAnthropic: apiKey: opts.orgApiKey ?? process.env.ANTHROPIC_API_KEY
-// streamOpenAI:    const apiKey = opts.orgApiKey ?? process.env.OPENAI_API_KEY
-// streamGemini:    const apiKey = opts.orgApiKey ?? process.env.GEMINI_API_KEY
-```
-
-In `agent-executor.ts`, after org lookup:
-```typescript
-const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
-// Then pass orgApiKey to streamLLM()
-```
-
-**Accept:** If `deployConfig.anthropic_api_key` is set on the org, it is used. If not, env var is used. No change to existing behaviour when orgApiKey is undefined.
+**Accept:** Arturito lists available agents in system prompt. Delegated tasks have `parentTaskId` set. Webhook fires on delegation complete.
 
 ---
 
@@ -492,7 +400,7 @@ const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefin
 
 - Every new function needs at least one unit test in `backend/src/tests/`
 - Use Node.js built-in test runner — no external frameworks
-- All 55 existing tests must pass after every task
+- All 114 existing tests must pass after every task
 
 ```typescript
 import { test } from 'node:test'
@@ -504,15 +412,13 @@ test('[TASK-ID] description', async () => {
 })
 ```
 
-Required tests per task:
-- **DB-001:** `chunkText()` returns correct count and overlap
-- **ORG-001:** POST /api/orgs persists mission+culture; works without optional fields
-- **ORG-002:** Returns `arturitoId`; Arturito agent exists after create; `firstAgentRole` creates 2nd agent
-- **AG-002:** `buildSystemPrompt()` includes org block when mission set; absent when null
-- **AG-003:** `executeAgentTask()` completes normally without `PINECONE_API_KEY`
-- **KB-001:** `chunkText()` chunks correctly with overlap; endpoint returns `chunkCount`
-- **AG-004:** Returns valid JSON with 5 keys; handles parse failure gracefully
-- **LLM-001:** Uses `orgApiKey` when present; falls back to env when undefined
+Required tests per Phase 3 task:
+- **DRIVE-001:** `buildAuthUrl()` returns valid URL; `exchangeCode()` stores tokens; `/status` returns connected=true
+- **DRIVE-002:** Agent works without Google connected; `searchDriveFiles()` returns results when connected
+- **DRIVE-003:** Upload returns item with content; `/content` endpoint returns stored content; RAG embed fires
+- **KB-TAB-001:** (Manual test) Knowledge tab visible in app; upload modal works
+- **TASK-001:** `/execute` returns 202; task status moves to `done` after execution
+- **ROUTE-001:** `parentTaskId` set on delegated tasks; orchestrator system prompt includes available agents
 
 ---
 
@@ -531,6 +437,9 @@ flyctl secrets set \
 # Optional but needed for full functionality:
 # OPENAI_API_KEY, GEMINI_API_KEY, PINECONE_API_KEY,
 # PINECONE_PROJECT_ID, PINECONE_ENVIRONMENT, REDIS_URL
+
+# Phase 3 additions:
+# GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 ```
 
 ---
@@ -548,4 +457,4 @@ flyctl secrets set \
 
 ---
 
-*Last updated: March 2026 · 7Ei Mission Control v1.0*
+*Last updated: March 2026 · 7Ei Mission Control v1.1 — Sprint 3*
