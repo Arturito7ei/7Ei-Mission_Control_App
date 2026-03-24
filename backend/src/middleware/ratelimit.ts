@@ -1,4 +1,6 @@
 import { FastifyInstance } from 'fastify'
+import { db, schema } from '../db/client'
+import { eq, and, gte } from 'drizzle-orm'
 
 // ─── Rate Limiting with Redis fallback to in-memory ────────────────────────────────
 // If REDIS_URL is set, uses Redis for distributed rate limiting across instances.
@@ -113,6 +115,23 @@ export function getUsageStats(orgId: string) {
     limits: LIMITS,
     backend: redis ? 'redis' : 'memory',
   }
+}
+
+export async function checkMonthlyBudget(orgId: string): Promise<{ allowed: boolean; percentUsed: number; remaining: number }> {
+  const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+  const budgetLimit = org?.budgetMonthlyUsd ?? null
+  if (budgetLimit == null) return { allowed: true, percentUsed: 0, remaining: Infinity }
+
+  const now = new Date()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const tasks = await db.select({ costUsd: schema.tasks.costUsd })
+    .from(schema.tasks)
+    .where(and(eq(schema.tasks.orgId, orgId), gte(schema.tasks.createdAt, startOfMonth)))
+
+  const usedThisMonth = tasks.reduce((s, t) => s + (t.costUsd ?? 0), 0)
+  const percentUsed = Math.round((usedThisMonth / budgetLimit) * 100)
+  const remaining = Math.max(0, budgetLimit - usedThisMonth)
+  return { allowed: percentUsed < 100, percentUsed, remaining }
 }
 
 export async function usageRoutes(app: FastifyInstance) {

@@ -52,13 +52,23 @@ export default function CreateOrgScreen() {
     }
     setLoading(true)
     try {
-      const { org } = await api.orgs.create({
+      const { org, arturitoId } = await api.orgs.create({
         name: name.trim(),
         description: description || undefined,
+        mission:        onboardingConfig?.mission        || undefined,
+        culture:        onboardingConfig?.culture        || undefined,
+        deployMode:     onboardingConfig?.deployMode     || undefined,
+        cloudProvider:  onboardingConfig?.cloudProvider  || undefined,
+        preferredLlm:   onboardingConfig?.preferredLlm   || undefined,
+        firstAgentRole: onboardingConfig?.firstAgentRole || undefined,
       })
       setOrgs([...orgs, org])
       setCurrentOrg(org)
-      router.replace('/(tabs)')
+      if (arturitoId) {
+        router.replace(`/agents/${arturitoId}?firstTime=true`)
+      } else {
+        router.replace('/(tabs)')
+      }
     } catch (e: any) {
       Alert.alert('Error', e.message)
     } finally {

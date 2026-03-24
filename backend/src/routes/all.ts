@@ -4,6 +4,8 @@ import { db, schema } from '../db/client'
 import { eq, and, desc, gte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
+import { upsertDocument } from '../services/vector-search'
+import { streamLLM } from '../services/llm-router'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -20,7 +22,16 @@ export const AGENT_TEMPLATES = {
 // ─── ORGS ────────────────────────────────────────────────────────────────────
 
 export async function orgRoutes(app: FastifyInstance) {
-  const OrgSchema = z.object({ name: z.string().min(1).max(100), description: z.string().optional(), logoUrl: z.string().url().optional() })
+  const OrgSchema = z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().optional(),
+    logoUrl: z.string().url().optional(),
+    mission: z.string().optional(),
+    culture: z.string().optional(),
+    deployMode: z.enum(['cloud', 'local']).optional(),
+    cloudProvider: z.enum(['aws', 'aws_ch', 'gcp', 'gcp_ch', 'azure', 'oracle']).optional(),
+    preferredLlm: z.enum(['claude', 'gpt4o', 'gemini']).optional(),
+  })
 
   app.get('/api/orgs', async (req) => {
     const userId = (req as any).auth?.userId ?? ''
@@ -29,9 +40,85 @@ export async function orgRoutes(app: FastifyInstance) {
   app.post('/api/orgs', async (req, reply) => {
     const userId = (req as any).auth?.userId ?? 'anon'
     const body = OrgSchema.parse(req.body)
-    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date() }
+    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date(), mission: body.mission ?? null, culture: body.culture ?? null, deployMode: body.deployMode ?? null, cloudProvider: body.cloudProvider ?? null, preferredLlm: body.preferredLlm ?? null, deployConfig: {} }
     await db.insert(schema.organisations).values(org)
-    reply.code(201); return { org }
+
+    // 1. Embed org knowledge into Pinecone (fire-and-forget)
+    if (body.mission || body.culture) {
+      const knowledgeText = [
+        body.mission ? `Mission & Vision: ${body.mission}` : '',
+        body.culture ? `Culture & Principles: ${body.culture}` : '',
+      ].filter(Boolean).join('\n\n')
+      upsertDocument({
+        id: `${org.id}_onboarding`,
+        orgId: org.id,
+        text: knowledgeText,
+        name: 'Onboarding — Mission & Culture',
+        type: 'onboarding',
+      }).catch(err => console.warn('Pinecone upsert failed (non-critical):', err))
+    }
+
+    // 2. Auto-create Arturito
+    const arturitoId = randomUUID()
+    const arturitoTOR = [
+      `You are Arturito, Chief of Staff at ${body.name}.`,
+      body.mission ? `Organisation mission: ${body.mission}` : '',
+      body.culture ? `Culture: ${body.culture}` : '',
+      'You orchestrate all agents, route tasks, and maintain strategic oversight.',
+      'When asked to create agents, propose a full profile (name, role, TOR) using org context.',
+    ].filter(Boolean).join('\n')
+
+    await db.insert(schema.agents).values({
+      id: arturitoId,
+      orgId: org.id,
+      departmentId: null,
+      name: 'Arturito',
+      role: 'Chief of Staff & Agent Orchestrator',
+      personality: 'Direct, strategic. Routes tasks efficiently. Speaks in first person.',
+      cv: null,
+      termsOfReference: arturitoTOR,
+      llmProvider: body.preferredLlm === 'gpt4o' ? 'openai'
+                 : body.preferredLlm === 'gemini' ? 'google'
+                 : 'anthropic',
+      llmModel: body.preferredLlm === 'gpt4o' ? 'gpt-4o'
+              : body.preferredLlm === 'gemini' ? 'gemini-2.0-flash'
+              : 'claude-sonnet-4-20250514',
+      skills: [],
+      status: 'idle',
+      avatarEmoji: '🎯',
+      agentType: 'standard',
+      advisorPersona: null,
+      memoryLongTerm: null,
+      createdAt: new Date(),
+    })
+
+    // 3. First specialist agent (if selected)
+    const FIRST_AGENT_TEMPLATES: Record<string, { name: string; role: string; emoji: string }> = {
+      marketing:   { name: 'Maya', role: 'Head of Marketing',   emoji: '📣' },
+      engineering: { name: 'Dev',  role: 'Head of Engineering', emoji: '💻' },
+      finance:     { name: 'CFO',  role: 'Head of Finance',     emoji: '📊' },
+      operations:  { name: 'Ops',  role: 'Head of Operations',  emoji: '⚙️' },
+    }
+    const firstRole = (req.body as any).firstAgentRole
+    if (firstRole && FIRST_AGENT_TEMPLATES[firstRole]) {
+      const tmpl = FIRST_AGENT_TEMPLATES[firstRole]
+      await db.insert(schema.agents).values({
+        id: randomUUID(), orgId: org.id, departmentId: null,
+        name: tmpl.name, role: tmpl.role,
+        personality: null, cv: null,
+        termsOfReference: `You are ${tmpl.name}, ${tmpl.role} at ${body.name}.`,
+        llmProvider: 'anthropic',
+        llmModel: 'claude-sonnet-4-20250514',
+        skills: [], status: 'idle',
+        avatarEmoji: tmpl.emoji, agentType: 'standard',
+        advisorPersona: null, memoryLongTerm: null,
+        createdAt: new Date(),
+      })
+    }
+
+    // 4. Return org + arturitoId
+    reply.code(201)
+    return { org, arturitoId }
   })
   app.get('/api/orgs/:orgId', async (req, reply) => {
     const { orgId } = req.params as any
@@ -136,7 +223,7 @@ export async function agentRoutes(app: FastifyInstance) {
     await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'user', content: input, createdAt: new Date() })
     const result = await executeAgentTask({ agentId, taskId, input, conversationHistory: history ?? [] })
     await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-    return { output: result.output, taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd }
+    return { output: result.output, taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }
   })
   app.get('/api/agents/:agentId/stream', { websocket: true }, async (socket: any, req: any) => {
     socket.on('message', async (raw: Buffer) => {
@@ -154,11 +241,51 @@ export async function agentRoutes(app: FastifyInstance) {
           onToken: (token) => socket.send(JSON.stringify({ type: 'token', data: token })),
           onDone: async (result) => {
             await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-            socket.send(JSON.stringify({ type: 'done', taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd }))
+            socket.send(JSON.stringify({ type: 'done', taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }))
           },
         })
       } catch (err: any) { socket.send(JSON.stringify({ type: 'error', data: err.message })) }
     })
+  })
+  app.get('/api/orgs/:orgId/agents/advisors', async (req) => {
+    const { orgId } = req.params as any
+    return { agents: await db.select().from(schema.agents)
+      .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.agentType, 'advisor'))) }
+  })
+  app.post('/api/orgs/:orgId/agents/propose', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { role } = req.body as any
+    if (!role) return reply.code(400).send({ error: 'role is required' })
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+
+    const prompt = [
+      `You are proposing an agent profile for the role: ${role}`,
+      org.mission ? `Organisation mission: ${org.mission}` : '',
+      org.culture  ? `Culture: ${org.culture}` : '',
+      '',
+      'Return a JSON object with exactly these keys:',
+      '{ "name": string, "role": string, "termsOfReference": string, "cv": string, "avatarEmoji": string }',
+      'Return ONLY the JSON object. No preamble, no markdown.',
+    ].filter(Boolean).join('\n')
+
+    let fullOutput = ''
+    await streamLLM({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+      system: 'You are an expert org designer. Output valid JSON only.',
+      messages: [{ role: 'user', content: prompt }],
+      maxTokens: 1024,
+      onToken: (t) => { fullOutput += t },
+    })
+
+    try {
+      const json = JSON.parse(fullOutput.replace(/```json|```/g, '').trim())
+      return { proposal: json }
+    } catch {
+      return reply.code(500).send({ error: 'LLM returned invalid JSON', raw: fullOutput })
+    }
   })
 }
 
@@ -267,6 +394,43 @@ export async function costRoutes(app: FastifyInstance) {
     }
     return { costs: totals, period, groupBy }
   })
+  app.get('/api/orgs/:orgId/costs/summary', async (req) => {
+    const { orgId } = req.params as any
+    const now = new Date()
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86400000)
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+
+    const allTasks = await db.select({
+      costUsd: schema.tasks.costUsd,
+      tokensUsed: schema.tasks.tokensUsed,
+      createdAt: schema.tasks.createdAt,
+    }).from(schema.tasks).where(and(eq(schema.tasks.orgId, orgId), gte(schema.tasks.createdAt, startOfMonth)))
+
+    const sumPeriod = (since: Date) => {
+      const filtered = allTasks.filter(t => (t.createdAt as Date) >= since)
+      return {
+        cost: filtered.reduce((s, t) => s + (t.costUsd ?? 0), 0),
+        tokens: filtered.reduce((s, t) => s + (t.tokensUsed ?? 0), 0),
+        tasks: filtered.length,
+      }
+    }
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    const monthData = sumPeriod(startOfMonth)
+    const budgetLimit = org?.budgetMonthlyUsd ?? null
+
+    return {
+      today: sumPeriod(startOfToday),
+      week: sumPeriod(startOfWeek),
+      month: monthData,
+      budget: {
+        monthlyLimitUsd: budgetLimit,
+        usedThisMonth: monthData.cost,
+        percentUsed: budgetLimit ? Math.round((monthData.cost / budgetLimit) * 100) : null,
+      },
+    }
+  })
 }
 
 // ─── SKILLS ──────────────────────────────────────────────────────────────────
@@ -322,6 +486,19 @@ export async function skillRoutes(app: FastifyInstance) {
 
 // ─── KNOWLEDGE ───────────────────────────────────────────────────────────────
 
+function chunkText(text: string, wordsPerChunk: number, overlapWords: number): string[] {
+  const words = text.split(/\s+/)
+  const chunks: string[] = []
+  const step = wordsPerChunk - overlapWords
+  for (let i = 0; i < words.length; i += step) {
+    chunks.push(words.slice(i, i + wordsPerChunk).join(' '))
+    if (i + wordsPerChunk >= words.length) break
+  }
+  return chunks.length > 0 ? chunks : [text]
+}
+
+export { chunkText }
+
 export async function knowledgeRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/knowledge/browse', async (req, reply) => {
     const { orgId } = req.params as any
@@ -357,5 +534,36 @@ export async function knowledgeRoutes(app: FastifyInstance) {
   app.delete('/api/knowledge/:itemId', async (req, reply) => {
     await db.delete(schema.knowledgeItems).where(eq(schema.knowledgeItems.id, (req.params as any).itemId))
     reply.code(204)
+  })
+  app.post('/api/orgs/:orgId/knowledge/embed', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { name, text, type = 'document' } = req.body as any
+    if (!name || !text) return reply.code(400).send({ error: 'name and text are required' })
+
+    const chunks = chunkText(text, 500, 50)
+    const itemId = randomUUID()
+
+    await db.insert(schema.knowledgeItems).values({
+      id: itemId, orgId, name, type,
+      mimeType: 'text/plain',
+      externalId: null, externalUrl: null,
+      parentId: null, content: text.slice(0, 2000),
+      backend: 'text',
+      createdAt: new Date(),
+    })
+
+    // Fire-and-forget embedding
+    const embedPromises = chunks.map((chunk, i) =>
+      upsertDocument({
+        id: `${itemId}_chunk_${i}`,
+        orgId, text: chunk,
+        name: chunks.length > 1 ? `${name} (part ${i + 1})` : name,
+        type,
+      }).catch(err => console.warn('Embed chunk failed:', err))
+    )
+    Promise.all(embedPromises).catch(() => {})
+
+    reply.code(201)
+    return { item: { id: itemId, name, type, chunkCount: chunks.length } }
   })
 }

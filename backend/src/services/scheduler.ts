@@ -115,7 +115,7 @@ export function calcNextRun(cron: string, _timezone = 'UTC'): Date {
   return new Date(now.getTime() + 86_400_000) // fallback: +1 day
 }
 
-function matchCronField(expr: string, value: number, min: number, max: number): boolean {
+export function matchCronField(expr: string, value: number, min: number, max: number): boolean {
   if (expr === '*') return true
 
   // */n — every n units

@@ -12,6 +12,7 @@ export interface LLMStreamOpts {
   messages: LLMMessage[]
   maxTokens?: number
   onToken: (chunk: string) => void
+  orgApiKey?: string
 }
 
 export interface LLMUsage { inputTokens: number; outputTokens: number }
@@ -62,7 +63,7 @@ export const MODEL_CATALOGUE = {
 
 // ─ Anthropic stream ────────────────────────────────────────────────────
 async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const client = new Anthropic({ apiKey: opts.orgApiKey ?? process.env.ANTHROPIC_API_KEY })
   const stream = client.messages.stream({
     model: opts.model,
     max_tokens: opts.maxTokens ?? 4096,
@@ -85,7 +86,7 @@ async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
 
 // ─ OpenAI stream ─────────────────────────────────────────────────────
 async function streamOpenAI(opts: LLMStreamOpts): Promise<LLMResult> {
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = opts.orgApiKey ?? process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error('OPENAI_API_KEY not set')
 
   const body = {
@@ -134,7 +135,7 @@ async function streamOpenAI(opts: LLMStreamOpts): Promise<LLMResult> {
 
 // ─ Google Gemini stream ─────────────────────────────────────────────
 async function streamGemini(opts: LLMStreamOpts): Promise<LLMResult> {
-  const apiKey = process.env.GEMINI_API_KEY
+  const apiKey = opts.orgApiKey ?? process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('GEMINI_API_KEY not set')
 
   const contents = opts.messages.map(m => ({

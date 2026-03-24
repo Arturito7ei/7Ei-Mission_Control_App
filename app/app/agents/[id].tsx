@@ -12,7 +12,7 @@ import { AgentAvatar } from '../../components/AgentAvatar'
 type Tab = 'chat' | 'info' | 'skills' | 'memory'
 
 export default function AgentDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>()
+  const { id, firstTime } = useLocalSearchParams<{ id: string; firstTime?: string }>()
   const router = useRouter()
   const { agents, messages, setMessages, addMessage, appendToLastMessage, updateAgent, skills } = useStore()
   const agent = agents.find(a => a.id === id)
@@ -42,10 +42,16 @@ export default function AgentDetailScreen() {
     return () => { wsRef.current?.close() }
   }, [loadMessages, loadMemCount])
 
-  const sendMessage = async () => {
-    if (!input.trim() || !agent || sending) return
-    const text = input.trim()
-    setInput('')
+  useEffect(() => {
+    if (firstTime === 'true' && agentMsgs.length === 0) {
+      sendMessage('Hello Arturito, I just set up our organisation. Please introduce yourself and tell me what you can help me with today.')
+    }
+  }, [firstTime])
+
+  const sendMessage = async (overrideText?: string) => {
+    const text = overrideText?.trim() || input.trim()
+    if (!text || !agent || sending) return
+    if (!overrideText) setInput('')
     setSending(true)
 
     const userMsg: Message = { id: Date.now().toString(), agentId: id!, role: 'user', content: text, createdAt: new Date().toISOString() }

@@ -7,6 +7,13 @@ export const organisations = sqliteTable('organisations', {
   logoUrl: text('logo_url'),
   ownerId: text('owner_id').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  mission: text('mission'),
+  culture: text('culture'),
+  deployMode: text('deploy_mode'),
+  cloudProvider: text('cloud_provider'),
+  preferredLlm: text('preferred_llm'),
+  deployConfig: text('deploy_config', { mode: 'json' }).$type<Record<string, string>>().default({}),
+  budgetMonthlyUsd: real('budget_monthly_usd'),
 })
 
 export const departments = sqliteTable('departments', {

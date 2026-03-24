@@ -29,6 +29,12 @@ export default function AgentsScreen() {
     a.name.toLowerCase().includes(search.toLowerCase()) ||
     a.role.toLowerCase().includes(search.toLowerCase())
   )
+  const standardAgents = filtered.filter(a => a.agentType !== 'advisor')
+  const advisorAgents = filtered.filter(a => a.agentType === 'advisor')
+  const groupedData = [
+    ...standardAgents,
+    ...(advisorAgents.length > 0 ? [{ id: '__silver_board_header__', _isHeader: true } as any, ...advisorAgents] : []),
+  ]
 
   const handleStatusToggle = async (agentId: string, current: string) => {
     const next = current === 'paused' ? 'idle' : current === 'idle' ? 'paused' : 'paused'
@@ -53,14 +59,23 @@ export default function AgentsScreen() {
       </View>
 
       <FlatList
-        data={filtered}
+        data={groupedData}
         keyExtractor={a => a.id}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.accent} />}
         ListEmptyComponent={
           <EmptyState emoji="🤖" title="No agents yet" subtitle="Create your first agent to start building your virtual office" />
         }
-        renderItem={({ item: agent }) => (
+        renderItem={({ item: agent }) => {
+          if (agent._isHeader) {
+            return (
+              <TouchableOpacity style={styles.sectionHeader} onPress={() => router.push('/agents/board')}>
+                <Text style={styles.sectionTitle}>🎖️ Silver Board</Text>
+                <Text style={styles.sectionLink}>View all →</Text>
+              </TouchableOpacity>
+            )
+          }
+          return (
           <TouchableOpacity onPress={() => router.push(`/agents/${agent.id}`)}>
             <Card style={styles.agentCard}>
               <View style={styles.agentRow}>
@@ -87,7 +102,7 @@ export default function AgentsScreen() {
               )}
             </Card>
           </TouchableOpacity>
-        )}
+        )}}
       />
     </View>
   )
@@ -110,4 +125,7 @@ const styles = StyleSheet.create({
   pauseBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: Colors.border },
   pauseBtnText: { fontSize: 16 },
   persona: { fontSize: 12, color: Colors.textSecondary, marginTop: Space.sm, paddingTop: Space.sm, borderTopWidth: 1, borderTopColor: Colors.border },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Space.md, marginTop: Space.md },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: Colors.text },
+  sectionLink: { fontSize: 13, color: Colors.accent, fontWeight: '600' },
 })

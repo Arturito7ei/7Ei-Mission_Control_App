@@ -1,8 +1,9 @@
 import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { getMemory, formatMemoryForPrompt, extractMemoryInstructions, bulkSetMemory, compressMemoryIfNeeded } from './memory'
-import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot } from '../middleware/ratelimit'
+import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot, checkMonthlyBudget } from '../middleware/ratelimit'
 import { streamLLM, calcCost } from './llm-router'
+import { searchKnowledge } from './vector-search'
 import { parseDelegateDirectives, stripDelegateDirectives, executeDelegations, buildSynthesisPrompt } from './orchestrator'
 import { parseAgentWebhooks, stripAgentWebhooks, executeAgentWebhooks } from './outbound-webhooks'
 import { fireWebhook } from './outbound-webhooks'
@@ -11,6 +12,7 @@ export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
   memorySaved?: Record<string, string>; provider?: string
   delegations?: string[]  // names of agents delegated to
+  budgetWarning?: { percentUsed: number; remaining: number }
 }
 
 export async function executeAgentTask(opts: {
@@ -32,19 +34,39 @@ export async function executeAgentTask(opts: {
     await db.update(schema.agents).set({ status: 'active' }).where(eq(schema.agents.id, agentId))
     await fireWebhook('agent.active', agent.orgId, { agentId, agentName: agent.name })
 
+    const org = await db.query.organisations.findFirst({
+      where: eq(schema.organisations.id, agent.orgId)
+    })
+
+    let ragContext = ''
+    if (process.env.PINECONE_API_KEY) {
+      try {
+        const results = await searchKnowledge(input, agent.orgId, 5)
+        if (results.length > 0) {
+          ragContext = '=== RELEVANT KNOWLEDGE ===\n' +
+            results.map(r => `[${r.name}] (relevance: ${r.score.toFixed(2)})`).join('\n') +
+            '\n=== END RELEVANT KNOWLEDGE ==='
+        }
+      } catch (err) {
+        console.warn('RAG retrieval failed (non-critical):', err)
+        // Never throw — agent still works without RAG
+      }
+    }
+
     const memory = await getMemory(agentId)
     const memoryBlock = formatMemoryForPrompt(memory)
     const isOrchestrator = agent.role.toLowerCase().includes('orchestrator') ||
                            agent.role.toLowerCase().includes('chief of staff')
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator)
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext)
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
+    const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
     const messages = [...conversationHistory, { role: 'user' as const, content: input }]
     const start = Date.now()
     let rawOutput = ''
 
     const result = await streamLLM({
-      provider, model, system: systemPrompt, messages,
+      provider, model, system: systemPrompt, messages, orgApiKey,
       onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) },
     })
 
@@ -75,7 +97,7 @@ export async function executeAgentTask(opts: {
           const synthesisInput = buildSynthesisPrompt(input, cleanedOutput, delegations)
           const synthResult = await streamLLM({
             provider, model, system: systemPrompt, messages: [{ role: 'user', content: synthesisInput }],
-            onToken: (chunk) => onToken?.(chunk),
+            orgApiKey, onToken: (chunk) => onToken?.(chunk),
           })
           cleanedOutput = synthResult.output
         }
@@ -83,6 +105,11 @@ export async function executeAgentTask(opts: {
     }
 
     recordUsage(agent.orgId, tokensUsed, costUsd)
+
+    const budgetCheck = await checkMonthlyBudget(agent.orgId)
+    const budgetWarning = budgetCheck.percentUsed > 80
+      ? { percentUsed: budgetCheck.percentUsed, remaining: budgetCheck.remaining }
+      : undefined
 
     await db.update(schema.tasks).set({
       output: cleanedOutput, status: 'done', tokensUsed, costUsd,
@@ -99,6 +126,7 @@ export async function executeAgentTask(opts: {
       output: cleanedOutput, tokensUsed, costUsd, durationMs, provider,
       memorySaved: Object.keys(toSave).length > 0 ? toSave : undefined,
       delegations: delegatedAgentNames.length > 0 ? delegatedAgentNames : undefined,
+      budgetWarning,
     }
     onDone?.(execResult)
     return execResult
@@ -112,8 +140,26 @@ export async function executeAgentTask(opts: {
   }
 }
 
-function buildSystemPrompt(agent: typeof schema.agents.$inferSelect, memoryBlock: string, isOrchestrator: boolean): string {
+function buildSystemPrompt(
+  agent: typeof schema.agents.$inferSelect,
+  memoryBlock: string,
+  isOrchestrator: boolean,
+  org?: typeof schema.organisations.$inferSelect | null,
+  ragContext?: string,
+): string {
   const lines: string[] = []
+
+  // Organisation context — at the very top
+  if (org?.mission || org?.culture) {
+    lines.push('=== ORGANISATION CONTEXT ===')
+    if (org.mission) lines.push(`Mission & Vision: ${org.mission}`)
+    if (org.culture)  lines.push(`Culture & Principles: ${org.culture}`)
+    lines.push('=== END ORGANISATION CONTEXT ===', '')
+  }
+  if (ragContext) {
+    lines.push(ragContext, '')
+  }
+
   if (agent.agentType === 'advisor' && agent.advisorPersona) {
     lines.push(`You are ${agent.name}, a Silver Board Advisor.`, `Persona: ${agent.advisorPersona}`, '', 'Embody this persona fully. Speak with their voice, wisdom, and philosophy.', '')
   } else {
