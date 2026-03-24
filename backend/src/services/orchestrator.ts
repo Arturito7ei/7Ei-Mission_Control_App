@@ -11,6 +11,7 @@ import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
+import { fireWebhook } from './outbound-webhooks'
 
 export interface DelegateDirective {
   targetName: string    // Agent name or role keyword
@@ -81,6 +82,7 @@ export async function executeDelegations(
         id: taskId,
         orgId,
         agentId: agent.id,
+        parentTaskId: parentTaskId ?? null,
         title: directive.task.slice(0, 120),
         input: directive.task,
         status: 'pending',
@@ -109,6 +111,14 @@ export async function executeDelegations(
         content: result.output,
         createdAt: new Date(),
       })
+
+      // Fire delegation complete webhook
+      await fireWebhook('delegation.complete', orgId, {
+        parentTaskId,
+        delegatedTo: agent.name,
+        taskId,
+        outputPreview: result.output.slice(0, 200),
+      }).catch(err => console.warn('Delegation webhook failed (non-critical):', err))
 
       results.push({
         agentId: agent.id,

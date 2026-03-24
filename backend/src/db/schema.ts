@@ -78,6 +78,7 @@ export const tasks = sqliteTable('tasks', {
   durationMs: integer('duration_ms'),
   assignedTo: text('assigned_to'),
   dueAt: integer('due_at', { mode: 'timestamp' }),
+  parentTaskId: text('parent_task_id'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
@@ -134,4 +135,15 @@ export const webhooks = sqliteTable('webhooks', {
   enabled: integer('enabled').notNull().default(1),
   lastTriggeredAt: integer('last_triggered_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const oauthTokens = sqliteTable('oauth_tokens', {
+  id:           text('id').primaryKey(),
+  orgId:        text('org_id').notNull(),
+  provider:     text('provider').notNull(),
+  accessToken:  text('access_token').notNull(),
+  refreshToken: text('refresh_token'),
+  expiresAt:    integer('expires_at', { mode: 'timestamp' }),
+  scopes:       text('scopes'),
+  createdAt:    integer('created_at', { mode: 'timestamp' }).notNull(),
 })

@@ -1,4 +1,4 @@
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Alert } from 'react-native'
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, Alert, Modal, ScrollView, KeyboardAvoidingView, Platform } from 'react-native'
 import { useEffect, useState, useCallback } from 'react'
 import { useStore } from '../../store'
 import { api, KnowledgeItem } from '../../lib/api'
@@ -26,6 +26,10 @@ export default function KnowledgeScreen() {
   const [searching, setSearching] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [mode, setMode] = useState<'browse' | 'search'>('browse')
+  const [showUpload, setShowUpload] = useState(false)
+  const [uploadName, setUploadName] = useState('')
+  const [uploadContent, setUploadContent] = useState('')
+  const [uploading, setUploading] = useState(false)
 
   const load = useCallback(async () => {
     if (!currentOrg) return
@@ -35,6 +39,22 @@ export default function KnowledgeScreen() {
 
   useEffect(() => { load() }, [load])
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
+
+  const handleUpload = async () => {
+    if (!uploadName.trim() || !uploadContent.trim() || !currentOrg) return
+    setUploading(true)
+    try {
+      await api.knowledge.upload(currentOrg.id, { name: uploadName.trim(), content: uploadContent.trim() })
+      setShowUpload(false)
+      setUploadName('')
+      setUploadContent('')
+      await load()
+    } catch (e: any) {
+      Alert.alert('Upload failed', e.message)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const handleSearch = async () => {
     if (!searchQuery.trim() || !currentOrg) return
@@ -52,6 +72,45 @@ export default function KnowledgeScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
+      {/* Upload modal */}
+      <Modal visible={showUpload} animationType="slide" transparent onRequestClose={() => setShowUpload(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: theme.surface }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Upload .md File</Text>
+            <TextInput
+              style={[styles.modalInput, { backgroundColor: theme.bg, borderColor: theme.borderLight, color: theme.text }]}
+              value={uploadName}
+              onChangeText={setUploadName}
+              placeholder="File name (e.g. strategy.md)"
+              placeholderTextColor={theme.textMuted}
+            />
+            <TextInput
+              style={[styles.modalContent, { backgroundColor: theme.bg, borderColor: theme.borderLight, color: theme.text }]}
+              value={uploadContent}
+              onChangeText={setUploadContent}
+              placeholder="Paste markdown content here..."
+              placeholderTextColor={theme.textMuted}
+              multiline
+              textAlignVertical="top"
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { borderColor: theme.borderLight }]}
+                onPress={() => { setShowUpload(false); setUploadName(''); setUploadContent('') }}
+              >
+                <Text style={{ color: theme.textSecondary }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary, { backgroundColor: theme.accent }]}
+                onPress={handleUpload}
+                disabled={uploading}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{uploading ? 'Uploading...' : 'Upload'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
       {/* Search bar */}
       <View style={[styles.searchRow, { borderBottomColor: theme.border }]}>
         <TextInput
@@ -101,6 +160,12 @@ export default function KnowledgeScreen() {
               <ThemedText variant="secondary" style={{ fontSize: FontSize.sm }}>
                 Files synced from Google Drive. Use semantic search to find anything.
               </ThemedText>
+              <TouchableOpacity
+                style={[styles.uploadBtn, { backgroundColor: theme.accent }]}
+                onPress={() => setShowUpload(true)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>+ Upload .md</Text>
+              </TouchableOpacity>
             </Card>
           ) : null
         }
@@ -152,4 +217,13 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: Space.md },
   icon: { fontSize: 24 },
   info: { flex: 1 },
+  uploadBtn: { marginTop: Space.md, padding: Space.md, borderRadius: Radius.md, alignItems: 'center' },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  modalCard: { borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Space.xl, gap: Space.md },
+  modalTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Space.sm },
+  modalInput: { borderWidth: 0.5, borderRadius: Radius.md, padding: Space.md, fontSize: FontSize.base },
+  modalContent: { borderWidth: 0.5, borderRadius: Radius.md, padding: Space.md, fontSize: FontSize.base, height: 160 },
+  modalActions: { flexDirection: 'row', gap: Space.md, justifyContent: 'flex-end', marginTop: Space.sm },
+  modalBtn: { paddingVertical: Space.md, paddingHorizontal: Space.lg, borderRadius: Radius.md, borderWidth: 0.5 },
+  modalBtnPrimary: { borderWidth: 0 },
 })

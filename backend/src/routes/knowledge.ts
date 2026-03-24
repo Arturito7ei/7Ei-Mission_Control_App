@@ -87,4 +87,37 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     ])
     reply.code(204)
   })
+
+  // Upload .md or text file — stores content + fires RAG embed
+  app.post('/api/orgs/:orgId/knowledge/upload', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { name, content, mimeType = 'text/markdown' } = req.body as any
+    if (!name || !content) return reply.code(400).send({ error: 'name and content required' })
+
+    const item = {
+      id: randomUUID(), orgId, name, type: 'document',
+      mimeType, externalId: null, externalUrl: null,
+      parentId: null, content,
+      backend: 'upload',
+      createdAt: new Date(),
+    }
+    await db.insert(schema.knowledgeItems).values(item)
+
+    // Fire-and-forget RAG embedding
+    if (process.env.PINECONE_API_KEY) {
+      upsertDocument({ id: item.id, orgId, text: content, name, type: 'document' })
+        .catch(err => console.warn('Embed failed (non-critical):', err))
+    }
+
+    reply.code(201)
+    return { item }
+  })
+
+  // Read raw content of a knowledge item
+  app.get('/api/knowledge/:itemId/content', async (req, reply) => {
+    const { itemId } = req.params as any
+    const item = await db.query.knowledgeItems.findFirst({ where: eq(schema.knowledgeItems.id, itemId) })
+    if (!item) return reply.code(404).send({ error: 'Not found' })
+    return { content: item.content, name: item.name, mimeType: item.mimeType }
+  })
 }
