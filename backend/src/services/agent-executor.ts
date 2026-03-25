@@ -193,6 +193,8 @@ export function buildSystemPrompt(
     if (org.culture)  lines.push(`Culture & Principles: ${org.culture}`)
     lines.push('=== END ORGANISATION CONTEXT ===', '')
   }
+  if (agent.persona) lines.push('\nYOUR PERSONALITY AND STYLE:\n' + agent.persona)
+  if (agent.expertise) lines.push('\nYOUR AREAS OF EXPERTISE:\n' + agent.expertise)
   if (ragContext) {
     lines.push(ragContext, '')
   }
