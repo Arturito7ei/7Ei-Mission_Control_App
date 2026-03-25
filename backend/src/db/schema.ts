@@ -49,6 +49,9 @@ export const agents = sqliteTable('agents', {
   agentType: text('agent_type').notNull().default('standard'),
   advisorPersona: text('advisor_persona'),
   memoryLongTerm: text('memory_long_term', { mode: 'json' }).$type<Record<string, unknown>>(),
+  persona: text('persona'),
+  expertise: text('expertise'),
+  advisorIds: text('advisor_ids'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -115,13 +118,11 @@ export const scheduledTasks = sqliteTable('scheduled_tasks', {
   orgId: text('org_id').notNull(),
   agentId: text('agent_id').notNull(),
   title: text('title').notNull(),
-  input: text('input'),
-  cron: text('cron').notNull(),
-  timezone: text('timezone').notNull().default('UTC'),
-  enabled: integer('enabled').notNull().default(1),
+  input: text('input').notNull(),
+  cronExpression: text('cron_expression').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).default(true),
   lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
   nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
-  runCount: integer('run_count').notNull().default(0),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -146,4 +147,12 @@ export const oauthTokens = sqliteTable('oauth_tokens', {
   expiresAt:    integer('expires_at', { mode: 'timestamp' }),
   scopes:       text('scopes'),
   createdAt:    integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const orgMembers = sqliteTable('org_members', {
+  id:        text('id').primaryKey(),
+  orgId:     text('org_id').notNull(),
+  userId:    text('user_id').notNull(),
+  role:      text('role').notNull().default('member'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
