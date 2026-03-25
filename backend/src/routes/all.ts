@@ -7,6 +7,7 @@ import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
 import { streamLLM } from '../services/llm-router'
 import { buildAuthUrl, exchangeCode } from '../services/google-auth'
+import { computeNextRun } from '../services/scheduler'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -183,9 +184,33 @@ export async function agentRoutes(app: FastifyInstance) {
     if (!agent) return reply.code(404).send({ error: 'Not found' })
     return { agent }
   })
-  app.patch('/api/agents/:agentId', async (req) => {
+  app.patch('/api/agents/:agentId', async (req, reply) => {
     const { agentId } = req.params as any
-    await db.update(schema.agents).set(req.body as any).where(eq(schema.agents.id, agentId))
+    const PatchSchema = z.object({
+      name: z.string().min(1).max(100).optional(),
+      role: z.string().min(1).max(200).optional(),
+      persona: z.string().optional(),
+      expertise: z.string().optional(),
+      termsOfReference: z.string().optional(),
+      cv: z.string().optional(),
+      avatarEmoji: z.string().optional(),
+      advisorIds: z.array(z.string()).optional(),
+    })
+    const body = PatchSchema.parse(req.body)
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    const { advisorIds, ...rest } = body
+    const updates: Record<string, any> = { ...rest }
+    if (advisorIds !== undefined) {
+      for (const id of advisorIds) {
+        const advisor = await db.query.agents.findFirst({ where: eq(schema.agents.id, id) })
+        if (!advisor || advisor.orgId !== agent.orgId) {
+          return reply.code(400).send({ error: `Advisor ${id} not found in this org` })
+        }
+      }
+      updates.advisorIds = JSON.stringify(advisorIds)
+    }
+    await db.update(schema.agents).set(updates).where(eq(schema.agents.id, agentId))
     return { agent: await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) }) }
   })
   app.patch('/api/agents/:agentId/status', async (req) => {
@@ -588,6 +613,57 @@ export async function knowledgeRoutes(app: FastifyInstance) {
   })
 }
 
+// ─── CREDENTIALS ─────────────────────────────────────────────────────────────
+
+export async function credentialRoutes(app: FastifyInstance) {
+  const CredentialSchema = z.object({
+    provider: z.enum(['anthropic', 'openai', 'gemini']),
+    apiKey: z.string().min(1),
+  })
+
+  app.post('/api/orgs/:orgId/credentials', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { provider, apiKey } = CredentialSchema.parse(req.body)
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const deployConfig = { ...(org.deployConfig ?? {}), [`${provider}_api_key`]: apiKey }
+    await db.update(schema.organisations).set({ deployConfig }).where(eq(schema.organisations.id, orgId))
+    reply.code(201)
+    return { ok: true, provider }
+  })
+
+  app.get('/api/orgs/:orgId/credentials', async (req, reply) => {
+    const { orgId } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const config = org.deployConfig ?? {}
+    const providers = ['anthropic', 'openai', 'gemini'] as const
+    const credentials = providers
+      .filter(p => !!config[`${p}_api_key`])
+      .map(p => {
+        const key = config[`${p}_api_key`] as string
+        const maskedKey = key.length > 11
+          ? `${key.slice(0, 7)}...${key.slice(-4)}`
+          : `${key.slice(0, Math.min(3, key.length))}...`
+        return { provider: p, maskedKey }
+      })
+    return { credentials }
+  })
+
+  app.delete('/api/orgs/:orgId/credentials/:provider', async (req, reply) => {
+    const { orgId, provider } = req.params as any
+    if (!['anthropic', 'openai', 'gemini'].includes(provider)) {
+      return reply.code(400).send({ error: 'Invalid provider' })
+    }
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const deployConfig = { ...(org.deployConfig ?? {}) }
+    delete deployConfig[`${provider}_api_key`]
+    await db.update(schema.organisations).set({ deployConfig }).where(eq(schema.organisations.id, orgId))
+    return { ok: true, provider }
+  })
+}
+
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 export async function authRoutes(app: FastifyInstance) {
@@ -625,5 +701,77 @@ export async function authRoutes(app: FastifyInstance) {
       where: and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google'))
     })
     return { connected: !!token, expiresAt: token?.expiresAt ?? null }
+  })
+}
+
+// ─── SCHEDULED TASKS ──────────────────────────────────────────────────────────
+
+const CRON_REGEX = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$/
+
+const ScheduledTaskCreateSchema = z.object({
+  agentId:        z.string().uuid(),
+  title:          z.string().min(1).max(200),
+  input:          z.string().min(1),
+  cronExpression: z.string().regex(CRON_REGEX, 'Must be a valid 5-field cron expression'),
+})
+
+const ScheduledTaskUpdateSchema = z.object({
+  title:          z.string().min(1).max(200).optional(),
+  input:          z.string().min(1).optional(),
+  cronExpression: z.string().regex(CRON_REGEX, 'Must be a valid 5-field cron expression').optional(),
+  enabled:        z.boolean().optional(),
+})
+
+export async function scheduledTaskRoutes(app: FastifyInstance) {
+  // POST /api/orgs/:orgId/scheduled-tasks — create
+  app.post('/api/orgs/:orgId/scheduled-tasks', async (req, reply) => {
+    const { orgId } = req.params as any
+    const body = ScheduledTaskCreateSchema.parse(req.body)
+    const nextRunAt = computeNextRun(body.cronExpression)
+    const task = {
+      id: randomUUID(), orgId,
+      agentId: body.agentId,
+      title: body.title,
+      input: body.input,
+      cronExpression: body.cronExpression,
+      enabled: true,
+      lastRunAt: null,
+      nextRunAt,
+      createdAt: new Date(),
+    }
+    await db.insert(schema.scheduledTasks).values(task)
+    reply.code(201)
+    return { task }
+  })
+
+  // GET /api/orgs/:orgId/scheduled-tasks — list
+  app.get('/api/orgs/:orgId/scheduled-tasks', async (req) => {
+    const { orgId } = req.params as any
+    const tasks = await db.select().from(schema.scheduledTasks)
+      .where(eq(schema.scheduledTasks.orgId, orgId))
+    return { tasks }
+  })
+
+  // PATCH /api/scheduled-tasks/:taskId — update
+  app.patch('/api/scheduled-tasks/:taskId', async (req) => {
+    const { taskId } = req.params as any
+    const body = ScheduledTaskUpdateSchema.parse(req.body)
+    const update: Record<string, unknown> = {}
+    if (body.title     !== undefined) update.title          = body.title
+    if (body.input     !== undefined) update.input          = body.input
+    if (body.enabled   !== undefined) update.enabled        = body.enabled
+    if (body.cronExpression) {
+      update.cronExpression = body.cronExpression
+      update.nextRunAt      = computeNextRun(body.cronExpression)
+    }
+    await db.update(schema.scheduledTasks).set(update).where(eq(schema.scheduledTasks.id, taskId))
+    return { ok: true }
+  })
+
+  // DELETE /api/scheduled-tasks/:taskId — delete
+  app.delete('/api/scheduled-tasks/:taskId', async (req, reply) => {
+    const { taskId } = req.params as any
+    await db.delete(schema.scheduledTasks).where(eq(schema.scheduledTasks.id, taskId))
+    reply.code(204)
   })
 }
