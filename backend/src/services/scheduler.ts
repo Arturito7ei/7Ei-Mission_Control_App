@@ -79,6 +79,26 @@ async function runScheduledTask(scheduled: any, triggerTime: Date) {
 // ─ Minimal cron parser ───────────────────────────────────────────────────────
 // Parses a 5-field cron and returns the next trigger Date
 
+// computeNextRun: public API — accepts explicit `after` reference point.
+export function computeNextRun(cronExpression: string, after: Date = new Date()): Date {
+  const parts = cronExpression.trim().split(/\s+/)
+  if (parts.length !== 5) return new Date(after.getTime() + 60_000)
+  const [minExpr, hourExpr, domExpr, monExpr, dowExpr] = parts
+  const candidate = new Date(after.getTime() + 60_000)
+  candidate.setSeconds(0, 0)
+  for (let i = 0; i < 525_600; i++) {
+    if (
+      matchCronField(minExpr,  candidate.getMinutes(),    0,  59) &&
+      matchCronField(hourExpr, candidate.getHours(),      0,  23) &&
+      matchCronField(domExpr,  candidate.getDate(),       1,  31) &&
+      matchCronField(monExpr,  candidate.getMonth() + 1, 1,  12) &&
+      matchCronField(dowExpr,  candidate.getDay(),        0,   6)
+    ) return candidate
+    candidate.setTime(candidate.getTime() + 60_000)
+  }
+  return new Date(after.getTime() + 86_400_000)
+}
+
 export function calcNextRun(cron: string, _timezone = 'UTC'): Date {
   const now = new Date()
   const parts = cron.trim().split(/\s+/)
