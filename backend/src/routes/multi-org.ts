@@ -4,6 +4,17 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 
 export async function multiOrgRoutes(app: FastifyInstance) {
+  // List orgs for a user via membership table
+  app.get('/api/users/:userId/orgs', async (req) => {
+    const { userId } = req.params as any
+    const memberships = await db.select().from(schema.orgMembers).where(eq(schema.orgMembers.userId, userId))
+    const orgs = await Promise.all(memberships.map(async (m) => {
+      const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, m.orgId) })
+      return org ? { ...org, memberRole: m.role } : null
+    }))
+    return { orgs: orgs.filter(Boolean) }
+  })
+
   app.get('/api/orgs/switch/list', async (req) => {
     const userId = (req as any).auth?.userId ?? ''
     const orgs = await db.select().from(schema.organisations).where(eq(schema.organisations.ownerId, userId))

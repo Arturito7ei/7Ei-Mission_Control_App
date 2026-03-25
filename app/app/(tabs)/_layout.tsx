@@ -56,6 +56,7 @@ export default function TabLayout() {
       <Tabs.Screen name="index"     options={{ title: 'Home',   tabBarIcon: ({ focused }) => <TabIcon emoji="🏠" focused={focused} /> }} />
       <Tabs.Screen name="agents"    options={{ title: 'Agents', tabBarIcon: ({ focused }) => <TabIcon emoji="🤖" focused={focused} /> }} />
       <Tabs.Screen name="tasks"     options={{ title: 'Tasks',  tabBarIcon: ({ focused }) => <TabIcon emoji="📋" focused={focused} /> }} />
+      <Tabs.Screen name="scheduled" options={{ title: 'Scheduled', tabBarIcon: ({ focused }) => <TabIcon emoji="⏰" focused={focused} /> }} />
       <Tabs.Screen name="comms"     options={{ title: 'Comms',  tabBarIcon: ({ focused }) => <TabIcon emoji="📬" focused={focused} /> }} />
       <Tabs.Screen name="costs"     options={{ title: 'Costs',  tabBarIcon: ({ focused }) => <TabIcon emoji="💰" focused={focused} /> }} />
       <Tabs.Screen name="knowledge" options={{ title: 'KB', tabBarIcon: ({ focused }) => <TabIcon emoji="📚" focused={focused} /> }} />

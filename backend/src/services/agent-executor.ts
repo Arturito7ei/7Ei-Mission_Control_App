@@ -206,6 +206,8 @@ export function buildSystemPrompt(
     lines.push(`You are ${agent.name}, ${agent.role} at 7Ei.`, '')
   }
   if (agent.personality)      lines.push(`Communication style: ${agent.personality}`, '')
+  if (agent.persona)          lines.push('\nYOUR PERSONALITY AND STYLE:\n' + agent.persona, '')
+  if (agent.expertise)        lines.push('\nYOUR AREAS OF EXPERTISE:\n' + agent.expertise, '')
   if (agent.cv)               lines.push(`Background: ${agent.cv}`, '')
   if (agent.termsOfReference) lines.push(`Terms of Reference: ${agent.termsOfReference}`, '')
   const skills = (agent.skills as string[]) ?? []

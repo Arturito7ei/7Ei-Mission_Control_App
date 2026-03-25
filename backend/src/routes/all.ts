@@ -44,6 +44,11 @@ export async function orgRoutes(app: FastifyInstance) {
     const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date(), mission: body.mission ?? null, culture: body.culture ?? null, deployMode: body.deployMode ?? null, cloudProvider: body.cloudProvider ?? null, preferredLlm: body.preferredLlm ?? null, deployConfig: {} }
     await db.insert(schema.organisations).values(org)
 
+    // 0. Create org membership for owner
+    await db.insert(schema.orgMembers).values({
+      id: randomUUID(), orgId: org.id, userId, role: 'owner', createdAt: new Date(),
+    })
+
     // 1. Embed org knowledge into Pinecone (fire-and-forget)
     if (body.mission || body.culture) {
       const knowledgeText = [
@@ -183,9 +188,21 @@ export async function agentRoutes(app: FastifyInstance) {
     if (!agent) return reply.code(404).send({ error: 'Not found' })
     return { agent }
   })
-  app.patch('/api/agents/:agentId', async (req) => {
+  app.patch('/api/agents/:agentId', async (req, reply) => {
     const { agentId } = req.params as any
-    await db.update(schema.agents).set(req.body as any).where(eq(schema.agents.id, agentId))
+    const body = req.body as any
+    // Validate advisorIds if provided
+    if (body.advisorIds) {
+      const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+      if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+      const ids = typeof body.advisorIds === 'string' ? JSON.parse(body.advisorIds) : body.advisorIds
+      for (const id of ids) {
+        const advisor = await db.query.agents.findFirst({ where: and(eq(schema.agents.id, id), eq(schema.agents.orgId, agent.orgId)) })
+        if (!advisor) return reply.code(400).send({ error: `Invalid advisorId: ${id}` })
+      }
+      body.advisorIds = JSON.stringify(ids)
+    }
+    await db.update(schema.agents).set(body).where(eq(schema.agents.id, agentId))
     return { agent: await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) }) }
   })
   app.patch('/api/agents/:agentId/status', async (req) => {
@@ -625,5 +642,51 @@ export async function authRoutes(app: FastifyInstance) {
       where: and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google'))
     })
     return { connected: !!token, expiresAt: token?.expiresAt ?? null }
+  })
+}
+
+// ─── CREDENTIALS ─────────────────────────────────────────────────────────────
+
+export function maskKey(key: string): string {
+  if (key.length <= 11) return '****'
+  return key.slice(0, 7) + '...' + key.slice(-4)
+}
+
+export async function credentialRoutes(app: FastifyInstance) {
+  app.post('/api/orgs/:orgId/credentials', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { provider, apiKey } = req.body as any
+    if (!provider || !apiKey) return reply.code(400).send({ error: 'provider and apiKey required' })
+    const validProviders = ['anthropic', 'openai', 'gemini']
+    if (!validProviders.includes(provider)) return reply.code(400).send({ error: `provider must be one of: ${validProviders.join(', ')}` })
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const config = (org.deployConfig ?? {}) as Record<string, string>
+    config[`${provider}_api_key`] = apiKey
+    await db.update(schema.organisations).set({ deployConfig: config }).where(eq(schema.organisations.id, orgId))
+    reply.code(201)
+    return { ok: true, provider, maskedKey: maskKey(apiKey) }
+  })
+
+  app.get('/api/orgs/:orgId/credentials', async (req) => {
+    const { orgId } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return { credentials: [] }
+    const config = (org.deployConfig ?? {}) as Record<string, string>
+    const credentials = ['anthropic', 'openai', 'gemini']
+      .filter(p => config[`${p}_api_key`])
+      .map(p => ({ provider: p, maskedKey: maskKey(config[`${p}_api_key`]) }))
+    return { credentials }
+  })
+
+  app.delete('/api/orgs/:orgId/credentials/:provider', async (req, reply) => {
+    const { orgId, provider } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const config = (org.deployConfig ?? {}) as Record<string, string>
+    delete config[`${provider}_api_key`]
+    await db.update(schema.organisations).set({ deployConfig: config }).where(eq(schema.organisations.id, orgId))
+    reply.code(204)
   })
 }
