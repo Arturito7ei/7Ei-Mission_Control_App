@@ -5,7 +5,7 @@ import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
 import { clerkPlugin } from '@clerk/fastify'
 import { setupDatabase } from './db/setup'
-import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes } from './routes/all'
+import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, credentialRoutes, authRoutes } from './routes/all'
 import { knowledgeRoutes } from './routes/knowledge'
 import { commsRoutes } from './routes/comms'
 import { notificationRoutes } from './routes/notifications'
@@ -65,6 +65,7 @@ async function start() {
   await app.register(modelRoutes)
   await app.register(scheduledRoutes)
   await app.register(webhookRoutes)
+  await app.register(credentialRoutes)
   await app.register(authRoutes)
 
   // Health + readiness

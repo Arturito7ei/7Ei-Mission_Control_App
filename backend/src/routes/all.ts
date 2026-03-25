@@ -588,6 +588,57 @@ export async function knowledgeRoutes(app: FastifyInstance) {
   })
 }
 
+// ─── CREDENTIALS ─────────────────────────────────────────────────────────────
+
+export async function credentialRoutes(app: FastifyInstance) {
+  const CredentialSchema = z.object({
+    provider: z.enum(['anthropic', 'openai', 'gemini']),
+    apiKey: z.string().min(1),
+  })
+
+  app.post('/api/orgs/:orgId/credentials', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { provider, apiKey } = CredentialSchema.parse(req.body)
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const deployConfig = { ...(org.deployConfig ?? {}), [`${provider}_api_key`]: apiKey }
+    await db.update(schema.organisations).set({ deployConfig }).where(eq(schema.organisations.id, orgId))
+    reply.code(201)
+    return { ok: true, provider }
+  })
+
+  app.get('/api/orgs/:orgId/credentials', async (req, reply) => {
+    const { orgId } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const config = org.deployConfig ?? {}
+    const providers = ['anthropic', 'openai', 'gemini'] as const
+    const credentials = providers
+      .filter(p => !!config[`${p}_api_key`])
+      .map(p => {
+        const key = config[`${p}_api_key`] as string
+        const maskedKey = key.length > 11
+          ? `${key.slice(0, 7)}...${key.slice(-4)}`
+          : `${key.slice(0, Math.min(3, key.length))}...`
+        return { provider: p, maskedKey }
+      })
+    return { credentials }
+  })
+
+  app.delete('/api/orgs/:orgId/credentials/:provider', async (req, reply) => {
+    const { orgId, provider } = req.params as any
+    if (!['anthropic', 'openai', 'gemini'].includes(provider)) {
+      return reply.code(400).send({ error: 'Invalid provider' })
+    }
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const deployConfig = { ...(org.deployConfig ?? {}) }
+    delete deployConfig[`${provider}_api_key`]
+    await db.update(schema.organisations).set({ deployConfig }).where(eq(schema.organisations.id, orgId))
+    return { ok: true, provider }
+  })
+}
+
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 export async function authRoutes(app: FastifyInstance) {
