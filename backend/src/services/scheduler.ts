@@ -31,7 +31,7 @@ async function runDueTasks() {
   try {
     const due = await db.select().from(schema.scheduledTasks)
       .where(and(
-        eq(schema.scheduledTasks.enabled, 1),
+        eq(schema.scheduledTasks.enabled, true),
         lte(schema.scheduledTasks.nextRunAt as any, now),
       ))
 
@@ -69,11 +69,10 @@ async function runScheduledTask(scheduled: any, triggerTime: Date) {
   }
 
   // Update last/next run
-  const nextRun = calcNextRun(scheduled.cron, scheduled.timezone)
+  const nextRun = calcNextRun(scheduled.cronExpression)
   await db.update(schema.scheduledTasks).set({
     lastRunAt: triggerTime,
     nextRunAt: nextRun,
-    runCount: (scheduled.runCount ?? 0) + 1,
   }).where(eq(schema.scheduledTasks.id, scheduled.id))
 }
 

@@ -28,15 +28,15 @@ export async function scheduledRoutes(app: FastifyInstance) {
   // Create scheduled task
   app.post('/api/orgs/:orgId/scheduled', async (req, reply) => {
     const { orgId } = req.params as any
-    const { agentId, title, input, cron, timezone = 'UTC' } = req.body as any
-    if (!agentId || !title || !cron) return reply.code(400).send({ error: 'agentId, title, cron required' })
+    const { agentId, title, input, cronExpression } = req.body as any
+    if (!agentId || !title || !cronExpression) return reply.code(400).send({ error: 'agentId, title, cronExpression required' })
 
-    const nextRunAt = calcNextRun(cron, timezone)
+    const nextRunAt = calcNextRun(cronExpression)
     const task = {
       id: randomUUID(), orgId, agentId, title,
-      input: input ?? null, cron, timezone,
-      enabled: 1, lastRunAt: null, nextRunAt,
-      runCount: 0, createdAt: new Date(),
+      input: input ?? title, cronExpression,
+      enabled: true, lastRunAt: null, nextRunAt,
+      createdAt: new Date(),
     }
     await db.insert(schema.scheduledTasks).values(task)
     reply.code(201)
@@ -48,10 +48,10 @@ export async function scheduledRoutes(app: FastifyInstance) {
     const { id } = req.params as any
     const body = req.body as any
     const update: any = {}
-    if (body.enabled !== undefined) update.enabled = body.enabled ? 1 : 0
-    if (body.cron) {
-      update.cron = body.cron
-      update.nextRunAt = calcNextRun(body.cron, body.timezone ?? 'UTC')
+    if (body.enabled !== undefined) update.enabled = !!body.enabled
+    if (body.cronExpression) {
+      update.cronExpression = body.cronExpression
+      update.nextRunAt = calcNextRun(body.cronExpression)
     }
     if (body.title) update.title = body.title
     if (body.input !== undefined) update.input = body.input
@@ -68,11 +68,11 @@ export async function scheduledRoutes(app: FastifyInstance) {
 
   // Preview: when would this cron next fire?
   app.get('/api/scheduled/preview', async (req) => {
-    const { cron, timezone = 'UTC' } = req.query as any
-    if (!cron) return { error: 'cron required' }
+    const { cronExpression } = req.query as any
+    if (!cronExpression) return { error: 'cronExpression required' }
     try {
-      const next = calcNextRun(cron, timezone)
-      return { next: next.toISOString(), cron, timezone }
+      const next = calcNextRun(cronExpression)
+      return { next: next.toISOString(), cronExpression }
     } catch { return { error: 'Invalid cron expression' } }
   })
 }
