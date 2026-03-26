@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db, schema } from '../db/client'
-import { eq, and, desc, gte } from 'drizzle-orm'
+import { eq, and, desc, gte, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
@@ -32,6 +32,7 @@ export async function orgRoutes(app: FastifyInstance) {
     deployMode: z.enum(['cloud', 'local']).optional(),
     cloudProvider: z.enum(['aws', 'aws_ch', 'gcp', 'gcp_ch', 'azure', 'oracle']).optional(),
     preferredLlm: z.enum(['claude', 'gpt4o', 'gemini']).optional(),
+    firstAgentRole: z.string().optional(),
   })
 
   app.get('/api/orgs', async (req) => {
@@ -95,6 +96,8 @@ export async function orgRoutes(app: FastifyInstance) {
       agentType: 'standard',
       advisorPersona: null,
       memoryLongTerm: null,
+      persona: 'You are Arturito, the AI Chief of Staff. You are professional, warm, and action-oriented. You speak clearly and concisely. You always have a plan.',
+      expertise: 'Organization management, task delegation, strategic planning, team coordination, onboarding new agents',
       createdAt: new Date(),
     })
 
@@ -105,7 +108,7 @@ export async function orgRoutes(app: FastifyInstance) {
       finance:     { name: 'CFO',  role: 'Head of Finance',     emoji: '📊' },
       operations:  { name: 'Ops',  role: 'Head of Operations',  emoji: '⚙️' },
     }
-    const firstRole = (req.body as any).firstAgentRole
+    const firstRole = body.firstAgentRole
     if (firstRole && FIRST_AGENT_TEMPLATES[firstRole]) {
       const tmpl = FIRST_AGENT_TEMPLATES[firstRole]
       await db.insert(schema.agents).values({
@@ -191,14 +194,19 @@ export async function agentRoutes(app: FastifyInstance) {
   app.patch('/api/agents/:agentId', async (req, reply) => {
     const { agentId } = req.params as any
     const body = req.body as any
-    // Validate advisorIds if provided
+    // Validate advisorIds if provided (single query instead of N+1)
     if (body.advisorIds) {
       const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
       if (!agent) return reply.code(404).send({ error: 'Agent not found' })
       const ids = typeof body.advisorIds === 'string' ? JSON.parse(body.advisorIds) : body.advisorIds
-      for (const id of ids) {
-        const advisor = await db.query.agents.findFirst({ where: and(eq(schema.agents.id, id), eq(schema.agents.orgId, agent.orgId)) })
-        if (!advisor) return reply.code(400).send({ error: `Invalid advisorId: ${id}` })
+      if (ids.length > 0) {
+        const found = await db.select({ id: schema.agents.id }).from(schema.agents)
+          .where(and(inArray(schema.agents.id, ids), eq(schema.agents.orgId, agent.orgId)))
+        if (found.length !== ids.length) {
+          const foundIds = new Set(found.map(f => f.id))
+          const invalid = ids.find((id: string) => !foundIds.has(id))
+          return reply.code(400).send({ error: `Invalid advisorId: ${invalid}` })
+        }
       }
       body.advisorIds = JSON.stringify(ids)
     }

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseDelegateDirectives, stripDelegateDirectives } from '../services/orchestrator'
+import { parseDelegateDirectives, stripDelegateDirectives } from '../services/orchestrator.ts'
 
 describe('parseDelegateDirectives', () => {
   it('parses a single DELEGATE tag', () => {

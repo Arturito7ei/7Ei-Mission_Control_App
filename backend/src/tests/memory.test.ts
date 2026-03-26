@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractMemoryInstructions, formatMemoryForPrompt } from '../services/memory'
+import { extractMemoryInstructions, formatMemoryForPrompt } from '../services/memory.ts'
 
 describe('extractMemoryInstructions', () => {
   it('extracts a single REMEMBER tag', () => {

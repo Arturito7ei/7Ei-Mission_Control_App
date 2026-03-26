@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseAgentWebhooks, stripAgentWebhooks } from '../services/outbound-webhooks'
+import { parseAgentWebhooks, stripAgentWebhooks } from '../services/outbound-webhooks.ts'
 
 describe('parseAgentWebhooks', () => {
   it('parses a single webhook tag', () => {

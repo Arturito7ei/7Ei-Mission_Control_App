@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calcNextRun, matchCronField } from '../services/scheduler'
+import { calcNextRun, matchCronField } from '../services/scheduler.ts'
 
 // Note: run with: node --test (Node 20+)
 // Or: npx tsx --test src/tests/scheduler.test.ts

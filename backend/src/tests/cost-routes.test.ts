@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { organisations } from '../db/schema'
+import { organisations } from '../db/schema.ts'
 
 describe('[COST-001] cost summary response shape', () => {
   it('summary object has today, week, month, budget keys', () => {

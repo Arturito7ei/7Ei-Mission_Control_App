@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calcNextRun, matchCronField } from '../services/scheduler'
-import { maskKey } from '../routes/all'
-import { scheduledTasks, orgMembers, agents, organisations } from '../db/schema'
+import { calcNextRun, matchCronField } from '../services/scheduler.ts'
+import { maskKey } from '../routes/all.ts'
+import { scheduledTasks, orgMembers, agents, organisations } from '../db/schema.ts'
 
 // ─── WO-1: Schema tests ──────────────────────────────────────────────────
 

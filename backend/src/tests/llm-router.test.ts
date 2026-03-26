@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calcCost, COST_RATES, MODEL_CATALOGUE } from '../services/llm-router'
+import { calcCost, COST_RATES, MODEL_CATALOGUE } from '../services/llm-router.ts'
 
 describe('calcCost', () => {
   it('calculates cost for claude-sonnet-4', () => {

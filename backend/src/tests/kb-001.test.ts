@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { chunkText } from '../routes/all'
+import { chunkText } from '../routes/all.ts'
 
 describe('[KB-001] chunkText', () => {
   it('returns single chunk when text is shorter than wordsPerChunk', () => {
