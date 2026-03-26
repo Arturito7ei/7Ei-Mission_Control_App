@@ -375,6 +375,31 @@ export async function taskRoutes(app: FastifyInstance) {
 
     return { taskId, status: 'executing' }
   })
+
+  // CSV export
+  app.get('/api/orgs/:orgId/tasks/export', async (req, reply) => {
+    const { orgId } = req.params as any
+    const tasks = await db.select().from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt))
+    const agents = await db.select({ id: schema.agents.id, name: schema.agents.name }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const agentMap = new Map(agents.map(a => [a.id, a.name]))
+
+    const csvEscape = (val: string | null | undefined) => {
+      if (val == null) return ''
+      const s = String(val)
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+    }
+
+    const header = 'id,title,status,agentId,agentName,createdAt,completedAt'
+    const rows = tasks.map(t =>
+      [t.id, csvEscape(t.title), t.status, t.agentId, csvEscape(agentMap.get(t.agentId) ?? 'Unknown'),
+       t.createdAt instanceof Date ? t.createdAt.toISOString() : t.createdAt,
+       t.completedAt instanceof Date ? t.completedAt.toISOString() : t.completedAt ?? ''].join(',')
+    )
+    const csv = [header, ...rows].join('\n')
+    reply.header('Content-Type', 'text/csv')
+    reply.header('Content-Disposition', 'attachment; filename=tasks-export.csv')
+    return csv
+  })
 }
 
 // ─── PROJECTS ────────────────────────────────────────────────────────────────
@@ -475,6 +500,28 @@ export async function costRoutes(app: FastifyInstance) {
         percentUsed: budgetLimit ? Math.round((monthData.cost / budgetLimit) * 100) : null,
       },
     }
+  })
+
+  // Cost CSV export
+  app.get('/api/orgs/:orgId/costs/export', async (req, reply) => {
+    const { orgId } = req.params as any
+    const tasks = await db.select({
+      createdAt: schema.tasks.createdAt, agentId: schema.tasks.agentId,
+      llmModel: schema.tasks.llmModel, tokensUsed: schema.tasks.tokensUsed, costUsd: schema.tasks.costUsd,
+    }).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt))
+    const agents = await db.select({ id: schema.agents.id, name: schema.agents.name }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const agentMap = new Map(agents.map(a => [a.id, a.name]))
+
+    const header = 'date,agentId,agentName,model,tokens,cost'
+    const rows = tasks.filter(t => t.costUsd != null).map(t =>
+      [t.createdAt instanceof Date ? t.createdAt.toISOString().slice(0, 10) : '',
+       t.agentId, agentMap.get(t.agentId) ?? 'Unknown', t.llmModel ?? '',
+       t.tokensUsed ?? 0, (t.costUsd ?? 0).toFixed(6)].join(',')
+    )
+    const csv = [header, ...rows].join('\n')
+    reply.header('Content-Type', 'text/csv')
+    reply.header('Content-Disposition', 'attachment; filename=costs-export.csv')
+    return csv
   })
 }
 
