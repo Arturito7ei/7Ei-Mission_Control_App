@@ -1,4 +1,4 @@
-import { View, Text, FlatList, StyleSheet, TextInput, Alert, TouchableOpacity } from 'react-native'
+import { View, Text, FlatList, StyleSheet, TextInput, Alert, TouchableOpacity, Linking } from 'react-native'
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../../store'
 import { Colors, Space, Radius } from '../../constants/colors'
@@ -18,6 +18,7 @@ const PROVIDERS = [
 export default function CredentialsScreen() {
   const { currentOrg } = useStore()
   const [credentials, setCredentials] = useState<Credential[]>([])
+  const [driveConnected, setDriveConnected] = useState(false)
   const [adding, setAdding] = useState(false)
   const [provider, setProvider] = useState('anthropic')
   const [apiKey, setApiKey] = useState('')
@@ -31,7 +32,25 @@ export default function CredentialsScreen() {
     } catch {}
   }, [currentOrg])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); loadDriveStatus() }, [load])
+
+  const loadDriveStatus = useCallback(async () => {
+    if (!currentOrg) return
+    try {
+      const res = await fetch(`${BASE}/api/orgs/${currentOrg.id}/auth/google/status`)
+      const data = await res.json()
+      setDriveConnected(data.connected ?? false)
+    } catch {}
+  }, [currentOrg])
+
+  const connectDrive = async () => {
+    if (!currentOrg) return
+    try {
+      const res = await fetch(`${BASE}/api/orgs/${currentOrg.id}/auth/google`)
+      const data = await res.json()
+      if (data.url) Linking.openURL(data.url)
+    } catch (e: any) { Alert.alert('Error', e.message) }
+  }
 
   const handleAdd = async () => {
     if (!apiKey.trim() || !currentOrg) return
@@ -92,6 +111,24 @@ export default function CredentialsScreen() {
         }}
       />
 
+      {/* Google Drive */}
+      <View style={styles.driveSection}>
+        <Card style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.providerEmoji}>📁</Text>
+            <View style={styles.cardInfo}>
+              <Text style={styles.providerName}>Google Drive</Text>
+              <Text style={styles.maskedKey}>{driveConnected ? 'Connected' : 'Not connected'}</Text>
+            </View>
+            {driveConnected ? (
+              <Text style={{ fontSize: 14, color: Colors.accent }}>✓</Text>
+            ) : (
+              <Button label="Connect" onPress={connectDrive} variant="secondary" />
+            )}
+          </View>
+        </Card>
+      </View>
+
       {adding && (
         <View style={styles.addForm}>
           <Text style={styles.label}>Provider</Text>
@@ -135,4 +172,5 @@ const styles = StyleSheet.create({
   providerChipActive: { borderColor: Colors.accent, backgroundColor: Colors.accentDim },
   input: { backgroundColor: Colors.surfaceHigh, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md, padding: Space.md, color: Colors.text, fontSize: 15 },
   formActions: { flexDirection: 'row', gap: Space.md },
+  driveSection: { paddingHorizontal: Space.lg, marginTop: Space.lg },
 })
