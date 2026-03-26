@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { organisations } from '../db/schema'
+import { organisations } from '../db/schema.ts'
 
 describe('[DB-001] organisations onboarding columns', () => {
   it('schema has mission column', () => {

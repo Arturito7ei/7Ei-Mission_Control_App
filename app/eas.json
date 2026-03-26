@@ -16,7 +16,7 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.7ei.ai"
+        "EXPO_PUBLIC_API_URL": "https://7ei-backend.fly.dev"
       }
     },
     "production": {
@@ -24,7 +24,7 @@
       "channel": "production",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.7ei.ai"
+        "EXPO_PUBLIC_API_URL": "https://7ei-backend.fly.dev"
       },
       "ios": {
         "enterpriseProvisioning": "universal"

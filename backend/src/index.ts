@@ -69,17 +69,19 @@ async function start() {
   await app.register(credentialRoutes)
 
   // Health + readiness
-  app.get('/health', async () => ({
+  const healthResponse = () => ({
     status: 'ok',
-    version: '0.6.0',
-    ts: new Date().toISOString(),
+    version: '1.2.0',
+    timestamp: new Date().toISOString(),
     features: [
       'anthropic', 'openai', 'gemini',
       'pinecone', 'jira-webhook',
       'memory-compression', 'redis-ratelimit',
       'scheduler', 'orchestration', 'outbound-webhooks',
     ],
-  }))
+  })
+  app.get('/health', async () => healthResponse())
+  app.get('/api/health', async () => healthResponse())
 
   app.get('/ready', async (_req, reply) => {
     // Could check DB connectivity here

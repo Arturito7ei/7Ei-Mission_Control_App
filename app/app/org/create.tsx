@@ -120,7 +120,7 @@ export default function CreateOrgScreen() {
           {firstAgent && (
             <View style={styles.deployRow}>
               <Text style={styles.deployKey}>First Agent</Text>
-              <Text style={styles.deployVal} style={[styles.deployVal, { textTransform: 'capitalize' }]}>
+              <Text style={[styles.deployVal, { textTransform: 'capitalize' }]}>
                 {firstAgent}
               </Text>
             </View>

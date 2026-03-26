@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AGENT_TEMPLATES } from '../routes/all'
+import { AGENT_TEMPLATES } from '../routes/all.ts'
 import { z } from 'zod'
 
 // Replicate AgentSchema for testing (matches routes/all.ts)
