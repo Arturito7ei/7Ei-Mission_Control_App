@@ -16,7 +16,7 @@ WebBrowser.maybeCompleteAuthSession()
 
 const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? ''
 
-discovery is the OpenID config endpoint
+// discovery is the OpenID config endpoint
 const discovery = {
   authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
   tokenEndpoint: 'https://oauth2.googleapis.com/token',

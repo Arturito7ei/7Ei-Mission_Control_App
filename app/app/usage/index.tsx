@@ -60,15 +60,10 @@ export default function UsageScreen() {
       })}
       <Card style={styles.infoCard}>
         <Text style={styles.infoTitle}>ℹ️ Configuring limits</Text>
-        <Text style={styles.infoText}>Set these env vars on the backend to override defaults:{'
-'}{'
-'}
-          <Text style={styles.envVar}>RATE_LIMIT_RPM</Text>{'  '}requests/min{'
-'}
-          <Text style={styles.envVar}>RATE_LIMIT_TOKENS_DAY</Text>{'  '}tokens/day{'
-'}
-          <Text style={styles.envVar}>RATE_LIMIT_COST_DAY</Text>{'  '}max USD/day{'
-'}
+        <Text style={styles.infoText}>Set these env vars on the backend to override defaults:{'\n'}{'\n'}
+          <Text style={styles.envVar}>RATE_LIMIT_RPM</Text>{'  '}requests/min{'\n'}
+          <Text style={styles.envVar}>RATE_LIMIT_TOKENS_DAY</Text>{'  '}tokens/day{'\n'}
+          <Text style={styles.envVar}>RATE_LIMIT_COST_DAY</Text>{'  '}max USD/day{'\n'}
           <Text style={styles.envVar}>RATE_LIMIT_CONCURRENT</Text>{'  '}parallel tasks
         </Text>
       </Card>
