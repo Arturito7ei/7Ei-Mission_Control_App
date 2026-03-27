@@ -10,6 +10,7 @@ import { db, schema } from '../db/client'
 import { eq, and, lte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
+import { sendPushNotification } from '../routes/notifications'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
 let schedulerTimer: NodeJS.Timeout | null = null
@@ -66,6 +67,12 @@ async function runScheduledTask(scheduled: any, triggerTime: Date) {
     await executeAgentTask({ agentId: scheduled.agentId, taskId, input: scheduled.input ?? scheduled.title })
   } catch (err) {
     console.error(`Scheduled execution failed for ${scheduled.id}:`, err)
+  }
+
+  // Notify org owner
+  const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, scheduled.orgId) })
+  if (org?.ownerId) {
+    sendPushNotification(org.ownerId, `Scheduled task ran: ${scheduled.title}`, `Agent completed the scheduled task`, { taskId, scheduledId: scheduled.id }).catch(() => {})
   }
 
   // Update last/next run

@@ -7,6 +7,7 @@ import { setTokenGetter } from '../lib/api'
 import { api } from '../lib/api'
 import { useColorScheme } from 'react-native'
 import * as Notifications from 'expo-notifications'
+import { OfflineBar } from '../components/OfflineBar'
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true }),
@@ -42,6 +43,16 @@ function AuthGuard() {
     })()
   }, [isSignedIn, userId])
 
+  // Handle notification tap → navigate to relevant screen
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+      const data = response.notification.request.content.data
+      if (data?.agentId) router.push(`/agents/${data.agentId}`)
+      else if (data?.taskId) router.push(`/tasks/${data.taskId}`)
+    })
+    return () => sub.remove()
+  }, [router])
+
   useEffect(() => {
     if (!isLoaded) return
     const inAuth = segments[0] === '(auth)'
@@ -51,6 +62,7 @@ function AuthGuard() {
 
   return (
     <>
+      <OfflineBar />
       <StatusBar style={scheme === 'light' ? 'dark' : 'light'} />
       <Slot />
     </>

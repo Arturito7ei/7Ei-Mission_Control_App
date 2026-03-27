@@ -156,3 +156,16 @@ export const orgMembers = sqliteTable('org_members', {
   role:      text('role').notNull().default('member'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
+
+export const auditLogs = sqliteTable('audit_logs', {
+  id:         text('id').primaryKey(),
+  orgId:      text('org_id'),
+  userId:     text('user_id'),
+  action:     text('action').notNull(),
+  method:     text('method').notNull(),
+  path:       text('path').notNull(),
+  statusCode: integer('status_code'),
+  durationMs: integer('duration_ms'),
+  metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>(),
+  createdAt:  integer('created_at', { mode: 'timestamp' }).notNull(),
+})

@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
 import { clerkPlugin } from '@clerk/fastify'
 import { setupDatabase } from './db/setup'
+import { dbClient, db, schema } from './db/client'
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from './routes/all'
 import { knowledgeRoutes } from './routes/knowledge'
 import { commsRoutes } from './routes/comms'
@@ -18,6 +19,7 @@ import { modelRoutes } from './routes/models'
 import { scheduledRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
 import { ensureIndex } from './services/vector-search'
+import { auditLogPlugin } from './middleware/audit-log'
 import { startScheduler } from './services/scheduler'
 
 const app = Fastify({
@@ -67,19 +69,37 @@ async function start() {
   await app.register(webhookRoutes)
   await app.register(authRoutes)
   await app.register(credentialRoutes)
+  await app.register(auditLogPlugin)
 
   // Health + readiness
-  const healthResponse = () => ({
-    status: 'ok',
-    version: '1.2.0',
-    timestamp: new Date().toISOString(),
-    features: [
-      'anthropic', 'openai', 'gemini',
-      'pinecone', 'jira-webhook',
-      'memory-compression', 'redis-ratelimit',
-      'scheduler', 'orchestration', 'outbound-webhooks',
-    ],
-  })
+  const startTime = Date.now()
+  const healthResponse = async () => {
+    let dbStatus = 'error'
+    try { await dbClient.execute('SELECT 1'); dbStatus = 'connected' } catch {}
+
+    const oauthCount = await db.select({ id: schema.oauthTokens.id }).from(schema.oauthTokens).then(r => r.length).catch(() => 0)
+
+    return {
+      status: 'ok',
+      version: '1.3.0',
+      timestamp: new Date().toISOString(),
+      uptime: Math.round((Date.now() - startTime) / 1000),
+      db: dbStatus,
+      scheduler: 'running',
+      services: {
+        pinecone: !!process.env.PINECONE_API_KEY,
+        redis: !!process.env.REDIS_URL,
+        googleOAuth: oauthCount,
+      },
+      features: [
+        'anthropic', 'openai', 'gemini',
+        'pinecone', 'jira-webhook',
+        'memory-compression', 'redis-ratelimit',
+        'scheduler', 'orchestration', 'outbound-webhooks',
+        'audit-log', 'rbac', 'push-notifications',
+      ],
+    }
+  }
   app.get('/health', async () => healthResponse())
   app.get('/api/health', async () => healthResponse())
 
