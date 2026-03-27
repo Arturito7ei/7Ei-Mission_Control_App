@@ -6,6 +6,7 @@ import { streamLLM, calcCost } from './llm-router'
 import { searchKnowledge } from './vector-search'
 import { parseDelegateDirectives, stripDelegateDirectives, executeDelegations, buildSynthesisPrompt } from './orchestrator'
 import { parseAgentWebhooks, stripAgentWebhooks, executeAgentWebhooks } from './outbound-webhooks'
+import { sendPushNotification } from '../routes/notifications'
 import { fireWebhook } from './outbound-webhooks'
 import { ensureFreshToken, searchDriveFiles } from './google-auth'
 
@@ -156,6 +157,14 @@ export async function executeAgentTask(opts: {
     await fireWebhook('task.done', agent.orgId, { taskId, agentId, agentName: agent.name, tokensUsed, costUsd })
     await fireWebhook('agent.idle', agent.orgId, { agentId, agentName: agent.name })
     await fireWebhook('message.created', agent.orgId, { agentId, taskId, role: 'assistant', contentLength: cleanedOutput.length })
+
+    // Push notifications (fire-and-forget)
+    if (org?.ownerId) {
+      sendPushNotification(org.ownerId, `${agent.name} completed a task`, cleanedOutput.slice(0, 100), { agentId, taskId }).catch(() => {})
+      if (budgetWarning) {
+        sendPushNotification(org.ownerId, `Budget alert: ${budgetWarning.percentUsed}% used`, `$${budgetWarning.remaining.toFixed(2)} remaining this month`, { type: 'budget_warning' }).catch(() => {})
+      }
+    }
 
     const execResult: ExecuteResult = {
       output: cleanedOutput, tokensUsed, costUsd, durationMs, provider,

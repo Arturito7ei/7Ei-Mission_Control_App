@@ -1,4 +1,4 @@
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl } from 'react-native'
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, RefreshControl, ActivityIndicator } from 'react-native'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'expo-router'
 import { useStore } from '../../store'
@@ -14,14 +14,21 @@ export default function AgentsScreen() {
   const { currentOrg, agents, setAgents, updateAgent } = useStore()
   const [search, setSearch] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     if (!currentOrg) return
-    const { agents: list } = await api.agents.list(currentOrg.id)
-    setAgents(list)
+    try {
+      const { agents: list } = await api.agents.list(currentOrg.id)
+      setAgents(list)
+    } finally { setLoading(false) }
   }, [currentOrg])
 
   useEffect(() => { load() }, [load])
+
+  if (loading && agents.length === 0) {
+    return <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="large" color={Colors.accent} /></View>
+  }
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false) }
 

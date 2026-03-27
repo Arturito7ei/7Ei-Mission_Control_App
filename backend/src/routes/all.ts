@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db, schema } from '../db/client'
 import { eq, and, desc, gte, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { requireOrgRole } from '../middleware/rbac'
 import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
 import { streamLLM } from '../services/llm-router'
@@ -140,7 +141,7 @@ export async function orgRoutes(app: FastifyInstance) {
     await db.update(schema.organisations).set(req.body as any).where(eq(schema.organisations.id, orgId))
     return { ok: true }
   })
-  app.delete('/api/orgs/:orgId', async (req, reply) => {
+  app.delete('/api/orgs/:orgId', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
     await db.delete(schema.organisations).where(eq(schema.organisations.id, (req.params as any).orgId))
     reply.code(204)
   })
@@ -708,7 +709,7 @@ export function maskKey(key: string): string {
 }
 
 export async function credentialRoutes(app: FastifyInstance) {
-  app.post('/api/orgs/:orgId/credentials', async (req, reply) => {
+  app.post('/api/orgs/:orgId/credentials', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
     const { orgId } = req.params as any
     const { provider, apiKey } = req.body as any
     if (!provider || !apiKey) return reply.code(400).send({ error: 'provider and apiKey required' })
@@ -735,7 +736,7 @@ export async function credentialRoutes(app: FastifyInstance) {
     return { credentials }
   })
 
-  app.delete('/api/orgs/:orgId/credentials/:provider', async (req, reply) => {
+  app.delete('/api/orgs/:orgId/credentials/:provider', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
     const { orgId, provider } = req.params as any
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
     if (!org) return reply.code(404).send({ error: 'Org not found' })
