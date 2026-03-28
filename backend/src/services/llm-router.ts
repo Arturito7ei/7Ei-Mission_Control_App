@@ -184,9 +184,12 @@ async function streamGemini(opts: LLMStreamOpts): Promise<LLMResult> {
 
 // ─ Public router ──────────────────────────────────────────────────────
 export async function streamLLM(opts: LLMStreamOpts): Promise<LLMResult> {
-  switch (opts.provider) {
-    case 'openai':  return streamOpenAI(opts)
-    case 'google':  return streamGemini(opts)
-    default:        return streamAnthropic(opts)
-  }
+  const { withSpan } = await import('./telemetry')
+  return withSpan('llm.call', { 'llm.provider': opts.provider, 'llm.model': opts.model }, async () => {
+    switch (opts.provider) {
+      case 'openai':  return streamOpenAI(opts)
+      case 'google':  return streamGemini(opts)
+      default:        return streamAnthropic(opts)
+    }
+  })
 }

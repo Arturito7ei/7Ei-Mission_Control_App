@@ -1,0 +1,41 @@
+name: Security Scan
+
+on: [pull_request]
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit backend
+        run: cd backend && npm ci --legacy-peer-deps && npm audit --audit-level=high
+      - name: Audit app
+        run: cd app && npm ci --legacy-peer-deps && npm audit --audit-level=high
+
+  license-check:
+    name: License check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check licenses
+        run: cd backend && npm ci --legacy-peer-deps && npx license-checker --failOn 'GPL-2.0;GPL-3.0'
+
+  outdated:
+    name: Outdated dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check backend
+        run: cd backend && npm ci --legacy-peer-deps && npm outdated || true
+      - name: Check app
+        run: cd app && npm ci --legacy-peer-deps && npm outdated || true
