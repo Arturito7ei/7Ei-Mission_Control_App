@@ -143,3 +143,62 @@ export async function usageRoutes(app: FastifyInstance) {
   })
   app.get('/api/orgs/:orgId/limits', async () => ({ limits: LIMITS }))
 }
+
+// ─ Per-IP rate limiting ──────────────────────────────────────────────────
+const ipWindows = new Map<string, { count: number; windowStart: number }>()
+
+export function checkIpRate(ip: string, maxPerMinute: number): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now()
+  const windowMs = 60_000
+  const entry = ipWindows.get(ip)
+  if (!entry || now - entry.windowStart > windowMs) {
+    ipWindows.set(ip, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+  if (entry.count >= maxPerMinute) {
+    return { allowed: false, retryAfter: Math.ceil((entry.windowStart + windowMs - now) / 1000) }
+  }
+  entry.count++
+  return { allowed: true }
+}
+
+export function perIpRateLimit(maxPerMinute: number) {
+  return async (req: any, reply: any) => {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown'
+    const check = checkIpRate(ip, maxPerMinute)
+    if (!check.allowed) {
+      reply.header('Retry-After', String(check.retryAfter))
+      return reply.code(429).send({ error: 'Too many requests', retryAfter: check.retryAfter })
+    }
+  }
+}
+
+// ─ Per-org rate limiting (for chat endpoints) ────────────────────────────
+const orgChatWindows = new Map<string, { count: number; windowStart: number }>()
+
+export function checkOrgChatRate(orgId: string, maxPerMinute: number): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now()
+  const windowMs = 60_000
+  const entry = orgChatWindows.get(orgId)
+  if (!entry || now - entry.windowStart > windowMs) {
+    orgChatWindows.set(orgId, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+  if (entry.count >= maxPerMinute) {
+    return { allowed: false, retryAfter: Math.ceil((entry.windowStart + windowMs - now) / 1000) }
+  }
+  entry.count++
+  return { allowed: true }
+}
+
+export function perOrgChatRateLimit(maxPerMinute = 60) {
+  return async (req: any, reply: any) => {
+    const orgId = req.params?.orgId
+    if (!orgId) return
+    const check = checkOrgChatRate(orgId, maxPerMinute)
+    if (!check.allowed) {
+      reply.header('Retry-After', String(check.retryAfter))
+      return reply.code(429).send({ error: 'Chat rate limit exceeded', retryAfter: check.retryAfter })
+    }
+  }
+}

@@ -20,6 +20,7 @@ import { scheduledRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
+import { telemetryPlugin } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 
 const app = Fastify({
@@ -69,6 +70,7 @@ async function start() {
   await app.register(webhookRoutes)
   await app.register(authRoutes)
   await app.register(credentialRoutes)
+  await app.register(telemetryPlugin)
   await app.register(auditLogPlugin)
 
   // Health + readiness
