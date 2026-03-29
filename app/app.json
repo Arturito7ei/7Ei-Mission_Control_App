@@ -43,7 +43,10 @@
       }]
     ],
     "experiments": { "typedRoutes": true },
-    "extra": { "eas": { "projectId": "7EI_EAS_PROJECT_ID" } },
+    "extra": {
+      "eas": { "projectId": "7EI_EAS_PROJECT_ID" },
+      "router": { "asyncRoutes": false }
+    },
     "owner": "arturito7ei",
     "updates": {
       "url": "https://u.expo.dev/7EI_EAS_PROJECT_ID"
