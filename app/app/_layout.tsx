@@ -18,6 +18,8 @@ const tokenCache = {
   async saveToken(key: string, value: string) { return SecureStore.setItemAsync(key, value) },
 }
 
+const CLERK_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
+
 function AuthGuard() {
   const { isLoaded, isSignedIn, getToken, userId } = useAuth()
   const segments = useSegments()
@@ -43,7 +45,6 @@ function AuthGuard() {
     })()
   }, [isSignedIn, userId])
 
-  // Handle notification tap → navigate to relevant screen
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener(response => {
       const data = response.notification.request.content.data
@@ -69,10 +70,26 @@ function AuthGuard() {
   )
 }
 
+// When no Clerk key, render app without auth (for testing/demo)
+function NoAuthShell() {
+  const scheme = useColorScheme()
+  return (
+    <>
+      <OfflineBar />
+      <StatusBar style={scheme === 'light' ? 'dark' : 'light'} />
+      <Slot />
+    </>
+  )
+}
+
 export default function RootLayout() {
+  if (!CLERK_KEY) {
+    return <NoAuthShell />
+  }
+
   return (
     <ClerkProvider
-      publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}
+      publishableKey={CLERK_KEY}
       tokenCache={tokenCache}
     >
       <AuthGuard />
