@@ -28,6 +28,15 @@ export async function setupDatabase() {
 
   // Idempotent column additions for existing DBs
   const alterStatements = [
+    // Sprint 1-2: onboarding columns on organisations
+    `ALTER TABLE organisations ADD COLUMN mission TEXT`,
+    `ALTER TABLE organisations ADD COLUMN culture TEXT`,
+    `ALTER TABLE organisations ADD COLUMN deploy_mode TEXT`,
+    `ALTER TABLE organisations ADD COLUMN cloud_provider TEXT`,
+    `ALTER TABLE organisations ADD COLUMN preferred_llm TEXT`,
+    `ALTER TABLE organisations ADD COLUMN deploy_config TEXT DEFAULT '{}'`,
+    `ALTER TABLE organisations ADD COLUMN budget_monthly_usd REAL`,
+    // Sprint 4: agent profile fields
     `ALTER TABLE tasks ADD COLUMN parent_task_id TEXT`,
     `ALTER TABLE agents ADD COLUMN persona TEXT`,
     `ALTER TABLE agents ADD COLUMN expertise TEXT`,
@@ -36,6 +45,13 @@ export async function setupDatabase() {
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
   }
+
+  // Sprint 7: audit_logs table
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_org ON audit_logs(org_id)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`)
+  } catch { /* already exists */ }
 
   console.log('✅ Database ready')
 }
