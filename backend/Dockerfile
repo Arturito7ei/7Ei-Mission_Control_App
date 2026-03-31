@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install ALL dependencies (tsx is in devDeps, needed to run TypeScript)
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source
 COPY tsconfig.json ./
