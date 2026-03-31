@@ -43,10 +43,10 @@ export default function AgentDetailScreen() {
   }, [loadMessages, loadMemCount])
 
   useEffect(() => {
-    if (firstTime === 'true' && agentMsgs.length === 0) {
+    if (firstTime === 'true' && agentMsgs.length === 0 && agent && !sending) {
       sendMessage('Hello Arturito, I just set up our organisation. Please introduce yourself and tell me what you can help me with today.')
     }
-  }, [firstTime])
+  }, [firstTime, agent])
 
   const sendMessage = async (overrideText?: string) => {
     const text = overrideText?.trim() || input.trim()

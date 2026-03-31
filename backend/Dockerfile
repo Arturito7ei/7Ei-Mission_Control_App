@@ -1,9 +1,8 @@
 FROM node:22-alpine
 
 WORKDIR /app
-ENV NODE_ENV=production
 
-# Install all dependencies (including tsx for running TypeScript)
+# Install ALL dependencies (tsx is in devDeps, needed to run TypeScript)
 COPY package*.json ./
 RUN npm ci
 
@@ -11,6 +10,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 
+ENV NODE_ENV=production
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
