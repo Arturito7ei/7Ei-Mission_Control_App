@@ -21,7 +21,7 @@ export default function WebhooksScreen() {
   const [testing, setTesting] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', url: '', secret: '', events: ['*'] as string[] })
 
-  const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'
+  const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'
 
   const load = useCallback(async () => {
     if (!currentOrg) return

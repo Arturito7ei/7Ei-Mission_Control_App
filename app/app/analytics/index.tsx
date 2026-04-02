@@ -9,7 +9,7 @@ import { AgentAvatar } from '../../components/AgentAvatar'
 import { ThemedText } from '../../components/ThemedText'
 import { Skeleton } from '../../components/Skeleton'
 
-const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'
+const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'
 
 export default function AnalyticsScreen() {
   const { currentOrg, agents, tasks } = useStore()

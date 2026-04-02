@@ -5,7 +5,7 @@ import { Colors, Space, Radius } from '../../constants/colors'
 import { Card } from '../../components/Card'
 import { Button } from '../../components/Button'
 
-const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'
+const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'
 
 interface Credential { provider: string; maskedKey: string }
 
