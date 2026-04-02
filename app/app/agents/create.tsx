@@ -26,7 +26,7 @@ export default function CreateAgentScreen() {
 
   useEffect(() => {
     api.agents.templates().then(r => setTemplates(r.templates))
-    fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/models`)
+    fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/models`)
       .then(r => r.json()).then(d => setModelCatalogue(d.models ?? {}))
       .catch(() => setModelCatalogue({
         anthropic: [

@@ -33,7 +33,7 @@ export default function ScheduledScreen() {
   const load = useCallback(async () => {
     if (!currentOrg) return
     try {
-      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/orgs/${currentOrg.id}/scheduled`)
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/orgs/${currentOrg.id}/scheduled`)
       const data = await res.json()
       setTasks(data.tasks ?? [])
     } catch {}
@@ -44,7 +44,7 @@ export default function ScheduledScreen() {
 
   const previewCron = async (cron: string) => {
     try {
-      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/scheduled/preview?cron=${encodeURIComponent(cron)}`)
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/scheduled/preview?cron=${encodeURIComponent(cron)}`)
       const data = await res.json()
       if (data.next) setNextRun(new Date(data.next).toLocaleString())
     } catch {}
@@ -56,7 +56,7 @@ export default function ScheduledScreen() {
     }
     setCreating(true)
     try {
-      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/orgs/${currentOrg.id}/scheduled`, {
+      const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/orgs/${currentOrg.id}/scheduled`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: form.agentId, title: form.title, input: form.input || undefined, cron: form.cron }),
@@ -73,7 +73,7 @@ export default function ScheduledScreen() {
 
   const toggleEnabled = async (task: any) => {
     const next = task.enabled === 1 ? 0 : 1
-    await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/scheduled/${task.id}`, {
+    await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/scheduled/${task.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: next === 1 }),
@@ -85,7 +85,7 @@ export default function ScheduledScreen() {
     Alert.alert('Delete Schedule', `Remove "${task.title}"?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => {
-        await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/scheduled/${task.id}`, { method: 'DELETE' })
+        await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/api/scheduled/${task.id}`, { method: 'DELETE' })
         setTasks(tt => tt.filter(t => t.id !== task.id))
       }},
     ])

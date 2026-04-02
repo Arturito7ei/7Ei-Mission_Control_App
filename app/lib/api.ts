@@ -1,4 +1,4 @@
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'
 
 let _getToken: (() => Promise<string | null>) | null = null
 export function setTokenGetter(fn: () => Promise<string | null>) { _getToken = fn }

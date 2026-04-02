@@ -9,7 +9,7 @@ export function OfflineBar() {
     let mounted = true
     const check = async () => {
       try {
-        const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001'}/health`, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+        const res = await fetch(`${process.env.EXPO_PUBLIC_API_URL ?? 'https://7ei-backend.fly.dev'}/health`, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
         if (mounted) setOffline(!res.ok)
       } catch {
         if (mounted) setOffline(true)

@@ -9,7 +9,7 @@
       "distribution": "internal",
       "ios": { "simulator": true },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://localhost:3001"
+        "EXPO_PUBLIC_API_URL": "https://7ei-backend.fly.dev"
       }
     },
     "preview": {
