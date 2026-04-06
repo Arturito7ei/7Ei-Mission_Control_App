@@ -41,6 +41,9 @@ export async function setupDatabase() {
     `ALTER TABLE agents ADD COLUMN persona TEXT`,
     `ALTER TABLE agents ADD COLUMN expertise TEXT`,
     `ALTER TABLE agents ADD COLUMN advisor_ids TEXT`,
+    // Telegram integration
+    `ALTER TABLE org_members ADD COLUMN telegram_chat_id TEXT`,
+    `ALTER TABLE organisations ADD COLUMN telegram_bot_token TEXT`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

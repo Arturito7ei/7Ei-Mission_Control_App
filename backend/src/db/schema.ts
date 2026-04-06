@@ -14,6 +14,7 @@ export const organisations = sqliteTable('organisations', {
   preferredLlm: text('preferred_llm'),
   deployConfig: text('deploy_config', { mode: 'json' }).$type<Record<string, string>>().default({}),
   budgetMonthlyUsd: real('budget_monthly_usd'),
+  telegramBotToken: text('telegram_bot_token'),
 })
 
 export const departments = sqliteTable('departments', {
@@ -150,11 +151,12 @@ export const oauthTokens = sqliteTable('oauth_tokens', {
 })
 
 export const orgMembers = sqliteTable('org_members', {
-  id:        text('id').primaryKey(),
-  orgId:     text('org_id').notNull(),
-  userId:    text('user_id').notNull(),
-  role:      text('role').notNull().default('member'),
-  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  id:              text('id').primaryKey(),
+  orgId:           text('org_id').notNull(),
+  userId:          text('user_id').notNull(),
+  role:            text('role').notNull().default('member'),
+  telegramChatId:  text('telegram_chat_id'),
+  createdAt:       integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const auditLogs = sqliteTable('audit_logs', {
