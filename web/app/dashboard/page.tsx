@@ -1,7 +1,13 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@clerk/nextjs'
+// Clerk auth is optional — works without NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
+try {
+  useAuth = require('@clerk/nextjs').useAuth
+} catch {
+  useAuth = () => ({ getToken: async () => null, isLoaded: true, isSignedIn: false })
+}
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
 
@@ -16,7 +22,7 @@ async function apiFetch<T>(path: string, token: string | null, opts?: RequestIni
 
 type Org = { id: string; name: string; description?: string }
 type Agent = { id: string; name: string; role: string; status: string; avatarEmoji: string; agentType: string; llmModel: string; skills: string[] }
-type Task = { id: string; title: string; status: string; costUsd?: number; tokensUsed?: number; priority: string; createdAt: string; agentId: string }
+type Task = { id: string; title: string; status: string; costUsd?: number; tokensUsed?: number; priority: string; createdAt: string; agentId: string; projectId?: string }
 type Project = { id: string; name: string; description?: string; createdAt: string }
 type Skill = { id: string; name: string; domain: string; description?: string; source: string }
 type Notification = { id: string; type: string; title: string; body: string; agentEmoji: string; cost?: number }

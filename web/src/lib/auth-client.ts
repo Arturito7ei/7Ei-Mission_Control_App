@@ -1,5 +1,10 @@
 import { createElement, ComponentType, useEffect } from 'react'
-import { useAuth } from '@clerk/nextjs'
+let useAuth: () => { isLoaded: boolean; isSignedIn: boolean }
+try {
+  useAuth = require('@clerk/nextjs').useAuth
+} catch {
+  useAuth = () => ({ isLoaded: true, isSignedIn: false })
+}
 import { useRouter } from 'next/navigation'
 
 // Session validator hook — redirects to sign-in if not authenticated
