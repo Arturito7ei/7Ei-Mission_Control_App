@@ -18,6 +18,7 @@ import { usageRoutes } from './middleware/ratelimit'
 import { modelRoutes } from './routes/models'
 import { scheduledRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
+import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
 import { telemetryPlugin } from './services/telemetry'
@@ -68,6 +69,7 @@ async function start() {
   await app.register(modelRoutes)
   await app.register(scheduledRoutes)
   await app.register(webhookRoutes)
+  await app.register(telegramWebhookRoutes)
   await app.register(authRoutes)
   await app.register(credentialRoutes)
   await app.register(telemetryPlugin)
