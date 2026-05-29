@@ -1,7 +1,6 @@
 {
   "cli": {
-    "version": ">= 12.0.0",
-    "promptToInstallUpdatesAutomatically": false
+    "version": ">= 12.0.0"
   },
   "build": {
     "development": {
