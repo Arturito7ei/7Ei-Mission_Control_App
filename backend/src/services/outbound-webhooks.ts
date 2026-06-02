@@ -14,6 +14,7 @@ export type WebhookEvent =
   | 'agent.idle'
   | 'message.created'
   | 'org.created'
+  | 'delegation.complete'
 
 export interface WebhookPayload {
   event: WebhookEvent

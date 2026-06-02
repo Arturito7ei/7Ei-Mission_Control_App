@@ -23,7 +23,7 @@ const ConnectSchema = z.object({
   defaultProjectKey: z.string().default('O7MC'),
 })
 
-const jiraConfigs = new Map<string, { domain: string; email: string; apiToken: string; defaultProjectKey: string }>()
+const jiraConfigs = new Map<string, z.infer<typeof ConnectSchema>>()
 
 export async function jiraRoutes(app: FastifyInstance) {
 

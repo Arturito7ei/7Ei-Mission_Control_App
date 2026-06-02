@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import Fastify from 'fastify'
+import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
@@ -112,7 +112,7 @@ async function start() {
     reply.code(200).send({ ready: true })
   })
 
-  app.setErrorHandler((error, _req, reply) => {
+  app.setErrorHandler((error: FastifyError, _req, reply) => {
     app.log.error(error)
     reply.code(error.statusCode ?? 500).send({ error: error.message ?? 'Internal server error' })
   })

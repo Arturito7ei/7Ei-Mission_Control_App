@@ -168,7 +168,7 @@ export default function AgentDetailScreen() {
           </ScrollView>
           <View style={styles.inputBar}>
             <TextInput style={styles.textInput} value={input} onChangeText={setInput} placeholder={`Message ${agent.name}...`} placeholderTextColor={Colors.textMuted} multiline maxLength={4000} />
-            <TouchableOpacity style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]} onPress={sendMessage} disabled={!input.trim() || sending}>
+            <TouchableOpacity style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]} onPress={() => sendMessage()} disabled={!input.trim() || sending}>
               <Text style={styles.sendBtnText}>{sending ? '...' : '↑'}</Text>
             </TouchableOpacity>
           </View>

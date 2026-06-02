@@ -93,6 +93,14 @@ export const Dark = {
   jiraInReview:    '#c9b800',
   jiraDone:        '#33c333',
   jiraBlocked:     '#D4001A',
+
+  // Semantic aliases — used directly by screens (map to status tokens)
+  active:   '#893BFF',
+  warning:  '#c9b800',
+  info:     '#7b6dff',
+  success:  '#33c333',
+  error:    '#D4001A',
+  white:    '#ffffff',
 } as const
 
 // ─── Light Mode ────────────────────────────────────────────────────────────────
@@ -164,6 +172,14 @@ export const Light = {
   jiraInReview:    '#7a6a00',
   jiraDone:        '#219a21',
   jiraBlocked:     '#D4001A',
+
+  // Semantic aliases — used directly by screens (map to status tokens)
+  active:   '#700077',
+  warning:  '#7a6a00',
+  info:     '#3500ff',
+  success:  '#219a21',
+  error:    '#D4001A',
+  white:    '#ffffff',
 } as const
 
 // ─── Shared constants ─────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { View, StyleSheet, ViewStyle } from 'react-native'
+import { View, StyleSheet, ViewStyle, StyleProp } from 'react-native'
 import { useTheme } from '../constants/theme'
 import { Radius, Space } from '../constants/colors'
 
@@ -6,7 +6,7 @@ type CardVariant = 'default' | 'high' | 'glass' | 'accent' | 'error'
 
 interface CardProps {
   children: React.ReactNode
-  style?: ViewStyle
+  style?: StyleProp<ViewStyle>
   variant?: CardVariant
   padding?: number
 }
