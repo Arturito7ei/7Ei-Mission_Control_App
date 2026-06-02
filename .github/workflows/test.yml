@@ -18,14 +18,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
       - name: Run tests
-        # Tests use Node 20 native runner, no build step needed
-        run: node --test --experimental-strip-types src/tests/*.test.ts 2>&1 || true
+        # Use the project's test script (node --test --import=tsx). tsx fully
+        # transpiles TS and resolves extensionless imports; native
+        # --experimental-strip-types cannot, so it must not be used here.
+        # No `|| true` — a failing test must fail the job.
+        run: npm test
         env:
           ANTHROPIC_API_KEY: test-key-not-real
           DATABASE_URL: 'file::memory:'

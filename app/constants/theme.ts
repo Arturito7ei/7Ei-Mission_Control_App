@@ -1,7 +1,9 @@
 import { useColorScheme } from 'react-native'
 import { Dark, Light } from './colors'
 
-export type Theme = typeof Dark
+// Widen value types to `string` so both Dark and Light (whose literal values
+// differ) are assignable to a single Theme type.
+export type Theme = { [K in keyof typeof Dark]: string }
 export type ThemeMode = 'dark' | 'light'
 
 export function useTheme(): { theme: Theme; mode: ThemeMode } {

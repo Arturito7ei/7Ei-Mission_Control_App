@@ -21,14 +21,14 @@
     "@fastify/websocket": "^11.0.0",
     "@libsql/client": "^0.14.0",
     "dotenv": "^16.0.0",
-    "drizzle-orm": "^0.36.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.0.0",
     "redis": "^4.7.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22",
-    "drizzle-kit": "^0.27.0",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.0.0",
     "typescript": "^5.6.0"
   }

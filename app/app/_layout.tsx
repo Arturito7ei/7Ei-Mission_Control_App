@@ -10,7 +10,7 @@ import * as Notifications from 'expo-notifications'
 import { OfflineBar } from '../components/OfflineBar'
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true }),
+  handleNotification: async () => ({ shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: true }),
 })
 
 const tokenCache = {

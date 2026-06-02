@@ -22,11 +22,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
       - name: Typecheck
-        run: npx tsc --noEmit --skipLibCheck 2>&1 || true
-        # || true means TS errors are reported but never block the build
+        # Typecheck is a real gate: TS errors fail the job. All three
+        # workspaces (backend, web, app) currently typecheck clean.
+        run: npx tsc --noEmit --skipLibCheck

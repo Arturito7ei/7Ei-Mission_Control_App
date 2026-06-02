@@ -3,7 +3,7 @@ import {
   TouchableOpacity, Switch, Alert,
 } from 'react-native'
 import { useRouter, Stack } from 'expo-router'
-import { useAuth } from '@clerk/clerk-expo'
+import { useAuth, useUser } from '@clerk/clerk-expo'
 import { useColorScheme } from 'react-native'
 import { useStore } from '../../store'
 import { useTheme } from '../../constants/theme'
@@ -17,7 +17,8 @@ const BUILD = '1'
 
 export default function SettingsScreen() {
   const router = useRouter()
-  const { signOut, user } = useAuth()
+  const { signOut } = useAuth()
+  const { user } = useUser()
   const { theme, mode } = useTheme()
   const { currentOrg, setCurrentOrg, setOrgs, setAgents, setTasks } = useStore()
   const systemScheme = useColorScheme()
