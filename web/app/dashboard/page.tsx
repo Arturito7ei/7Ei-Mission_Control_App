@@ -19,7 +19,7 @@ async function apiFetch<T>(path: string, token: string | null, opts?: RequestIni
   return res.json()
 }
 
-type Org = { id: string; name: string; description?: string }
+type Org = { id: string; name: string; description?: string; mission?: string; culture?: string }
 type Agent = { id: string; name: string; role: string; status: string; avatarEmoji: string; agentType: string; llmModel: string; skills: string[] }
 type Task = { id: string; title: string; status: string; costUsd?: number; tokensUsed?: number; priority: string; createdAt: string; agentId: string; projectId?: string }
 type Project = { id: string; name: string; description?: string; createdAt: string }
@@ -32,7 +32,7 @@ const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paus
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
-type Tab = 'overview' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage'
+type Tab = 'overview' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage' | 'settings'
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
@@ -54,6 +54,12 @@ export default function DashboardPage() {
   const [formErr, setFormErr] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', description: '', mission: '', culture: '', deployMode: '', cloudProvider: '', llmChoice: 'anthropic::claude-sonnet-4-20250514', llmApiKey: '', customBaseUrl: '', customModel: '' })
   const [catalogue, setCatalogue] = useState<Record<string, { id: string; label: string; tier: string }[]>>({})
+  // Org Settings (editable description/mission/culture + file ingestion)
+  const [settings, setSettings] = useState({ description: '', mission: '', culture: '' })
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [settingsSaved, setSettingsSaved] = useState(false)
+  const [uploadingField, setUploadingField] = useState<string | null>(null)
+  const [settingsMsg, setSettingsMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const token = await getToken()
@@ -61,6 +67,7 @@ export default function DashboardPage() {
       const { orgs: ol } = await apiFetch<{ orgs: Org[] }>('/api/orgs', token)
       if (ol.length > 0) {
         const o = ol[0]; setOrg(o)
+        setSettings({ description: o.description ?? '', mission: o.mission ?? '', culture: o.culture ?? '' })
         const [ad, td, pd, nd] = await Promise.all([
           apiFetch<{ agents: Agent[] }>(`/api/orgs/${o.id}/agents`, token),
           apiFetch<{ tasks: Task[] }>(`/api/orgs/${o.id}/tasks`, token),
@@ -91,6 +98,49 @@ export default function DashboardPage() {
     apiFetch<{ models: Record<string, { id: string; label: string; tier: string }[]> }>('/api/models', null)
       .then(d => setCatalogue(d.models)).catch(() => {})
   }, [])
+
+  const saveSettings = async () => {
+    if (!org) return
+    setSavingSettings(true); setSettingsSaved(false); setSettingsMsg(null)
+    const token = await getToken()
+    try {
+      await apiFetch(`/api/orgs/${org.id}`, token, { method: 'PATCH', body: JSON.stringify(settings) })
+      setOrg({ ...org, ...settings })
+      setSettingsSaved(true)
+    } catch { setSettingsMsg('Could not save changes.') }
+    setSavingSettings(false)
+  }
+
+  // Upload a document under a field (mission/culture/knowledge): backend extracts +
+  // summarises to Markdown; for mission/culture we drop the summary into the field for review.
+  const uploadToField = async (field: 'mission' | 'culture' | 'knowledge', file: File) => {
+    if (!org) return
+    setUploadingField(field); setSettingsMsg(null); setSettingsSaved(false)
+    const token = await getToken()
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res = await fetch(`${API}/api/orgs/${org.id}/knowledge/ingest-file?target=${field}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error ?? 'Upload failed')
+      }
+      const { summary } = await res.json() as { summary: string }
+      if (field === 'mission' || field === 'culture') {
+        setSettings(s => ({ ...s, [field]: s[field] ? `${s[field]}\n\n${summary}` : summary }))
+        setSettingsMsg(`Summarised "${file.name}" into ${field === 'mission' ? 'Mission & Vision' : 'Culture & Principles'} — review and Save.`)
+      } else {
+        setSettingsMsg(`Summarised "${file.name}" and saved to shared knowledge.`)
+      }
+    } catch (e: any) {
+      setSettingsMsg(e?.message ?? 'Upload failed.')
+    }
+    setUploadingField(null)
+  }
 
   const syncSkills = async () => {
     setSyncing(true)
@@ -237,6 +287,7 @@ export default function DashboardPage() {
     { id: 'comms', icon: '📬', label: 'Comms' },
     { id: 'jira', icon: '🔗', label: `Jira${jiraConnected ? ' ●' : ''}` },
     { id: 'usage', icon: '📊', label: 'Usage' },
+    { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
 
   return (
@@ -457,6 +508,54 @@ export default function DashboardPage() {
             )}
           </div>
         )}
+
+        {tab === 'settings' && (
+          <div style={s.page}>
+            <h1 style={s.h1}>Settings</h1>
+            <p style={{ color: '#888', fontSize: 14, marginTop: -8, maxWidth: 720 }}>
+              Edit your organisation’s description, mission, and culture — or upload a document
+              (PDF, Word, PowerPoint, Excel, .txt, .md) to summarise into a field. Mission &amp;
+              Culture are read by every agent; each upload is also saved to shared knowledge.
+            </p>
+
+            <div style={{ ...s.projCard, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 }}>
+              <label style={s.formLabel}>Description
+                <input style={s.formInput} value={settings.description}
+                  onChange={e => setSettings({ ...settings, description: e.target.value })} />
+              </label>
+
+              {(['mission', 'culture'] as const).map(field => {
+                const label = field === 'mission' ? 'Mission & Vision' : 'Culture & Principles'
+                return (
+                  <div key={field} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#aaa' }}>{label}</span>
+                      <label style={{ ...s.uploadChip, ...(uploadingField ? { opacity: 0.6, cursor: 'default' } : {}) }}>
+                        {uploadingField === field ? 'Summarising…' : '📎 Upload file'}
+                        <input type="file" style={{ display: 'none' }} disabled={uploadingField !== null}
+                          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.rtf,.html"
+                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadToField(field, f); e.target.value = '' }} />
+                      </label>
+                    </div>
+                    <textarea style={{ ...s.formInput, minHeight: 110, resize: 'vertical' }} value={settings[field]}
+                      placeholder={field === 'mission' ? 'What you’re building and why.' : 'How your org works.'}
+                      onChange={e => setSettings({ ...settings, [field]: e.target.value })} />
+                  </div>
+                )
+              })}
+
+              {settingsMsg && <p style={{ fontSize: 13, margin: 0, color: /could not|fail/i.test(settingsMsg) ? '#ef4444' : '#22c55e' }}>{settingsMsg}</p>}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button onClick={saveSettings} disabled={savingSettings}
+                  style={{ ...s.primaryBtn, width: 'fit-content', opacity: savingSettings ? 0.6 : 1, cursor: savingSettings ? 'default' : 'pointer' }}>
+                  {savingSettings ? 'Saving…' : 'Save changes'}
+                </button>
+                {settingsSaved && <span style={{ color: '#22c55e', fontSize: 13 }}>✓ Saved</span>}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )
@@ -500,4 +599,5 @@ const s: Record<string, React.CSSProperties> = {
   formLabel: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, fontWeight: 600, color: '#aaa' },
   formInput: { background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' as const },
   primaryBtn: { background: '#FFB800', color: '#000', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
+  uploadChip: { fontSize: 12, fontWeight: 600, color: '#FFB800', background: '#1a1a1a', border: '1px solid #333', padding: '5px 12px', borderRadius: 8, cursor: 'pointer' },
 }
