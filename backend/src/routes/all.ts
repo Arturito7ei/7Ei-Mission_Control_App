@@ -32,9 +32,27 @@ export async function orgRoutes(app: FastifyInstance) {
     culture: z.string().optional(),
     deployMode: z.enum(['cloud', 'local']).optional(),
     cloudProvider: z.enum(['aws', 'aws_ch', 'gcp', 'gcp_ch', 'azure', 'oracle']).optional(),
-    preferredLlm: z.enum(['claude', 'gpt4o', 'gemini']).optional(),
+    // Legacy preset key (mobile onboarding) — widened to accept any catalogue value.
+    preferredLlm: z.string().optional(),
+    // Explicit model selection (web onboarding): provider + model id, with optional
+    // per-org credentials for hosted OpenAI-compatible / custom providers.
+    llmProvider: z.string().optional(),
+    llmModel: z.string().optional(),
+    llmApiKey: z.string().optional(),
+    llmBaseUrl: z.string().optional(),
     firstAgentRole: z.string().optional(),
   })
+
+  // Map the legacy preferredLlm preset to a concrete provider + model.
+  const PRESET_LLM: Record<string, { provider: string; model: string }> = {
+    gpt4o:  { provider: 'openai', model: 'gpt-4o' },
+    gemini: { provider: 'google', model: 'gemini-2.0-flash' },
+    claude: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
+  }
+  function resolveLlm(body: z.infer<typeof OrgSchema>): { provider: string; model: string } {
+    if (body.llmProvider && body.llmModel) return { provider: body.llmProvider, model: body.llmModel }
+    return PRESET_LLM[body.preferredLlm ?? 'claude'] ?? PRESET_LLM.claude
+  }
 
   app.get('/api/orgs', async (req) => {
     const userId = (req as any).auth?.userId ?? ''
@@ -43,7 +61,12 @@ export async function orgRoutes(app: FastifyInstance) {
   app.post('/api/orgs', async (req, reply) => {
     const userId = (req as any).auth?.userId ?? 'anon'
     const body = OrgSchema.parse(req.body)
-    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date(), mission: body.mission ?? null, culture: body.culture ?? null, deployMode: body.deployMode ?? null, cloudProvider: body.cloudProvider ?? null, preferredLlm: body.preferredLlm ?? null, deployConfig: {} }
+    const llm = resolveLlm(body)
+    // Persist per-org credentials for the chosen provider (consumed by the LLM router).
+    const deployConfig: Record<string, string> = {}
+    if (body.llmApiKey)  deployConfig[`${llm.provider}_api_key`]  = body.llmApiKey
+    if (body.llmBaseUrl) deployConfig[`${llm.provider}_base_url`] = body.llmBaseUrl
+    const org = { id: randomUUID(), name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null, ownerId: userId, createdAt: new Date(), mission: body.mission ?? null, culture: body.culture ?? null, deployMode: body.deployMode ?? null, cloudProvider: body.cloudProvider ?? null, preferredLlm: body.preferredLlm ?? null, deployConfig }
     await db.insert(schema.organisations).values(org)
 
     // 0. Create org membership for owner
@@ -85,12 +108,8 @@ export async function orgRoutes(app: FastifyInstance) {
       personality: 'Direct, strategic. Routes tasks efficiently. Speaks in first person.',
       cv: null,
       termsOfReference: arturitoTOR,
-      llmProvider: body.preferredLlm === 'gpt4o' ? 'openai'
-                 : body.preferredLlm === 'gemini' ? 'google'
-                 : 'anthropic',
-      llmModel: body.preferredLlm === 'gpt4o' ? 'gpt-4o'
-              : body.preferredLlm === 'gemini' ? 'gemini-2.0-flash'
-              : 'claude-sonnet-4-20250514',
+      llmProvider: llm.provider,
+      llmModel: llm.model,
       skills: [],
       status: 'idle',
       avatarEmoji: '🎯',
@@ -117,8 +136,8 @@ export async function orgRoutes(app: FastifyInstance) {
         name: tmpl.name, role: tmpl.role,
         personality: null, cv: null,
         termsOfReference: `You are ${tmpl.name}, ${tmpl.role} at ${body.name}.`,
-        llmProvider: 'anthropic',
-        llmModel: 'claude-sonnet-4-20250514',
+        llmProvider: llm.provider,
+        llmModel: llm.model,
         skills: [], status: 'idle',
         avatarEmoji: tmpl.emoji, agentType: 'standard',
         advisorPersona: null, memoryLongTerm: null,
