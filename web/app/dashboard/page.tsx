@@ -30,6 +30,7 @@ type UsageStats = { requestsThisMinute: number; tokensToday: number; costToday: 
 
 const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paused: '#f59e0b', stopped: '#ef4444', pending: '#555', in_progress: '#3b82f6', done: '#22c55e', blocked: '#ef4444' }
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
+const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
 type Tab = 'overview' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage'
 
@@ -48,6 +49,11 @@ export default function DashboardPage() {
   const [tab, setTab] = useState<Tab>('overview')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  // Org creation (web onboarding — backend auto-creates Arturito on first org)
+  const [creating, setCreating] = useState(false)
+  const [formErr, setFormErr] = useState<string | null>(null)
+  const [form, setForm] = useState({ name: '', description: '', mission: '', culture: '', deployMode: '', cloudProvider: '', llmChoice: 'anthropic::claude-sonnet-4-20250514', llmApiKey: '', customBaseUrl: '', customModel: '' })
+  const [catalogue, setCatalogue] = useState<Record<string, { id: string; label: string; tier: string }[]>>({})
 
   const load = useCallback(async () => {
     const token = await getToken()
@@ -80,6 +86,12 @@ export default function DashboardPage() {
 
   useEffect(() => { if (!isLoaded) return; if (!isSignedIn) { router.push('/'); return }; load() }, [isLoaded, isSignedIn])
 
+  // Model catalogue for the org-creation picker (data-driven from the backend)
+  useEffect(() => {
+    apiFetch<{ models: Record<string, { id: string; label: string; tier: string }[]> }>('/api/models', null)
+      .then(d => setCatalogue(d.models)).catch(() => {})
+  }, [])
+
   const syncSkills = async () => {
     setSyncing(true)
     const token = await getToken()
@@ -87,8 +99,129 @@ export default function DashboardPage() {
     setSyncing(false)
   }
 
+  const createOrg = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.name.trim()) { setFormErr('Organisation name is required'); return }
+    setCreating(true); setFormErr(null)
+    const token = await getToken()
+    const payload: Record<string, string> = { name: form.name.trim() }
+    if (form.description.trim()) payload.description = form.description.trim()
+    if (form.mission.trim()) payload.mission = form.mission.trim()
+    if (form.culture.trim()) payload.culture = form.culture.trim()
+    if (form.deployMode) payload.deployMode = form.deployMode
+    if (form.deployMode === 'cloud' && form.cloudProvider) payload.cloudProvider = form.cloudProvider
+    if (form.llmChoice === 'custom') {
+      payload.llmProvider = 'custom'
+      if (form.customModel.trim()) payload.llmModel = form.customModel.trim()
+      if (form.customBaseUrl.trim()) payload.llmBaseUrl = form.customBaseUrl.trim()
+    } else {
+      const [prov, ...rest] = form.llmChoice.split('::')
+      payload.llmProvider = prov
+      payload.llmModel = rest.join('::')
+    }
+    if (form.llmApiKey.trim()) payload.llmApiKey = form.llmApiKey.trim()
+    try {
+      await apiFetch('/api/orgs', token, { method: 'POST', body: JSON.stringify(payload) })
+      setLoading(true)
+      await load()
+    } catch {
+      setFormErr('Could not create organisation. Please try again.')
+    }
+    setCreating(false)
+  }
+
   if (loading) return <div style={s.center}><span style={{ fontSize: 48 }}>⚡</span><p style={{ color: '#888' }}>Loading...</p></div>
-  if (!org) return <div style={s.center}><span style={{ fontSize: 64 }}>🏢</span><h2>No organisation</h2><p style={{ color: '#888' }}>Create one in the mobile app first.</p></div>
+  if (!org) return (
+    <div style={s.formWrap}>
+      <form onSubmit={createOrg} style={s.orgForm}>
+        <div style={{ textAlign: 'center' }}>
+          <span style={{ fontSize: 48 }}>🏢</span>
+          <h2 style={{ ...s.h2, marginTop: 8 }}>Create your organisation</h2>
+          <p style={{ color: '#888', fontSize: 14, margin: '6px 0 0' }}>Arturito, your Chief of Staff, is set up automatically.</p>
+        </div>
+        <label style={s.formLabel}>Name *
+          <input style={s.formInput} value={form.name} autoFocus placeholder="7Ei"
+            onChange={e => setForm({ ...form, name: e.target.value })} />
+        </label>
+        <label style={s.formLabel}>Description
+          <input style={s.formInput} value={form.description} placeholder="What does your org do?"
+            onChange={e => setForm({ ...form, description: e.target.value })} />
+        </label>
+        <label style={s.formLabel}>Mission &amp; Vision
+          <textarea style={{ ...s.formInput, minHeight: 58, resize: 'vertical' }} value={form.mission}
+            placeholder="Used to give your agents context."
+            onChange={e => setForm({ ...form, mission: e.target.value })} />
+        </label>
+        <label style={s.formLabel}>Culture &amp; Principles
+          <textarea style={{ ...s.formInput, minHeight: 58, resize: 'vertical' }} value={form.culture}
+            placeholder="How your org works."
+            onChange={e => setForm({ ...form, culture: e.target.value })} />
+        </label>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <label style={{ ...s.formLabel, flex: 1 }}>Deployment
+            <select style={s.formInput} value={form.deployMode}
+              onChange={e => setForm({ ...form, deployMode: e.target.value, cloudProvider: e.target.value === 'cloud' ? form.cloudProvider : '' })}>
+              <option value="">—</option>
+              <option value="cloud">☁️ Cloud</option>
+              <option value="local">💻 Local / On-Premise</option>
+            </select>
+          </label>
+          {form.deployMode === 'cloud' && (
+            <label style={{ ...s.formLabel, flex: 1 }}>Cloud provider
+              <select style={s.formInput} value={form.cloudProvider}
+                onChange={e => setForm({ ...form, cloudProvider: e.target.value })}>
+                <option value="">—</option>
+                <option value="aws">🟠 AWS Bedrock · Frankfurt (EU)</option>
+                <option value="aws_ch">🟠 AWS Bedrock · Zürich (CH)</option>
+                <option value="gcp">🔵 Google Vertex · EU</option>
+                <option value="gcp_ch">🔵 Google Vertex · Zürich (CH)</option>
+                <option value="azure">🟦 Azure OpenAI · Switzerland North</option>
+                <option value="oracle">🔴 Oracle Cloud · EU</option>
+              </select>
+            </label>
+          )}
+        </div>
+        <label style={s.formLabel}>Preferred model
+          <select style={s.formInput} value={form.llmChoice}
+            onChange={e => setForm({ ...form, llmChoice: e.target.value })}>
+            {Object.keys(catalogue).length === 0 && (
+              <option value="anthropic::claude-sonnet-4-20250514">Claude Sonnet 4 · balanced</option>
+            )}
+            {Object.entries(catalogue).map(([prov, models]) => (
+              <optgroup key={prov} label={PROVIDER_LABELS[prov] ?? prov}>
+                {models.map(m => (
+                  <option key={m.id} value={`${prov}::${m.id}`}>{m.label} · {m.tier}</option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="custom">⚙️ Custom (OpenAI-compatible)…</option>
+          </select>
+        </label>
+        {form.llmChoice === 'custom' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <label style={s.formLabel}>Base URL
+              <input style={s.formInput} value={form.customBaseUrl} placeholder="https://api.deepseek.com/v1"
+                onChange={e => setForm({ ...form, customBaseUrl: e.target.value })} />
+            </label>
+            <label style={s.formLabel}>Model ID
+              <input style={s.formInput} value={form.customModel} placeholder="deepseek-chat"
+                onChange={e => setForm({ ...form, customModel: e.target.value })} />
+            </label>
+          </div>
+        )}
+        {form.llmChoice.split('::')[0] !== 'anthropic' && form.llmChoice.split('::')[0] !== 'ollama' && (
+          <label style={s.formLabel}>API key <span style={{ color: '#555', fontWeight: 400 }}>· stored per-org{form.llmChoice === 'custom' ? '' : ' (blank = server default if set)'}</span>
+            <input style={s.formInput} type="password" value={form.llmApiKey} placeholder="sk-…"
+              onChange={e => setForm({ ...form, llmApiKey: e.target.value })} />
+          </label>
+        )}
+        {formErr && <p style={{ color: '#ef4444', fontSize: 13, margin: 0 }}>{formErr}</p>}
+        <button type="submit" disabled={creating} style={{ ...s.primaryBtn, opacity: creating ? 0.6 : 1, cursor: creating ? 'default' : 'pointer' }}>
+          {creating ? 'Creating…' : 'Create organisation →'}
+        </button>
+      </form>
+    </div>
+  )
 
   const totalCost = tasks.reduce((sum, t) => sum + (t.costUsd ?? 0), 0)
   const agentMap = new Map(agents.map(a => [a.id, a]))
@@ -362,4 +495,9 @@ const s: Record<string, React.CSSProperties> = {
   commsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 },
   commsCard: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 20 },
   emptyCard: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' as const },
+  formWrap: { minHeight: '100vh', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', background: '#0a0a0a', padding: '48px 20px', overflow: 'auto' },
+  orgForm: { display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 460, background: '#111', border: '1px solid #222', borderRadius: 16, padding: 28 },
+  formLabel: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, fontWeight: 600, color: '#aaa' },
+  formInput: { background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' as const },
+  primaryBtn: { background: '#FFB800', color: '#000', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
 }
