@@ -3,6 +3,7 @@ import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { upsertDocument, deleteDocument, searchKnowledge } from '../services/vector-search'
+import { extractText, summariseToMarkdown } from '../services/document-ingest'
 
 export async function knowledgeRoutes(app: FastifyInstance) {
   // Browse Google Drive folder
@@ -119,5 +120,66 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     const item = await db.query.knowledgeItems.findFirst({ where: eq(schema.knowledgeItems.id, itemId) })
     if (!item) return reply.code(404).send({ error: 'Not found' })
     return { content: item.content, name: item.name, mimeType: item.mimeType }
+  })
+
+  // Ingest an uploaded document (PDF/DOCX/PPTX/XLSX/TXT/MD): extract text →
+  // summarise to Markdown via the org's LLM → store as a knowledge item (+RAG).
+  // ?target=mission|culture|knowledge labels the summary. Returns the summary so
+  // the web client can drop it into the corresponding org field for review.
+  app.post('/api/orgs/:orgId/knowledge/ingest-file', async (req, reply) => {
+    const { orgId } = req.params as any
+    const target = ((req.query as any)?.target as string) ?? 'knowledge'
+
+    const data = await (req as any).file?.()
+    if (!data) return reply.code(400).send({ error: 'No file uploaded' })
+    const filename: string = data.filename ?? 'upload'
+    const buffer: Buffer = await data.toBuffer()
+
+    // Extract text
+    let text: string
+    try {
+      text = await extractText(buffer, filename)
+    } catch (err) {
+      req.log.warn({ err }, 'document extraction failed')
+      return reply.code(422).send({ error: 'Could not read this file type' })
+    }
+    if (!text || !text.trim()) return reply.code(422).send({ error: 'No readable text found in file' })
+
+    // Resolve the org's configured model (+ per-org key/base URL) for summarisation
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.orgId, orgId) })
+    const provider = agent?.llmProvider ?? 'anthropic'
+    const model = agent?.llmModel ?? 'claude-sonnet-4-20250514'
+    const dc = (org?.deployConfig ?? {}) as Record<string, string>
+
+    let summary: string
+    try {
+      ;({ summary } = await summariseToMarkdown({
+        text, filename, target, provider, model,
+        orgApiKey: dc[`${provider}_api_key`], baseURL: dc[`${provider}_base_url`],
+      }))
+    } catch (err) {
+      req.log.warn({ err }, 'summarisation failed')
+      return reply.code(502).send({ error: 'Summarisation failed — check the org LLM API key' })
+    }
+
+    // Store the summary as a shared knowledge item
+    const item = {
+      id: randomUUID(), orgId,
+      name: `${filename} — summary`,
+      type: 'summary', mimeType: 'text/markdown',
+      externalId: null, externalUrl: null, parentId: null,
+      content: summary, backend: 'upload', createdAt: new Date(),
+    }
+    await db.insert(schema.knowledgeItems).values(item)
+
+    // Fire-and-forget RAG embedding (no-op until Pinecone is configured)
+    if (process.env.PINECONE_API_KEY) {
+      upsertDocument({ id: item.id, orgId, text: summary, name: item.name, type: 'summary' })
+        .catch(err => console.warn('Embed failed (non-critical):', err))
+    }
+
+    reply.code(201)
+    return { summary, item, target }
   })
 }

@@ -3,6 +3,7 @@ import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
+import multipart from '@fastify/multipart'
 import { clerkPlugin } from '@clerk/fastify'
 import { setupDatabase } from './db/setup'
 import { dbClient, db, schema } from './db/client'
@@ -47,6 +48,7 @@ async function start() {
   })
 
   await app.register(websocket)
+  await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } })  // 25 MB document uploads
   await app.register(clerkPlugin)
   await setupDatabase()
   await ensureIndex()  // Pinecone (non-blocking)
