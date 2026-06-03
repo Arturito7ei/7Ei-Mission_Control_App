@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calcCost, COST_RATES, MODEL_CATALOGUE } from '../services/llm-router.ts'
+import { calcCost, COST_RATES, MODEL_CATALOGUE, OPENAI_COMPATIBLE_BASE_URLS, resolveBaseURL } from '../services/llm-router.ts'
 
 describe('calcCost', () => {
   it('calculates cost for claude-sonnet-4', () => {
@@ -61,5 +61,43 @@ describe('MODEL_CATALOGUE', () => {
         assert.ok(m.id in COST_RATES, `Missing cost rate for ${m.id}`)
       }
     }
+  })
+
+  it('includes the new OpenAI-compatible providers', () => {
+    for (const p of ['deepseek', 'moonshot', 'qwen', 'minimax', 'ollama']) {
+      assert.ok(p in MODEL_CATALOGUE, `Provider ${p} missing from catalogue`)
+    }
+  })
+})
+
+describe('OpenAI-compatible providers', () => {
+  it('has a base URL for every hosted OpenAI-compatible provider', () => {
+    for (const p of ['openai', 'deepseek', 'moonshot', 'qwen', 'minimax', 'ollama']) {
+      assert.ok(OPENAI_COMPATIBLE_BASE_URLS[p], `No base URL for ${p}`)
+    }
+  })
+
+  it('resolveBaseURL prefers an explicit override', () => {
+    const url = resolveBaseURL({ provider: 'deepseek', model: 'x', system: '', messages: [], onToken: () => {}, baseURL: 'https://my.proxy/v1' })
+    assert.equal(url, 'https://my.proxy/v1')
+  })
+
+  it('resolveBaseURL falls back to the provider default', () => {
+    const url = resolveBaseURL({ provider: 'deepseek', model: 'x', system: '', messages: [], onToken: () => {} })
+    assert.equal(url, OPENAI_COMPATIBLE_BASE_URLS.deepseek)
+  })
+
+  it('resolveBaseURL falls back to OpenAI for an unknown provider', () => {
+    const url = resolveBaseURL({ provider: 'mystery', model: 'x', system: '', messages: [], onToken: () => {} })
+    assert.equal(url, OPENAI_COMPATIBLE_BASE_URLS.openai)
+  })
+
+  it('calculates cost for a DeepSeek model', () => {
+    const cost = calcCost('deepseek-chat', 1000, 500)
+    assert.ok(Math.abs(cost - (1000 * 0.00000027 + 500 * 0.0000011)) < 1e-12)
+  })
+
+  it('treats local Ollama models as free', () => {
+    assert.equal(calcCost('llama3.3', 100000, 50000), 0)
   })
 })

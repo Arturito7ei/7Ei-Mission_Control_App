@@ -97,12 +97,13 @@ export async function executeAgentTask(opts: {
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
+    const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
     const messages = [...conversationHistory, { role: 'user' as const, content: input }]
     const start = Date.now()
     let rawOutput = ''
 
     const result = await streamLLM({
-      provider, model, system: systemPrompt, messages, orgApiKey,
+      provider, model, system: systemPrompt, messages, orgApiKey, baseURL,
       onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) },
     })
 
@@ -133,7 +134,7 @@ export async function executeAgentTask(opts: {
           const synthesisInput = buildSynthesisPrompt(input, cleanedOutput, delegations)
           const synthResult = await streamLLM({
             provider, model, system: systemPrompt, messages: [{ role: 'user', content: synthesisInput }],
-            orgApiKey, onToken: (chunk) => onToken?.(chunk),
+            orgApiKey, baseURL, onToken: (chunk) => onToken?.(chunk),
           })
           cleanedOutput = synthResult.output
         }
