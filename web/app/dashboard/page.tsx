@@ -30,6 +30,7 @@ type UsageStats = { requestsThisMinute: number; tokensToday: number; costToday: 
 
 const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paused: '#f59e0b', stopped: '#ef4444', pending: '#555', in_progress: '#3b82f6', done: '#22c55e', blocked: '#ef4444' }
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
+const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
 type Tab = 'overview' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage'
 
@@ -51,7 +52,8 @@ export default function DashboardPage() {
   // Org creation (web onboarding — backend auto-creates Arturito on first org)
   const [creating, setCreating] = useState(false)
   const [formErr, setFormErr] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', description: '', mission: '', culture: '', deployMode: '', cloudProvider: '', preferredLlm: 'claude' })
+  const [form, setForm] = useState({ name: '', description: '', mission: '', culture: '', deployMode: '', cloudProvider: '', llmChoice: 'anthropic::claude-sonnet-4-20250514', llmApiKey: '', customBaseUrl: '', customModel: '' })
+  const [catalogue, setCatalogue] = useState<Record<string, { id: string; label: string; tier: string }[]>>({})
 
   const load = useCallback(async () => {
     const token = await getToken()
@@ -84,6 +86,12 @@ export default function DashboardPage() {
 
   useEffect(() => { if (!isLoaded) return; if (!isSignedIn) { router.push('/'); return }; load() }, [isLoaded, isSignedIn])
 
+  // Model catalogue for the org-creation picker (data-driven from the backend)
+  useEffect(() => {
+    apiFetch<{ models: Record<string, { id: string; label: string; tier: string }[]> }>('/api/models', null)
+      .then(d => setCatalogue(d.models)).catch(() => {})
+  }, [])
+
   const syncSkills = async () => {
     setSyncing(true)
     const token = await getToken()
@@ -102,7 +110,16 @@ export default function DashboardPage() {
     if (form.culture.trim()) payload.culture = form.culture.trim()
     if (form.deployMode) payload.deployMode = form.deployMode
     if (form.deployMode === 'cloud' && form.cloudProvider) payload.cloudProvider = form.cloudProvider
-    if (form.preferredLlm) payload.preferredLlm = form.preferredLlm
+    if (form.llmChoice === 'custom') {
+      payload.llmProvider = 'custom'
+      if (form.customModel.trim()) payload.llmModel = form.customModel.trim()
+      if (form.customBaseUrl.trim()) payload.llmBaseUrl = form.customBaseUrl.trim()
+    } else {
+      const [prov, ...rest] = form.llmChoice.split('::')
+      payload.llmProvider = prov
+      payload.llmModel = rest.join('::')
+    }
+    if (form.llmApiKey.trim()) payload.llmApiKey = form.llmApiKey.trim()
     try {
       await apiFetch('/api/orgs', token, { method: 'POST', body: JSON.stringify(payload) })
       setLoading(true)
@@ -165,13 +182,39 @@ export default function DashboardPage() {
           )}
         </div>
         <label style={s.formLabel}>Preferred model
-          <select style={s.formInput} value={form.preferredLlm}
-            onChange={e => setForm({ ...form, preferredLlm: e.target.value })}>
-            <option value="claude">🧠 Claude</option>
-            <option value="gpt4o">💬 GPT-4o</option>
-            <option value="gemini">✨ Gemini</option>
+          <select style={s.formInput} value={form.llmChoice}
+            onChange={e => setForm({ ...form, llmChoice: e.target.value })}>
+            {Object.keys(catalogue).length === 0 && (
+              <option value="anthropic::claude-sonnet-4-20250514">Claude Sonnet 4 · balanced</option>
+            )}
+            {Object.entries(catalogue).map(([prov, models]) => (
+              <optgroup key={prov} label={PROVIDER_LABELS[prov] ?? prov}>
+                {models.map(m => (
+                  <option key={m.id} value={`${prov}::${m.id}`}>{m.label} · {m.tier}</option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="custom">⚙️ Custom (OpenAI-compatible)…</option>
           </select>
         </label>
+        {form.llmChoice === 'custom' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <label style={s.formLabel}>Base URL
+              <input style={s.formInput} value={form.customBaseUrl} placeholder="https://api.deepseek.com/v1"
+                onChange={e => setForm({ ...form, customBaseUrl: e.target.value })} />
+            </label>
+            <label style={s.formLabel}>Model ID
+              <input style={s.formInput} value={form.customModel} placeholder="deepseek-chat"
+                onChange={e => setForm({ ...form, customModel: e.target.value })} />
+            </label>
+          </div>
+        )}
+        {form.llmChoice.split('::')[0] !== 'anthropic' && form.llmChoice.split('::')[0] !== 'ollama' && (
+          <label style={s.formLabel}>API key <span style={{ color: '#555', fontWeight: 400 }}>· stored per-org{form.llmChoice === 'custom' ? '' : ' (blank = server default if set)'}</span>
+            <input style={s.formInput} type="password" value={form.llmApiKey} placeholder="sk-…"
+              onChange={e => setForm({ ...form, llmApiKey: e.target.value })} />
+          </label>
+        )}
         {formErr && <p style={{ color: '#ef4444', fontSize: 13, margin: 0 }}>{formErr}</p>}
         <button type="submit" disabled={creating} style={{ ...s.primaryBtn, opacity: creating ? 0.6 : 1, cursor: creating ? 'default' : 'pointer' }}>
           {creating ? 'Creating…' : 'Create organisation →'}
