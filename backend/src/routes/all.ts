@@ -54,12 +54,16 @@ export async function orgRoutes(app: FastifyInstance) {
     return PRESET_LLM[body.preferredLlm ?? 'claude'] ?? PRESET_LLM.claude
   }
 
-  app.get('/api/orgs', async (req) => {
-    const userId = (req as any).auth?.userId ?? ''
+  app.get('/api/orgs', async (req, reply) => {
+    // req.userId is set by the Clerk auth pre-handler (MCA-14).
+    const userId = (req as any).userId
+    if (!userId) return reply.code(401).send({ error: 'Unauthorized' })
     return { orgs: await db.select().from(schema.organisations).where(eq(schema.organisations.ownerId, userId)) }
   })
   app.post('/api/orgs', async (req, reply) => {
-    const userId = (req as any).auth?.userId ?? 'anon'
+    // req.userId is set by the Clerk auth pre-handler (MCA-14). Never fall back to "anon".
+    const userId = (req as any).userId
+    if (!userId) return reply.code(401).send({ error: 'Unauthorized' })
     const body = OrgSchema.parse(req.body)
     const llm = resolveLlm(body)
     // Persist per-org credentials for the chosen provider (consumed by the LLM router).

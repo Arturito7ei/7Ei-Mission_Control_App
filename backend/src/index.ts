@@ -22,6 +22,7 @@ import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
+import { clerkAuth } from './middleware/clerk-auth'
 import { telemetryPlugin } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 
@@ -53,27 +54,37 @@ async function start() {
   await setupDatabase()
   await ensureIndex()  // Pinecone (non-blocking)
 
-  // Routes
-  await app.register(orgRoutes)
-  await app.register(agentRoutes)
-  await app.register(taskRoutes)
-  await app.register(projectRoutes)
-  await app.register(costRoutes)
+  // ─── Protected routes (MCA-14) ──────────────────────────────────────────
+  // Every route in this encapsulated scope requires a valid Clerk JWT. The
+  // onRequest hook attaches req.userId / req.clerkSession (and req.auth for
+  // rbac/audit/telemetry compat) or replies 401. OPTIONS preflight is skipped.
+  await app.register(async (secured) => {
+    secured.addHook('onRequest', clerkAuth)
+    await secured.register(orgRoutes)
+    await secured.register(agentRoutes)
+    await secured.register(taskRoutes)
+    await secured.register(projectRoutes)
+    await secured.register(costRoutes)
+    await secured.register(knowledgeRoutes)
+    await secured.register(multiOrgRoutes)
+    await secured.register(scheduledRoutes)
+    await secured.register(credentialRoutes)
+  })
+
+  // ─── Public / externally-called routes ──────────────────────────────────
+  // Webhooks (Jira/Telegram), the Google OAuth redirect callback, and the
+  // skill library are invoked without a Clerk session JWT, so they stay open.
   await app.register(skillRoutes)
-  await app.register(knowledgeRoutes)
   await app.register(commsRoutes)
   await app.register(notificationRoutes)
   await app.register(jiraRoutes)
   await app.register(jiraWebhookRoutes)
   await app.register(memoryRoutes)
-  await app.register(multiOrgRoutes)
   await app.register(usageRoutes)
   await app.register(modelRoutes)
-  await app.register(scheduledRoutes)
   await app.register(webhookRoutes)
   await app.register(telegramWebhookRoutes)
   await app.register(authRoutes)
-  await app.register(credentialRoutes)
   await app.register(telemetryPlugin)
   await app.register(auditLogPlugin)
 
