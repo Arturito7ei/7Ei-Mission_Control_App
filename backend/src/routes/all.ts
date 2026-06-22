@@ -610,9 +610,9 @@ export async function skillRoutes(app: FastifyInstance) {
     let synced = 0
     for (const s of skills) {
       if (!s.name || !s.content) continue
-      const existing = await db.query.skills.findFirst(
+      const existing = await db.query.skills.findFirst({
         where: and(eq(schema.skills.name, s.name), eq(schema.skills.source, 'obsidian'))
-      )
+      })
       if (existing) {
         await db.update(schema.skills).set({
           description: s.description ?? existing.description,
