@@ -53,6 +53,7 @@ export const COST_RATES: Record<string, { input: number; output: number }> = {
   'qwen-turbo':                { input: 0.00000005,  output: 0.0000002 },
   // MiniMax (OpenAI-compatible)
   'MiniMax-Text-01':           { input: 0.0000002,   output: 0.0000011 },
+  'MiniMax-M2.7':              { input: 0.0000003,   output: 0.0000012 },
   // Ollama / self-hosted models run locally — no per-token cost
   'llama3.3':                  { input: 0,           output: 0 },
   'qwen2.5':                   { input: 0,           output: 0 },
@@ -94,6 +95,7 @@ export const MODEL_CATALOGUE: Record<string, { id: string; label: string; tier: 
   ],
   minimax: [
     { id: 'MiniMax-Text-01', label: 'MiniMax Text 01', tier: 'balanced' },
+    { id: 'MiniMax-M2.7',    label: 'MiniMax M2.7',    tier: 'power' },
   ],
   ollama: [
     { id: 'llama3.3', label: 'Llama 3.3 (local)', tier: 'balanced' },

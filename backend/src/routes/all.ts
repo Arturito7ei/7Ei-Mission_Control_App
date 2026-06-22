@@ -598,6 +598,47 @@ export async function skillRoutes(app: FastifyInstance) {
       return { synced }
     } catch (err: any) { return reply.code(500).send({ error: err.message }) }
   })
+
+  // ── Obsidian Vault Sync ────────────────────────────────────────────────
+  // POST /api/skills/obsidian-sync
+  // Body: { skills: Array<{ name, description?, domain, content, vaultPath } }
+  // Upserts by (name + source='obsidian').
+  app.post('/api/skills/obsidian-sync', async (req, reply) => {
+    const body = req.body as any
+    const skills: Array<{ name: string; description?: string; domain: string; content: string; vaultPath: string }> = body?.skills ?? []
+    if (!Array.isArray(skills)) return reply.code(400).send({ error: 'skills must be an array' })
+    let synced = 0
+    for (const s of skills) {
+      if (!s.name || !s.content) continue
+      const existing = await db.query.skills.findFirst(
+        where: and(eq(schema.skills.name, s.name), eq(schema.skills.source, 'obsidian'))
+      )
+      if (existing) {
+        await db.update(schema.skills).set({
+          description: s.description ?? existing.description,
+          domain: s.domain ?? existing.domain,
+          content: s.content,
+          githubPath: s.vaultPath ?? existing.githubPath,
+          lastSyncedAt: new Date(),
+        }).where(eq(schema.skills.id, existing.id))
+      } else {
+        await db.insert(schema.skills).values({
+          id: randomUUID(),
+          name: s.name,
+          description: s.description ?? null,
+          domain: s.domain ?? 'integration',
+          content: s.content,
+          source: 'obsidian',
+          githubPath: s.vaultPath ?? null,
+          orgId: null,
+          lastSyncedAt: new Date(),
+          createdAt: new Date(),
+        })
+      }
+      synced++
+    }
+    return { synced }
+  })
 }
 
 // ─── KNOWLEDGE ───────────────────────────────────────────────────────────────

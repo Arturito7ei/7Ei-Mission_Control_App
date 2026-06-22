@@ -68,6 +68,15 @@ describe('MODEL_CATALOGUE', () => {
       assert.ok(p in MODEL_CATALOGUE, `Provider ${p} missing from catalogue`)
     }
   })
+
+  it('MiniMax catalogue includes MiniMax-M2.7', () => {
+    const ids = MODEL_CATALOGUE.minimax.map(m => m.id)
+    assert.ok(ids.includes('MiniMax-M2.7'), 'MiniMax-M2.7 missing from minimax catalogue')
+    const m27 = MODEL_CATALOGUE.minimax.find(m => m.id === 'MiniMax-M2.7')!
+    assert.equal(m27.tier, 'power')
+    assert.ok('MiniMax-M2.7' in COST_RATES, 'MiniMax-M2.7 missing cost rate')
+    assert.ok(calcCost('MiniMax-M2.7', 1000, 500) > 0, 'MiniMax-M2.7 should have a non-zero cost')
+  })
 })
 
 describe('OpenAI-compatible providers', () => {
@@ -99,5 +108,16 @@ describe('OpenAI-compatible providers', () => {
 
   it('treats local Ollama models as free', () => {
     assert.equal(calcCost('llama3.3', 100000, 50000), 0)
+  })
+
+  it('routes MiniMax-M2.7 requests to the MiniMax endpoint', () => {
+    const url = resolveBaseURL({ provider: 'minimax', model: 'MiniMax-M2.7', system: '', messages: [], onToken: () => {} })
+    assert.equal(url, OPENAI_COMPATIBLE_BASE_URLS.minimax)
+    assert.equal(url, 'https://api.minimax.io/v1')
+  })
+
+  it('lets a per-org base URL override the MiniMax endpoint', () => {
+    const url = resolveBaseURL({ provider: 'minimax', model: 'MiniMax-M2.7', system: '', messages: [], onToken: () => {}, baseURL: 'https://api.minimax.chat/v1' })
+    assert.equal(url, 'https://api.minimax.chat/v1')
   })
 })
