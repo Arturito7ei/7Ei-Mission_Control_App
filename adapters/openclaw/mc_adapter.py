@@ -1,40 +1,52 @@
 #!/usr/bin/env python3
 """
-7Ei Mission Control — external runtime adapter (MCA-EXT, Phase 2).
+7Ei Mission Control — external runtime adapter (MCA-EXT, Phase 2 / 2.1).
 
 A tiny poll loop that lets a self-hosted runtime (OpenClaw/MiniMax on the Mac
 mini, Cursor, or any custom agent) act as a Mission Control agent: it claims
-tasks the app assigned to it, executes them with the host's own tools, and
-posts results + heartbeats back over the agent-facing API.
+tasks the app assigned to it, executes them — either as a raw shell command or
+by handing them to the agent's LLM brain (MiniMax / any OpenAI-compatible model)
+with a shell tool loop — and posts results + heartbeats over the agent API.
 
-Stdlib only (urllib, json, subprocess) — no pip install. Configure via env or
-an env file (see mc.env.example). The agent token is issued once by
-`POST /api/orgs/:orgId/agents/external`.
+Stdlib only (urllib, json, subprocess) — no pip install.
 
-  MC_BASE_URL       e.g. https://7ei-backend.fly.dev   (or http://localhost:3001)
-  MC_AGENT_TOKEN    mca_...                             (shown once at onboarding)
-  MC_WORKDIR        working dir for shell tasks         (default: cwd)
-  MC_ALLOW_SHELL    "1" to let tasks run as shell       (default: off)
-  MC_POLL_SECONDS   loop interval                       (default: 20)
+  MC_BASE_URL       app backend, e.g. https://7ei-backend.fly.dev
+  MC_AGENT_TOKEN    mca_...  (shown once at onboarding)
+  MC_WORKDIR        working dir for shell tasks (default: cwd)
+  MC_ALLOW_SHELL    "1" to allow shell execution (default: off)
+  MC_EXECUTOR       auto | shell | llm   (default: auto → llm if MC_LLM_API_KEY set, else shell)
+  MC_POLL_SECONDS   loop interval (default: 20)
+  MC_MAX_STEPS      max brain↔tool steps (default: 4)
+  # LLM brain (OpenAI-compatible chat completions):
+  MC_LLM_BASE_URL   e.g. https://api.minimax.io/v1
+  MC_LLM_API_KEY    provider key
+  MC_LLM_MODEL      e.g. MiniMax-Text-01
   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID   optional completion pings
 """
-import json, os, subprocess, sys, time, urllib.request, urllib.error
+import json, os, re, subprocess, sys, time, urllib.request, urllib.error
 
-BASE   = os.environ.get("MC_BASE_URL", "http://localhost:3001").rstrip("/")
-TOKEN  = os.environ.get("MC_AGENT_TOKEN", "")
+BASE    = os.environ.get("MC_BASE_URL", "http://localhost:3001").rstrip("/")
+TOKEN   = os.environ.get("MC_AGENT_TOKEN", "")
 WORKDIR = os.environ.get("MC_WORKDIR", os.getcwd())
 ALLOW_SHELL = os.environ.get("MC_ALLOW_SHELL", "") in ("1", "true", "yes")
 POLL = int(os.environ.get("MC_POLL_SECONDS", "20"))
+MAX_STEPS = int(os.environ.get("MC_MAX_STEPS", "4"))
+EXECUTOR = os.environ.get("MC_EXECUTOR", "auto")
+LLM_BASE  = os.environ.get("MC_LLM_BASE_URL", "").rstrip("/")
+LLM_KEY   = os.environ.get("MC_LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("MC_LLM_MODEL", "MiniMax-Text-01")
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+_me = None  # cached agent identity
+
 
 def _req(method, path, body=None):
-    url = BASE + path
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
+    req = urllib.request.Request(BASE + path,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 method=method)
     req.add_header("Authorization", "Bearer " + TOKEN)
-    if data is not None:  # only when a JSON body is actually sent (Fastify 400s on empty json body)
+    if body is not None:  # Fastify 400s on empty json body
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -42,7 +54,7 @@ def _req(method, path, body=None):
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
         return e.code, {"error": e.read().decode()[:300]}
-    except Exception as e:  # network / DNS / timeout
+    except Exception as e:
         return 0, {"error": str(e)}
 
 
@@ -53,39 +65,124 @@ def heartbeat(status="green", note=None):
     return _req("POST", "/api/agent/heartbeat", body)
 
 
+def whoami():
+    global _me
+    if _me is None:
+        _, data = _req("GET", "/api/agent/me")
+        _me = data.get("agent", {}) if isinstance(data, dict) else {}
+    return _me
+
+
 def telegram(text):
     if not (TG_TOKEN and TG_CHAT):
         return
     try:
-        body = json.dumps({"chat_id": TG_CHAT, "text": text}).encode()
         req = urllib.request.Request(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            data=body, headers={"Content-Type": "application/json"}, method="POST")
+            data=json.dumps({"chat_id": TG_CHAT, "text": text}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=15)
     except Exception as e:
         print("  telegram ping failed:", e, file=sys.stderr)
 
 
-def execute(task):
-    """Run a task with the host's tools. Default executor = shell (gated).
-    Replace/extend this to hand off to the full OpenClaw/MiniMax brain."""
+# ─── executors ──────────────────────────────────────────────────────────────
+
+def shell_run(cmd):
+    """Run a shell command in MC_WORKDIR; return (rc, combined_output)."""
+    os.makedirs(WORKDIR, exist_ok=True)
+    p = subprocess.run(cmd, shell=True, cwd=WORKDIR, capture_output=True, text=True, timeout=600)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def shell_execute(task):
     cmd = (task.get("input") or task.get("title") or "").strip()
     if not cmd:
         return "failed", "empty task input"
     if not ALLOW_SHELL:
-        return "failed", "shell execution disabled (set MC_ALLOW_SHELL=1 to enable)"
+        return "failed", "shell execution disabled (set MC_ALLOW_SHELL=1)"
     try:
-        os.makedirs(WORKDIR, exist_ok=True)
-        proc = subprocess.run(cmd, shell=True, cwd=WORKDIR, capture_output=True,
-                              text=True, timeout=600)
-        out = (proc.stdout + proc.stderr).strip()
-        return ("done" if proc.returncode == 0 else "failed",
-                out or f"(exit {proc.returncode}, no output)")
+        rc, out = shell_run(cmd)
+        return ("done" if rc == 0 else "failed", out or f"(exit {rc}, no output)")
     except subprocess.TimeoutExpired:
         return "failed", "task timed out after 600s"
     except Exception as e:
         return "failed", f"executor error: {e}"
 
+
+_BASH_RE = re.compile(r"```(?:bash|sh)\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_bash(text):
+    m = _BASH_RE.search(text or "")
+    return m.group(1).strip() if m else None
+
+
+def llm_chat(messages):
+    """OpenAI-compatible chat completion → assistant content string."""
+    if not (LLM_BASE and LLM_KEY):
+        raise RuntimeError("MC_LLM_BASE_URL / MC_LLM_API_KEY not configured")
+    req = urllib.request.Request(
+        LLM_BASE + "/chat/completions",
+        data=json.dumps({"model": LLM_MODEL, "messages": messages, "temperature": 0.2}).encode(),
+        headers={"Authorization": "Bearer " + LLM_KEY, "Content-Type": "application/json"},
+        method="POST")
+    with urllib.request.urlopen(req, timeout=120) as r:
+        data = json.loads(r.read().decode())
+    return data["choices"][0]["message"]["content"]
+
+
+def llm_execute(task):
+    """Hand the task to the agent's LLM brain with a gated shell tool loop."""
+    me = whoami()
+    name = me.get("name", "Agent")
+    role = me.get("role", "agent")
+    runtime = me.get("runtime", "custom")
+    tor = me.get("termsOfReference") or ""
+    system = (
+        f"You are {name}, {role} at 7Ei, operating as an autonomous Mission Control "
+        f"agent on a {runtime} runtime. {tor}\n"
+        "Complete the user's task. To run a shell command in your working directory, "
+        "reply with EXACTLY ONE fenced ```bash code block and nothing else; the runtime "
+        "executes it and replies with 'OBSERVATION:' + output. When finished, reply with a "
+        "concise final answer and NO bash block."
+    )
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": task.get("input") or task.get("title") or ""}]
+    last = ""
+    try:
+        for _ in range(MAX_STEPS):
+            content = llm_chat(messages)
+            last = content
+            bash = _extract_bash(content)
+            if not bash:
+                return "done", content.strip()
+            if not ALLOW_SHELL:
+                messages.append({"role": "assistant", "content": content})
+                messages.append({"role": "user", "content": "OBSERVATION: shell disabled; answer without it."})
+                continue
+            rc, out = shell_run(bash)
+            messages.append({"role": "assistant", "content": content})
+            messages.append({"role": "user", "content": f"OBSERVATION: (exit {rc})\n{out[:4000]}"})
+        return "done", (last.strip() or "(max steps reached)")
+    except Exception as e:
+        return "failed", f"llm executor error: {e}"
+
+
+def choose_executor():
+    if EXECUTOR == "shell":
+        return shell_execute
+    if EXECUTOR == "llm":
+        return llm_execute
+    # auto
+    return llm_execute if LLM_KEY else shell_execute
+
+
+def execute(task):
+    return choose_executor()(task)
+
+
+# ─── poll loop ──────────────────────────────────────────────────────────────
 
 def process_one(task):
     tid = task["id"]
@@ -95,8 +192,7 @@ def process_one(task):
     if code not in (200, 201):
         print(f"    claim failed ({code})"); return
     status, output = execute(task)
-    code, _ = _req("POST", f"/api/agent/tasks/{tid}/result",
-                   {"output": output[:8000], "status": status})
+    code, _ = _req("POST", f"/api/agent/tasks/{tid}/result", {"output": output[:8000], "status": status})
     mark = "✓" if status == "done" else "✗"
     print(f"    {mark} {status}  ({code})")
     telegram(f"{mark} MC task {status}: {title}\n{output[:300]}")
@@ -116,10 +212,10 @@ def poll_once():
 def main():
     if not TOKEN:
         print("MC_AGENT_TOKEN is required", file=sys.stderr); sys.exit(2)
-    once = "--once" in sys.argv
-    print(f"7Ei MC adapter → {BASE}  (shell={'on' if ALLOW_SHELL else 'off'}, workdir={WORKDIR})")
+    mode = "llm" if choose_executor() is llm_execute else "shell"
+    print(f"7Ei MC adapter → {BASE}  (executor={mode}, shell={'on' if ALLOW_SHELL else 'off'}, workdir={WORKDIR})")
     heartbeat("green")
-    if once:
+    if "--once" in sys.argv:
         n = poll_once(); print(f"processed {n} task(s)"); return
     while True:
         try:

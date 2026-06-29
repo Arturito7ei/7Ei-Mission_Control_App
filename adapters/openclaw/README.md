@@ -44,13 +44,20 @@ python3 ~/.openclaw/mc-adapter/mc_adapter.py          # poll loop
 Keep it alive with launchd: edit + install `com.7ei.mc-adapter.plist` to
 `~/Library/LaunchAgents/`, then `launchctl load -w ~/Library/LaunchAgents/com.7ei.mc-adapter.plist`.
 
-## Execution model
+## Execution model (`MC_EXECUTOR`)
 
-The default executor runs `task.input` as a **shell command** in `MC_WORKDIR`
-(gated by `MC_ALLOW_SHELL=1`) — OpenClaw is a shell-capable runtime, so this is
-both the smoke-test path and genuinely useful (git ops, file work, scripts).
-To hand tasks to the full OpenClaw/MiniMax brain instead, replace `execute()`
-with a call into OpenClaw's gateway (Phase 2.1).
+- **`shell`** — runs `task.input` directly as a shell command in `MC_WORKDIR`
+  (gated by `MC_ALLOW_SHELL=1`). Deterministic; good for git ops / scripts.
+- **`llm`** (Phase 2.1) — hands the task to the agent's **MiniMax / OpenAI-compatible
+  brain**. The adapter fetches its identity from `GET /api/agent/me`, builds a
+  system prompt (name, role, terms of reference), and runs a **ReAct-style tool
+  loop**: the model may emit one ```` ```bash ```` block, the adapter executes it
+  (when `MC_ALLOW_SHELL=1`), feeds the `OBSERVATION:` back, and loops up to
+  `MC_MAX_STEPS` until the model returns a final answer. Configure with
+  `MC_LLM_BASE_URL`, `MC_LLM_API_KEY`, `MC_LLM_MODEL`.
+- **`auto`** (default) — `llm` when `MC_LLM_API_KEY` is set, else `shell`.
+
+So the agent gets real reasoning + the host's tools, not just raw shell.
 
 ## Security
 

@@ -25,6 +25,19 @@ const ResultSchema = z.object({
 export async function agentApiRoutes(app: FastifyInstance) {
   app.addHook('onRequest', agentAuth)
 
+  // Identity of the authenticated agent — lets a runtime build its system prompt.
+  app.get('/api/agent/me', async (req) => {
+    const a = (req as any).agent
+    return {
+      agent: {
+        id: a.id, orgId: a.orgId, name: a.name, role: a.role,
+        runtime: a.runtime, llmProvider: a.llmProvider, llmModel: a.llmModel,
+        termsOfReference: a.termsOfReference ?? null, persona: a.persona ?? null,
+        skills: a.skills ?? [],
+      },
+    }
+  })
+
   // Liveness/heartbeat — also returns who the runtime is authenticated as.
   app.post('/api/agent/heartbeat', async (req) => {
     const agent = (req as any).agent
