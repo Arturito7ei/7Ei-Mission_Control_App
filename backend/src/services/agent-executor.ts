@@ -9,6 +9,7 @@ import { parseAgentWebhooks, stripAgentWebhooks, executeAgentWebhooks } from './
 import { sendPushNotification } from '../routes/notifications'
 import { fireWebhook } from './outbound-webhooks'
 import { ensureFreshToken, searchDriveFiles } from './google-auth'
+import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -26,6 +27,22 @@ export async function executeAgentTask(opts: {
 
   const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
   if (!agent) throw new Error('Agent not found')
+
+  // MCA-EXT: external / bring-your-own runtimes are not driven by the LLM here.
+  // Assign the task and notify the runtime; it claims + posts results via the
+  // agent API. The internal executor path below is skipped entirely.
+  if (isExternalAgent(agent)) {
+    await db.update(schema.tasks)
+      .set({ status: 'assigned', assignedTo: agent.id })
+      .where(eq(schema.tasks.id, taskId))
+    await notifyExternalAgent(agent, { taskId, input })
+    const r: ExecuteResult = {
+      output: `Task assigned to external runtime "${agent.name}" (${agent.runtime}). Awaiting result.`,
+      tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'external',
+    }
+    onDone?.(r)
+    return r
+  }
 
   const budget = checkDailyBudget(agent.orgId, 2000)
   if (!budget.allowed) throw new Error(`Daily budget exceeded. Remaining: $${budget.remaining.cost.toFixed(4)}`)
