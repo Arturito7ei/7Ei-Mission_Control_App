@@ -569,6 +569,7 @@ function HireDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getTo
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const propose = async () => {
     if (!prompt.trim()) return
@@ -592,14 +593,23 @@ function HireDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getTo
   return (
     <div style={s.modalWrap} onClick={onClose}>
       <div style={s.modal} onClick={e => e.stopPropagation()}>
-        {token ? (
-          <>
-            <h2 style={s.h2}>✓ Hired {proposal?.name}</h2>
-            <p style={{ color: '#888', fontSize: 13, margin: '6px 0 0' }}>External runtime — copy this one-time token into the adapter's <code style={s.code}>mc.env</code>.</p>
-            <div style={s.tokenBox}>{token}</div>
-            <button style={{ ...s.primaryBtn, marginTop: 8 }} onClick={onDone}>Done</button>
-          </>
-        ) : !proposal ? (
+        {token ? (() => {
+          const rt = proposal?.runtime || 'openclaw'
+          const adapter = rt === 'cursor' ? 'adapters/cursor/cursor_adapter.py' : 'adapters/openclaw/mc_adapter.py'
+          const env = rt === 'cursor'
+            ? `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_INBOX=$PWD/coordination/inbox`
+            : `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_EXECUTOR=auto\nMC_ALLOW_SHELL=1\nMC_WORKDIR=/Users/artutito/7Ei-MC_TARCO`
+          const block = `# mc.env\n${env}\n\n# run on the ${rt} host:\nset -a; source mc.env; set +a\npython3 ${adapter}`
+          return (
+            <>
+              <h2 style={s.h2}>✓ {proposal?.name} imported</h2>
+              <p style={{ color: '#888', fontSize: 12.5, margin: '6px 0 0' }}>One-time token (shown once). Copy the block, drop it on the {rt} host, and the agent is live.</p>
+              <button style={{ ...s.ghostBtn, marginTop: 10 }} onClick={() => { navigator.clipboard?.writeText(block); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? '✓ Copied' : '📋 Copy env + run command'}</button>
+              <pre style={s.pre}>{block}</pre>
+              <button style={{ ...s.primaryBtn, marginTop: 8 }} onClick={onDone}>Done</button>
+            </>
+          )
+        })() : !proposal ? (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <h2 style={s.h2}>Hire with a prompt</h2><button onClick={onClose} style={s.x}>✕</button>
