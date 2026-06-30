@@ -11,6 +11,7 @@ import { eq, and, lte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { sendPushNotification } from '../routes/notifications'
+import { runHeartbeatSweep } from './heartbeat-engine'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
 let schedulerTimer: NodeJS.Timeout | null = null
@@ -42,6 +43,8 @@ async function runDueTasks() {
         console.error(`Scheduled task ${scheduled.id} failed:`, err)
       )
     }
+    // MCA-PC C1: heartbeat engine sweep (orphan recovery, status recompute, wakes).
+    runHeartbeatSweep().catch(err => console.error('Heartbeat sweep error:', err))
   } catch (err) {
     console.error('Scheduler tick error:', err)
   }

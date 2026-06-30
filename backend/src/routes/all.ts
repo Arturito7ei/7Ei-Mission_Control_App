@@ -14,6 +14,7 @@ import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
 import { buildInbox } from '../services/inbox'
 import { buildGoalTree } from '../services/goals'
+import { runHeartbeatSweep } from '../services/heartbeat-engine'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -571,6 +572,11 @@ export async function taskRoutes(app: FastifyInstance) {
     const approval = { id: randomUUID(), orgId, type: b.type, summary: b.summary, payload: b.payload ?? null, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
     await db.insert(schema.approvalRequests).values(approval as any)
     reply.code(201); return { approval }
+  })
+  // Heartbeat engine (MCA-PC C1): run a sweep on demand (orphan recovery + wakes).
+  app.post('/api/orgs/:orgId/heartbeat/sweep', async (req) => {
+    const { orgId } = req.params as any
+    return { result: await runHeartbeatSweep(orgId) }
   })
   app.post('/api/approvals/:id/decide', async (req, reply) => {
     const { id } = req.params as any
