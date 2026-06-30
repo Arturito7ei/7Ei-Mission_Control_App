@@ -70,6 +70,11 @@ export async function setupDatabase() {
     // MCA-PC B2: approvals & governance
     `CREATE TABLE IF NOT EXISTS approval_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_by_agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_approvals_org ON approval_requests(org_id, status)`,
+    // MCA-PC D1: workspaces & operator branches
+    `ALTER TABLE tasks ADD COLUMN workspace_id TEXT`,
+    `ALTER TABLE tasks ADD COLUMN branch TEXT`,
+    `CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, project_id TEXT, name TEXT NOT NULL, repo_url TEXT, base_branch TEXT DEFAULT 'main', preview_url TEXT, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_workspaces_org ON workspaces(org_id)`,
     // MCA-PC D4: scoped secret store
     `CREATE TABLE IF NOT EXISTS secrets (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT, key TEXT NOT NULL, value_encrypted TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_secrets_org ON secrets(org_id)`,

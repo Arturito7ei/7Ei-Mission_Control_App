@@ -630,6 +630,24 @@ export async function taskRoutes(app: FastifyInstance) {
     reply.code(204)
   })
 
+  // ─── Workspaces & runtime (MCA-PC D1) ───────────────────────────────────
+  app.get('/api/orgs/:orgId/workspaces', async (req) => {
+    const { orgId } = req.params as any
+    return { workspaces: await db.select().from(schema.workspaces).where(eq(schema.workspaces.orgId, orgId)) }
+  })
+  app.post('/api/orgs/:orgId/workspaces', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.name) return reply.code(400).send({ error: 'name required' })
+    const ws = { id: randomUUID(), orgId, projectId: b.projectId ?? null, name: b.name, repoUrl: b.repoUrl ?? null, baseBranch: b.baseBranch ?? 'main', previewUrl: b.previewUrl ?? null, createdAt: new Date() }
+    await db.insert(schema.workspaces).values(ws)
+    reply.code(201); return { workspace: ws }
+  })
+  app.delete('/api/workspaces/:id', async (req, reply) => {
+    await db.delete(schema.workspaces).where(eq(schema.workspaces.id, (req.params as any).id))
+    reply.code(204)
+  })
+
   // ─── Company portability (MCA-PC D3) ────────────────────────────────────
   app.get('/api/orgs/:orgId/export', async (req) => {
     const { orgId } = req.params as any
