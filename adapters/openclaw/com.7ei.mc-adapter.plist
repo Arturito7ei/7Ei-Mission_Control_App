@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd service: keep the MC adapter running + restart on crash.
+     Install: cp to ~/Library/LaunchAgents/ then `launchctl load -w ~/Library/LaunchAgents/com.7ei.mc-adapter.plist`
+     Edit paths/token first. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>com.7ei.mc-adapter</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/artutito/.openclaw/mc-adapter/mc_adapter.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MC_BASE_URL</key>     <string>https://7ei-backend.fly.dev</string>
+    <key>MC_AGENT_TOKEN</key>  <string>mca_REPLACE_ME</string>
+    <key>MC_WORKDIR</key>      <string>/Users/artutito/7Ei-MC_TARCO</string>
+    <key>MC_ALLOW_SHELL</key>  <string>1</string>
+    <key>MC_POLL_SECONDS</key> <string>20</string>
+  </dict>
+  <key>RunAtLoad</key>        <true/>
+  <key>KeepAlive</key>        <true/>
+  <key>StandardOutPath</key>  <string>/Users/artutito/.openclaw/mc-adapter/adapter.log</string>
+  <key>StandardErrorPath</key><string>/Users/artutito/.openclaw/mc-adapter/adapter.err</string>
+</dict>
+</plist>

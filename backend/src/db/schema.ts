@@ -53,6 +53,15 @@ export const agents = sqliteTable('agents', {
   persona: text('persona'),
   expertise: text('expertise'),
   advisorIds: text('advisor_ids'),
+  // External / bring-your-own runtime (MCA-EXT). runtime='internal' → driven by
+  // agent-executor + llm-router; anything else (openclaw, cursor, claude_code,
+  // custom) is a self-hosted runtime that polls the agent API.
+  runtime: text('runtime').notNull().default('internal'),
+  externalEndpoint: text('external_endpoint'),       // optional push callback URL
+  apiTokenHash: text('api_token_hash'),              // sha256 of the agent token
+  lastHeartbeatAt: integer('last_heartbeat_at', { mode: 'timestamp' }),
+  heartbeatStatus: text('heartbeat_status').default('unknown'), // green|amber|stale|unknown
+  contactChannel: text('contact_channel'),           // telegram chat id / email for pings
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

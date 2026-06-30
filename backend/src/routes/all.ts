@@ -8,6 +8,8 @@ import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
 import { streamLLM } from '../services/llm-router'
 import { buildAuthUrl, exchangeCode } from '../services/google-auth'
+import { generateAgentToken } from '../middleware/agent-token'
+import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -335,6 +337,79 @@ export async function agentRoutes(app: FastifyInstance) {
       return { proposal: json }
     } catch {
       return reply.code(500).send({ error: 'LLM returned invalid JSON', raw: fullOutput })
+    }
+  })
+
+  // ─── EXTERNAL / BRING-YOUR-OWN RUNTIME AGENTS (MCA-EXT) ──────────────────
+  const ExternalAgentSchema = z.object({
+    name: z.string().min(1).max(100),
+    role: z.string().min(1).max(200),
+    runtime: z.enum(['openclaw', 'cursor', 'claude_code', 'custom']),
+    llmProvider: z.string().default('minimax'),
+    llmModel: z.string().default('minimax'),
+    termsOfReference: z.string().optional(),
+    avatarEmoji: z.string().default('🤖'),
+    externalEndpoint: z.string().url().optional(),
+    contactChannel: z.string().optional(),  // telegram chat id / email for pings
+  })
+
+  // Onboard an external agent. Returns the agent token ONCE — only its hash is stored.
+  app.post('/api/orgs/:orgId/agents/external', async (req, reply) => {
+    const { orgId } = req.params as any
+    const body = ExternalAgentSchema.parse(req.body)
+    const { token, hash } = generateAgentToken()
+    const agent = {
+      id: randomUUID(), orgId, departmentId: null, name: body.name, role: body.role,
+      personality: null, cv: null, termsOfReference: body.termsOfReference ?? null,
+      llmProvider: body.llmProvider, llmModel: body.llmModel, skills: [] as string[],
+      status: 'idle', avatarEmoji: body.avatarEmoji, agentType: 'external',
+      advisorPersona: null, memoryLongTerm: null, runtime: body.runtime,
+      externalEndpoint: body.externalEndpoint ?? null, apiTokenHash: hash,
+      heartbeatStatus: 'unknown', contactChannel: body.contactChannel ?? null,
+      createdAt: new Date(),
+    }
+    await db.insert(schema.agents).values(agent)
+    reply.code(201)
+    // Never echo the hash; the raw token is shown exactly once here.
+    return { agent: { ...agent, apiTokenHash: undefined }, agentToken: token }
+  })
+
+  // Rotate an external agent's token (revokes the previous one).
+  app.post('/api/agents/:agentId/rotate-token', async (req, reply) => {
+    const { agentId } = req.params as any
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    if (!isExternalAgent(agent)) return reply.code(400).send({ error: 'Not an external agent' })
+    const { token, hash } = generateAgentToken()
+    await db.update(schema.agents).set({ apiTokenHash: hash }).where(eq(schema.agents.id, agentId))
+    return { agentToken: token }
+  })
+
+  // Cockpit payload: roster (with heartbeat freshness) + tasks + summary.
+  // Shape matches the dashboard's STATE object (offline fallback ⇄ live mode).
+  app.get('/api/orgs/:orgId/cockpit', async (req) => {
+    const { orgId } = req.params as any
+    const now = Date.now()
+    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const tasks = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(200)
+    const roster = agents.map(a => ({
+      id: a.id, name: a.name, role: a.role, runtime: a.runtime,
+      llmProvider: a.llmProvider, llmModel: a.llmModel, status: a.status,
+      agentType: a.agentType, avatarEmoji: a.avatarEmoji,
+      heartbeat: isExternalAgent(a) ? heartbeatFreshness(a.lastHeartbeatAt as any, now) : 'green',
+      lastHeartbeatAt: a.lastHeartbeatAt,
+    }))
+    const inCol = (c: string) => tasks.filter(t => (t.kanbanColumn ?? 'todo') === c).length
+    return {
+      orgId, generatedAt: new Date().toISOString(), agents: roster, tasks,
+      summary: {
+        agents: roster.length,
+        external: roster.filter(r => r.agentType === 'external').length,
+        tasks: tasks.length,
+        todo: inCol('todo'), in_progress: inCol('in_progress'),
+        blocked: inCol('blocked'), done: inCol('done'),
+      },
     }
   })
 }

@@ -20,6 +20,7 @@ import { modelRoutes } from './routes/models'
 import { scheduledRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
+import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
 import { clerkAuth } from './middleware/clerk-auth'
@@ -84,6 +85,9 @@ async function start() {
   await app.register(modelRoutes)
   await app.register(webhookRoutes)
   await app.register(telegramWebhookRoutes)
+  // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
+  // token via this plugin's own onRequest hook, not Clerk.
+  await app.register(agentApiRoutes)
   await app.register(authRoutes)
   await app.register(telemetryPlugin)
   await app.register(auditLogPlugin)
