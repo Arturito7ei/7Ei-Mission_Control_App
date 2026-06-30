@@ -101,6 +101,18 @@ export async function agentApiRoutes(app: FastifyInstance) {
     return { ok: true }
   })
 
+  // Request human sign-off for a sensitive action (MCA-PC B2).
+  app.post('/api/agent/approvals', async (req, reply) => {
+    const agent = (req as any).agent
+    const { type, summary, payload } = (req.body ?? {}) as any
+    if (!type || !summary) return reply.code(400).send({ error: 'type and summary required' })
+    await db.insert(schema.approvalRequests).values({
+      id: randomUUID(), orgId: agent.orgId, type, summary, payload: payload ?? null,
+      status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date(),
+    } as any)
+    return { ok: true }
+  })
+
   // Free-form progress / chatter message from the runtime.
   app.post('/api/agent/messages', async (req) => {
     const agent = (req as any).agent

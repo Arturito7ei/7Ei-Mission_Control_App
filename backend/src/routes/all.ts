@@ -249,6 +249,13 @@ export async function agentRoutes(app: FastifyInstance) {
     await db.update(schema.agents).set({ status }).where(eq(schema.agents.id, agentId))
     return { ok: true }
   })
+  // Governance controls (MCA-PC B2): pause / resume / terminate an agent.
+  for (const [verb, status] of [['pause', 'paused'], ['resume', 'idle'], ['terminate', 'terminated']] as const) {
+    app.post(`/api/agents/:agentId/${verb}`, async (req) => {
+      await db.update(schema.agents).set({ status }).where(eq(schema.agents.id, (req.params as any).agentId))
+      return { ok: true, status }
+    })
+  }
   app.delete('/api/agents/:agentId', async (req, reply) => {
     await db.delete(schema.agents).where(eq(schema.agents.id, (req.params as any).agentId))
     reply.code(204)
@@ -490,25 +497,27 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/inbox', async (req) => {
     const { orgId } = req.params as any
     const userId = (req as any).userId ?? 'anon'
-    const [tasks, dismissed, agents] = await Promise.all([
+    const [tasks, dismissed, agents, approvals] = await Promise.all([
       db.select(inboxCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(300),
       dismissedSet(orgId, userId),
       db.select({ id: schema.agents.id, name: schema.agents.name, avatarEmoji: schema.agents.avatarEmoji }).from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+      db.select().from(schema.approvalRequests).where(and(eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.status, 'pending'))).orderBy(desc(schema.approvalRequests.createdAt)).limit(50),
     ])
     const amap = new Map(agents.map(a => [a.id, a]))
     const items = buildInbox(tasks as any, dismissed).map(i => ({
       ...i, agentName: amap.get(i.agentId)?.name ?? '—', agentEmoji: amap.get(i.agentId)?.avatarEmoji ?? '🤖',
     }))
-    return { items, count: items.length }
+    return { items, approvals, count: items.length + approvals.length }
   })
   app.get('/api/orgs/:orgId/inbox/count', async (req) => {
     const { orgId } = req.params as any
     const userId = (req as any).userId ?? 'anon'
-    const [tasks, dismissed] = await Promise.all([
+    const [tasks, dismissed, pendingApprovals] = await Promise.all([
       db.select(inboxCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).limit(300),
       dismissedSet(orgId, userId),
+      db.select({ id: schema.approvalRequests.id }).from(schema.approvalRequests).where(and(eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.status, 'pending'))),
     ])
-    return { count: buildInbox(tasks as any, dismissed).length }
+    return { count: buildInbox(tasks as any, dismissed).length + pendingApprovals.length }
   })
   app.post('/api/orgs/:orgId/inbox/dismiss', async (req, reply) => {
     const { orgId } = req.params as any
@@ -545,6 +554,30 @@ export async function taskRoutes(app: FastifyInstance) {
   app.delete('/api/goals/:goalId', async (req, reply) => {
     await db.delete(schema.goals).where(eq(schema.goals.id, (req.params as any).goalId))
     reply.code(204)
+  })
+
+  // ─── Approvals & governance (MCA-PC B2) ─────────────────────────────────
+  app.get('/api/orgs/:orgId/approvals', async (req) => {
+    const { orgId } = req.params as any
+    const status = (req.query as any)?.status
+    const conds = [eq(schema.approvalRequests.orgId, orgId)]
+    if (status) conds.push(eq(schema.approvalRequests.status, status))
+    return { approvals: await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100) }
+  })
+  app.post('/api/orgs/:orgId/approvals', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.type || !b.summary) return reply.code(400).send({ error: 'type and summary are required' })
+    const approval = { id: randomUUID(), orgId, type: b.type, summary: b.summary, payload: b.payload ?? null, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
+    await db.insert(schema.approvalRequests).values(approval as any)
+    reply.code(201); return { approval }
+  })
+  app.post('/api/approvals/:id/decide', async (req, reply) => {
+    const { id } = req.params as any
+    const { decision } = (req.body ?? {}) as any
+    if (decision !== 'approved' && decision !== 'rejected') return reply.code(400).send({ error: 'decision must be approved|rejected' })
+    await db.update(schema.approvalRequests).set({ status: decision, decidedBy: (req as any).userId ?? 'human', decidedAt: new Date() }).where(eq(schema.approvalRequests.id, id))
+    return { approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }) }
   })
 
   app.get('/api/orgs/:orgId/tasks', async (req) => {

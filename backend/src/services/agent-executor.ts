@@ -11,6 +11,7 @@ import { fireWebhook } from './outbound-webhooks'
 import { ensureFreshToken, searchDriveFiles } from './google-auth'
 import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 import { goalAncestry, formatGoalContext } from './goals'
+import { canAgentRun } from './governance'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -28,6 +29,13 @@ export async function executeAgentTask(opts: {
 
   const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
   if (!agent) throw new Error('Agent not found')
+
+  // MCA-PC B2: governance gate — paused/terminated agents do not execute.
+  if (!canAgentRun(agent.status)) {
+    await db.update(schema.tasks).set({ status: agent.status === 'terminated' ? 'failed' : 'pending' }).where(eq(schema.tasks.id, taskId))
+    const r: ExecuteResult = { output: `Agent is ${agent.status}; task not executed.`, tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'governance' }
+    onDone?.(r); return r
+  }
 
   // MCA-EXT: external / bring-your-own runtimes are not driven by the LLM here.
   // Assign the task and notify the runtime; it claims + posts results via the

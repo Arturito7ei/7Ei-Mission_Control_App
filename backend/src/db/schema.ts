@@ -102,6 +102,19 @@ export const tasks = sqliteTable('tasks', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
 
+export const approvalRequests = sqliteTable('approval_requests', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  type: text('type').notNull(),                       // spend | hire | external_action | ...
+  summary: text('summary').notNull(),
+  payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>(),
+  status: text('status').notNull().default('pending'), // pending | approved | rejected
+  requestedByAgentId: text('requested_by_agent_id'),
+  decidedBy: text('decided_by'),
+  decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const goals = sqliteTable('goals', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),

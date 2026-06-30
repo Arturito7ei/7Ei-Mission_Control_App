@@ -64,6 +64,9 @@ export async function setupDatabase() {
     `ALTER TABLE tasks ADD COLUMN goal_id TEXT`,
     `CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, parent_goal_id TEXT, title TEXT NOT NULL, description TEXT, metric TEXT, status TEXT NOT NULL DEFAULT 'active', owner_agent_id TEXT, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(org_id)`,
+    // MCA-PC B2: approvals & governance
+    `CREATE TABLE IF NOT EXISTS approval_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_by_agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_approvals_org ON approval_requests(org_id, status)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
