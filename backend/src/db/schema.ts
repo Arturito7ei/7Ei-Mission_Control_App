@@ -66,6 +66,9 @@ export const agents = sqliteTable('agents', {
   reportsTo: text('reports_to'),                      // manager agent id
   title: text('title'),                              // job title (e.g. "Head of Engineering")
   jobDescription: text('job_description'),
+  // Heartbeat engine (MCA-PC C1)
+  heartbeatEverySec: integer('heartbeat_every_sec'),  // wake cadence; null = no auto-wake
+  nextWakeAt: integer('next_wake_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

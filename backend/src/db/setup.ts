@@ -56,6 +56,9 @@ export async function setupDatabase() {
     `ALTER TABLE agents ADD COLUMN reports_to TEXT`,
     `ALTER TABLE agents ADD COLUMN title TEXT`,
     `ALTER TABLE agents ADD COLUMN job_description TEXT`,
+    // MCA-PC C1: heartbeat engine
+    `ALTER TABLE agents ADD COLUMN heartbeat_every_sec INTEGER`,
+    `ALTER TABLE agents ADD COLUMN next_wake_at INTEGER`,
     // MCA-PC A3: unified inbox
     `ALTER TABLE tasks ADD COLUMN inbox_state TEXT DEFAULT 'none'`,
     `CREATE TABLE IF NOT EXISTS inbox_dismissals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, user_id TEXT NOT NULL, task_id TEXT NOT NULL, created_at INTEGER NOT NULL)`,

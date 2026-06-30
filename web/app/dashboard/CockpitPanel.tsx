@@ -78,6 +78,10 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
     try { await call(`/api/agents/${id}/${verb}`, await getToken(), { method: 'POST' }) } catch {}
     load()
   }
+  const sweep = async () => {
+    try { await call(`/api/orgs/${orgId}/heartbeat/sweep`, await getToken(), { method: 'POST' }) } catch {}
+    load()
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -93,6 +97,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} style={s.ghostBtn}>↻ Refresh</button>
+          <button onClick={sweep} style={s.ghostBtn} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</button>
           <button onClick={() => setHire(true)} style={s.ghostBtn}>✨ Hire with a prompt</button>
           <button onClick={() => setWizard(true)} style={s.primaryBtn}>＋ Add agent</button>
         </div>
