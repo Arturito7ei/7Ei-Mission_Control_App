@@ -11,6 +11,7 @@ import { buildAuthUrl, exchangeCode } from '../services/google-auth'
 import { generateAgentToken } from '../middleware/agent-token'
 import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
+import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -384,6 +385,50 @@ export async function agentRoutes(app: FastifyInstance) {
     const { token, hash } = generateAgentToken()
     await db.update(schema.agents).set({ apiTokenHash: hash }).where(eq(schema.agents.id, agentId))
     return { agentToken: token }
+  })
+
+  // Goal-driven hiring (MCA-PC A2): prompt → proposed profile; confirm → create + place.
+  app.post('/api/orgs/:orgId/agents/hire', async (req, reply) => {
+    const { orgId } = req.params as any
+    const body = (req.body ?? {}) as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+
+    // Confirm path → create the (possibly edited) proposed agent and place it.
+    if (body.confirm && body.profile) {
+      const p = parseHireProposal(JSON.stringify(body.profile))
+      let reportsTo: string | null = null
+      if (p.reportsTo) {
+        const mgr = await db.query.agents.findFirst({ where: and(eq(schema.agents.id, p.reportsTo), eq(schema.agents.orgId, orgId)) })
+        reportsTo = mgr ? mgr.id : null
+      }
+      const external = isExternalRuntime(p.runtime)
+      const tok = external ? generateAgentToken() : null
+      const agent = {
+        id: randomUUID(), orgId, departmentId: null, name: p.name, role: p.role,
+        personality: null, cv: null, termsOfReference: p.termsOfReference || null,
+        llmProvider: p.llmProvider, llmModel: p.llmModel, skills: p.skills,
+        status: 'idle', avatarEmoji: p.avatarEmoji, agentType: external ? 'external' : 'standard',
+        advisorPersona: null, memoryLongTerm: null, runtime: p.runtime,
+        externalEndpoint: null, apiTokenHash: tok ? tok.hash : null,
+        heartbeatStatus: external ? 'unknown' : null, contactChannel: null,
+        reportsTo, title: p.title, jobDescription: p.jobDescription, createdAt: new Date(),
+      }
+      await db.insert(schema.agents).values(agent as any)
+      reply.code(201)
+      return { agent: { ...agent, apiTokenHash: undefined }, agentToken: tok ? tok.token : undefined }
+    }
+
+    // Propose path → ask the LLM to design an agent from the prompt + org chart.
+    if (!body.prompt) return reply.code(400).send({ error: 'prompt is required' })
+    const agents = await db.select({ id: schema.agents.id, name: schema.agents.name, role: schema.agents.role, title: schema.agents.title })
+      .from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const { system, user } = buildHirePrompt(body.prompt, org, agents)
+    let out = ''
+    await streamLLM({ provider: 'anthropic', model: 'claude-sonnet-4-20250514', system, messages: [{ role: 'user', content: user }], maxTokens: 1024, onToken: (t) => { out += t } })
+    const proposal = parseHireProposal(out)
+    if (proposal.reportsTo && !agents.find(a => a.id === proposal.reportsTo)) proposal.reportsTo = null
+    return { proposal }
   })
 
   // Cockpit payload: roster (with heartbeat freshness) + tasks + summary.

@@ -39,6 +39,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
+  const [hire, setHire] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -62,6 +63,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         <h1 style={s.h1}>Mission Control</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} style={s.ghostBtn}>↻ Refresh</button>
+          <button onClick={() => setHire(true)} style={s.ghostBtn}>✨ Hire with a prompt</button>
           <button onClick={() => setWizard(true)} style={s.primaryBtn}>＋ Add agent</button>
         </div>
       </div>
@@ -123,6 +125,88 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       </div>
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
+      {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Hire with a prompt (goal-driven hiring) ─────────────────────────────────
+
+function HireDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
+  const [prompt, setPrompt] = useState('')
+  const [proposal, setProposal] = useState<any>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+
+  const propose = async () => {
+    if (!prompt.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      const r = await call<{ proposal: any }>(`/api/orgs/${orgId}/agents/hire`, await getToken(), { method: 'POST', body: JSON.stringify({ prompt }) })
+      setProposal(r.proposal)
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  const confirmHire = async () => {
+    setBusy(true); setErr(null)
+    try {
+      const r = await call<{ agentToken?: string }>(`/api/orgs/${orgId}/agents/hire`, await getToken(), { method: 'POST', body: JSON.stringify({ confirm: true, profile: proposal }) })
+      if (r.agentToken) setToken(r.agentToken); else onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  const set = (k: string, v: string) => setProposal((p: any) => ({ ...p, [k]: v }))
+
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        {token ? (
+          <>
+            <h2 style={s.h2}>✓ Hired {proposal?.name}</h2>
+            <p style={{ color: '#888', fontSize: 13, margin: '6px 0 0' }}>External runtime — copy this one-time token into the adapter's <code style={s.code}>mc.env</code>.</p>
+            <div style={s.tokenBox}>{token}</div>
+            <button style={{ ...s.primaryBtn, marginTop: 8 }} onClick={onDone}>Done</button>
+          </>
+        ) : !proposal ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={s.h2}>Hire with a prompt</h2><button onClick={onClose} style={s.x}>✕</button>
+            </div>
+            <p style={{ color: '#888', fontSize: 12.5, margin: '4px 0 0' }}>Describe the agent you need — Arturito proposes a profile, title, and manager from your org chart.</p>
+            <textarea style={{ ...s.inp, minHeight: 90, marginTop: 12 }} autoFocus value={prompt}
+              placeholder="e.g. A growth marketer who owns SEO and the weekly newsletter, reporting to the CMO."
+              onChange={e => setPrompt(e.target.value)} />
+            {err && <div style={s.errBox}>⚠ {err}</div>}
+            <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={propose}>{busy ? 'Designing…' : '✨ Propose'}</button>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={s.h2}>Review &amp; hire</h2><button onClick={onClose} style={s.x}>✕</button>
+            </div>
+            <div style={s.form}>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <label style={{ ...s.lab, flex: 1 }}>Name<input style={s.inp} value={proposal.name} onChange={e => set('name', e.target.value)} /></label>
+                <label style={{ ...s.lab, width: 80 }}>Emoji<input style={s.inp} value={proposal.avatarEmoji} onChange={e => set('avatarEmoji', e.target.value)} /></label>
+              </div>
+              <label style={s.lab}>Title<input style={s.inp} value={proposal.title} onChange={e => set('title', e.target.value)} /></label>
+              <label style={s.lab}>Role<input style={s.inp} value={proposal.role} onChange={e => set('role', e.target.value)} /></label>
+              <div style={{ fontSize: 12, color: '#aaa', lineHeight: 1.7 }}>
+                <div>Runtime: <b style={{ color: '#fff' }}>{RUNTIME_BADGE[proposal.runtime] ?? '⚙️'} {proposal.runtime}</b> · Model: <b style={{ color: '#fff' }}>{proposal.llmProvider}·{proposal.llmModel}</b></div>
+                <div>Reports to: <b style={{ color: '#fff' }}>{proposal.reportsTo ?? '— (top level)'}</b></div>
+                {proposal.skills?.length ? <div>Skills: {proposal.skills.join(', ')}</div> : null}
+                {proposal.jobDescription ? <div style={{ color: '#888', marginTop: 4 }}>{proposal.jobDescription}</div> : null}
+              </div>
+            </div>
+            {err && <div style={s.errBox}>⚠ {err}</div>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button style={s.ghostBtn} onClick={() => setProposal(null)}>← Re-prompt</button>
+              <button style={{ ...s.primaryBtn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={confirmHire}>{busy ? 'Hiring…' : 'Hire'}</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
