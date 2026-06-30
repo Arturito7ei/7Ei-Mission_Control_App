@@ -16,6 +16,7 @@ import { buildInbox } from '../services/inbox'
 import { buildGoalTree } from '../services/goals'
 import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
+import { buildExport, remapImport } from '../services/portability'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -605,6 +606,39 @@ export async function taskRoutes(app: FastifyInstance) {
   app.delete('/api/budgets/:id', async (req, reply) => {
     await db.delete(schema.budgetPolicies).where(eq(schema.budgetPolicies.id, (req.params as any).id))
     reply.code(204)
+  })
+
+  // ─── Company portability (MCA-PC D3) ────────────────────────────────────
+  app.get('/api/orgs/:orgId/export', async (req) => {
+    const { orgId } = req.params as any
+    const [org, agents, goals, budgets, routines] = await Promise.all([
+      db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) }),
+      db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+      db.select().from(schema.goals).where(eq(schema.goals.orgId, orgId)),
+      db.select().from(schema.budgetPolicies).where(eq(schema.budgetPolicies.orgId, orgId)),
+      db.select().from(schema.scheduledTasks).where(eq(schema.scheduledTasks.orgId, orgId)),
+    ])
+    return { bundle: buildExport({ org, agents, goals, budgets, routines }) }
+  })
+  app.post('/api/orgs/import', async (req, reply) => {
+    const body = (req.body ?? {}) as any
+    const bundle = body.bundle ?? body
+    if (!bundle?.org || !Array.isArray(bundle.agents)) return reply.code(400).send({ error: 'invalid bundle' })
+    const userId = (req as any).userId ?? 'system'
+    const newOrgId = randomUUID()
+    await db.insert(schema.organisations).values({
+      id: newOrgId, name: bundle.org.name ?? 'Imported Org', description: bundle.org.description ?? null,
+      mission: bundle.org.mission ?? null, culture: bundle.org.culture ?? null,
+      deployMode: bundle.org.deployMode ?? null, cloudProvider: bundle.org.cloudProvider ?? null,
+      preferredLlm: bundle.org.preferredLlm ?? null, ownerId: userId, createdAt: new Date(),
+    } as any)
+    const r = remapImport(bundle, newOrgId, () => randomUUID())
+    if (r.agents.length) await db.insert(schema.agents).values(r.agents as any)
+    if (r.goals.length) await db.insert(schema.goals).values(r.goals as any)
+    if (r.budgets.length) await db.insert(schema.budgetPolicies).values(r.budgets as any)
+    if (r.routines.length) await db.insert(schema.scheduledTasks).values(r.routines as any)
+    reply.code(201)
+    return { orgId: newOrgId, counts: { agents: r.agents.length, goals: r.goals.length, budgets: r.budgets.length, routines: r.routines.length } }
   })
   app.post('/api/approvals/:id/decide', async (req, reply) => {
     const { id } = req.params as any
