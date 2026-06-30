@@ -209,12 +209,24 @@ def poll_once():
     return len(tasks)
 
 
+def load_secrets():
+    """Fetch this agent's scoped secrets (MCA-PC D4) and inject them as env vars."""
+    code, data = _req("GET", "/api/agent/secrets")
+    if code == 200 and isinstance(data, dict):
+        secs = data.get("secrets", {}) or {}
+        for k, v in secs.items():
+            os.environ[str(k)] = str(v)
+        if secs:
+            print(f"  loaded {len(secs)} scoped secret(s) into env")
+
+
 def main():
     if not TOKEN:
         print("MC_AGENT_TOKEN is required", file=sys.stderr); sys.exit(2)
     mode = "llm" if choose_executor() is llm_execute else "shell"
     print(f"7Ei MC adapter → {BASE}  (executor={mode}, shell={'on' if ALLOW_SHELL else 'off'}, workdir={WORKDIR})")
     heartbeat("green")
+    load_secrets()
     if "--once" in sys.argv:
         n = poll_once(); print(f"processed {n} task(s)"); return
     while True:

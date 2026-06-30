@@ -28,6 +28,7 @@ type InboxItem = { taskId: string; title: string; kind: string; priority: string
 type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
 type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
 type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
+type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -50,23 +51,26 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [budgets, setBudgets] = useState<Budget[]>([])
+  const [secrets, setSecrets] = useState<Secret[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
   const [goalDlg, setGoalDlg] = useState(false)
   const [budgetDlg, setBudgetDlg] = useState(false)
+  const [secretDlg, setSecretDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc, ib, gl, bd] = await Promise.all([
+      const [c, oc, ib, gl, bd, se] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
         call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
         call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
         call<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, tok),
+        call<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -89,6 +93,10 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const delBudget = async (id: string) => {
     setBudgets(x => x.filter(b => b.id !== id))
     try { await call(`/api/budgets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+  }
+  const delSecret = async (id: string) => {
+    setSecrets(x => x.filter(s => s.id !== id))
+    try { await call(`/api/secrets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
   }
 
   useEffect(() => { load() }, [load])
@@ -209,6 +217,22 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {budgets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No budgets — add a hard-stop to cap spend by company, agent, project, or goal.</p>}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={s.h2}>Secrets</h2>
+        <button style={s.ghostBtn} onClick={() => setSecretDlg(true)}>＋ Secret</button>
+      </div>
+      <div style={s.panel}>
+        {secrets.map(sec => (
+          <div key={sec.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
+            <span style={s.badge}>🔒 {sec.scope}{sec.scopeId ? ` · ${sec.scopeId.slice(0, 6)}` : ''}</span>
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 560 }}>{sec.key}</div>
+            <code style={{ fontSize: 12, color: '#888' }}>{sec.masked}</code>
+            <button style={s.iconBtn} onClick={() => delSecret(sec.id)}>✕</button>
+          </div>
+        ))}
+        {secrets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No secrets — store API keys here; runtimes fetch them scoped, never via prompts.</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -232,6 +256,54 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
       {goalDlg && <GoalDialog orgId={orgId} getToken={getToken} goals={goals ?? []} onClose={() => setGoalDlg(false)} onDone={() => { setGoalDlg(false); load() }} />}
       {budgetDlg && <BudgetDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setBudgetDlg(false)} onDone={() => { setBudgetDlg(false); load() }} />}
+      {secretDlg && <SecretDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setSecretDlg(false)} onDone={() => { setSecretDlg(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Secret dialog ───────────────────────────────────────────────────────────
+
+function SecretDialog({ orgId, getToken, agents, onClose, onDone }: { orgId: string; getToken: Getter; agents: CAgent[]; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ scope: 'company', scopeId: '', key: '', value: '' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const save = async () => {
+    if (!f.key.trim() || !f.value) return
+    setBusy(true); setErr(null)
+    try {
+      await call(`/api/orgs/${orgId}/secrets`, await getToken(), { method: 'POST', body: JSON.stringify({ scope: f.scope, scopeId: f.scope === 'agent' ? (f.scopeId || null) : null, key: f.key.trim(), value: f.value }) })
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={s.h2}>New secret</h2><button onClick={onClose} style={s.x}>✕</button>
+        </div>
+        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Stored AES-256-GCM encrypted. Runtimes fetch scoped secrets via the agent API — never injected into prompts.</p>
+        <div style={s.form}>
+          <label style={s.lab}>Scope
+            <select style={s.inp} value={f.scope} onChange={e => setF({ ...f, scope: e.target.value, scopeId: '' })}>
+              <option value="company">Company (all agents)</option>
+              <option value="agent">Agent</option>
+            </select>
+          </label>
+          {f.scope === 'agent' && (
+            <label style={s.lab}>Agent
+              <select style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })}>
+                <option value="">— pick —</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label style={s.lab}>Key<input style={s.inp} value={f.key} placeholder="OPENAI_API_KEY" onChange={e => setF({ ...f, key: e.target.value })} /></label>
+          <label style={s.lab}>Value<input style={s.inp} type="password" value={f.value} placeholder="sk-…" onChange={e => setF({ ...f, value: e.target.value })} /></label>
+        </div>
+        {err && <div style={s.errBox}>⚠ {err}</div>}
+        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Store secret'}</button>
+      </div>
     </div>
   )
 }

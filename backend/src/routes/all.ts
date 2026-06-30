@@ -17,6 +17,7 @@ import { buildGoalTree } from '../services/goals'
 import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
+import { encrypt, decrypt, maskValue } from '../services/secrets'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -605,6 +606,27 @@ export async function taskRoutes(app: FastifyInstance) {
   })
   app.delete('/api/budgets/:id', async (req, reply) => {
     await db.delete(schema.budgetPolicies).where(eq(schema.budgetPolicies.id, (req.params as any).id))
+    reply.code(204)
+  })
+
+  // ─── Scoped secret store (MCA-PC D4) ────────────────────────────────────
+  app.get('/api/orgs/:orgId/secrets', async (req) => {
+    const { orgId } = req.params as any
+    const rows = await db.select().from(schema.secrets).where(eq(schema.secrets.orgId, orgId))
+    // Never return plaintext — only key, scope, and a masked hint.
+    return { secrets: rows.map(s => { let m = '••••'; try { m = maskValue(decrypt(s.valueEncrypted)) } catch {} ; return { id: s.id, scope: s.scope, scopeId: s.scopeId, key: s.key, masked: m } }) }
+  })
+  app.post('/api/orgs/:orgId/secrets', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.key || b.value == null) return reply.code(400).send({ error: 'key and value required' })
+    const scope = b.scope === 'agent' ? 'agent' : 'company'
+    const row = { id: randomUUID(), orgId, scope, scopeId: scope === 'agent' ? (b.scopeId ?? null) : null, key: b.key, valueEncrypted: encrypt(String(b.value)), createdAt: new Date() }
+    await db.insert(schema.secrets).values(row)
+    reply.code(201); return { secret: { id: row.id, scope: row.scope, scopeId: row.scopeId, key: row.key, masked: maskValue(String(b.value)) } }
+  })
+  app.delete('/api/secrets/:id', async (req, reply) => {
+    await db.delete(schema.secrets).where(eq(schema.secrets.id, (req.params as any).id))
     reply.code(204)
   })
 

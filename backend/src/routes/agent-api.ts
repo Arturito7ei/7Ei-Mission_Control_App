@@ -4,6 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, and, inArray, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { agentAuth } from '../middleware/agent-token'
+import { decrypt, resolveSecretsForAgent } from '../services/secrets'
 
 // ─── AGENT-FACING API (MCA-EXT) ────────────────────────────────────────────
 //
@@ -36,6 +37,15 @@ export async function agentApiRoutes(app: FastifyInstance) {
         skills: a.skills ?? [],
       },
     }
+  })
+
+  // Scoped secrets for this runtime (MCA-PC D4) — decrypted, company+agent scope.
+  // Lets a BYO runtime inject secrets as env without ever putting them in a prompt.
+  app.get('/api/agent/secrets', async (req) => {
+    const agent = (req as any).agent
+    const rows = await db.select().from(schema.secrets).where(eq(schema.secrets.orgId, agent.orgId))
+    const decrypted = rows.map(s => { try { return { scope: s.scope, scopeId: s.scopeId, key: s.key, value: decrypt(s.valueEncrypted) } } catch { return null } }).filter(Boolean) as any[]
+    return { secrets: resolveSecretsForAgent(decrypted, agent.id) }
   })
 
   // Liveness/heartbeat — also returns who the runtime is authenticated as.
