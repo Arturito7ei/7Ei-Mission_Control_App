@@ -62,6 +62,10 @@ export const agents = sqliteTable('agents', {
   lastHeartbeatAt: integer('last_heartbeat_at', { mode: 'timestamp' }),
   heartbeatStatus: text('heartbeat_status').default('unknown'), // green|amber|stale|unknown
   contactChannel: text('contact_channel'),           // telegram chat id / email for pings
+  // Org chart & hierarchy (MCA-PC A1)
+  reportsTo: text('reports_to'),                      // manager agent id
+  title: text('title'),                              // job title (e.g. "Head of Engineering")
+  jobDescription: text('job_description'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
