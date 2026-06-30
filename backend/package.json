@@ -10,6 +10,7 @@
     "test:watch": "node --test --watch --import=tsx src/tests/*.test.ts",
     "smoke:openclaw": "node --import=tsx scripts/smoke-openclaw.ts",
     "smoke:openclaw:llm": "node --import=tsx scripts/smoke-openclaw-llm.ts",
+    "smoke:cursor": "node --import=tsx scripts/smoke-cursor.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
