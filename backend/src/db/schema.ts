@@ -107,6 +107,16 @@ export const tasks = sqliteTable('tasks', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
 
+export const plugins = sqliteTable('plugins', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  name: text('name').notNull(),
+  version: text('version').notNull(),
+  manifest: text('manifest', { mode: 'json' }).$type<Record<string, unknown>>(),
+  enabled: integer('enabled', { mode: 'boolean' }).default(false),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const workspaces = sqliteTable('workspaces', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),

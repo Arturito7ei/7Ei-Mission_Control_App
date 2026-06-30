@@ -70,6 +70,9 @@ export async function setupDatabase() {
     // MCA-PC B2: approvals & governance
     `CREATE TABLE IF NOT EXISTS approval_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_by_agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_approvals_org ON approval_requests(org_id, status)`,
+    // MCA-PC D2: plugin registry
+    `CREATE TABLE IF NOT EXISTS plugins (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL, manifest TEXT, enabled INTEGER DEFAULT 0, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_plugins_org ON plugins(org_id)`,
     // MCA-PC D1: workspaces & operator branches
     `ALTER TABLE tasks ADD COLUMN workspace_id TEXT`,
     `ALTER TABLE tasks ADD COLUMN branch TEXT`,
