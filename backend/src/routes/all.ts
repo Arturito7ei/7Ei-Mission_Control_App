@@ -18,6 +18,7 @@ import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
+import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -627,6 +628,32 @@ export async function taskRoutes(app: FastifyInstance) {
   })
   app.delete('/api/secrets/:id', async (req, reply) => {
     await db.delete(schema.secrets).where(eq(schema.secrets.id, (req.params as any).id))
+    reply.code(204)
+  })
+
+  // ─── Plugin registry (MCA-PC D2) ────────────────────────────────────────
+  app.get('/api/orgs/:orgId/plugins', async (req) => {
+    const { orgId } = req.params as any
+    const rows = await db.select().from(schema.plugins).where(eq(schema.plugins.orgId, orgId))
+    return { plugins: rows.map(p => ({ id: p.id, name: p.name, version: p.version, enabled: p.enabled, capabilities: grantedCapabilities((p.manifest ?? {}) as any), tools: exposedTools((p.manifest ?? {}) as any), description: (p.manifest as any)?.description ?? null })) }
+  })
+  app.post('/api/orgs/:orgId/plugins', async (req, reply) => {
+    const { orgId } = req.params as any
+    const manifest = (req.body as any)?.manifest ?? req.body
+    const v = validateManifest(manifest)
+    if (!v.ok) return reply.code(400).send({ error: 'invalid manifest', errors: v.errors })
+    const row = { id: randomUUID(), orgId, name: manifest.name, version: manifest.version, manifest, enabled: false, createdAt: new Date() }
+    await db.insert(schema.plugins).values(row as any)
+    reply.code(201); return { plugin: { id: row.id, name: row.name, version: row.version, enabled: false, capabilities: grantedCapabilities(manifest), tools: exposedTools(manifest) } }
+  })
+  app.patch('/api/plugins/:id', async (req) => {
+    const { id } = req.params as any
+    const { enabled } = (req.body ?? {}) as any
+    await db.update(schema.plugins).set({ enabled: !!enabled }).where(eq(schema.plugins.id, id))
+    return { ok: true, enabled: !!enabled }
+  })
+  app.delete('/api/plugins/:id', async (req, reply) => {
+    await db.delete(schema.plugins).where(eq(schema.plugins.id, (req.params as any).id))
     reply.code(204)
   })
 

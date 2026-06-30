@@ -30,6 +30,7 @@ type Approval = { id: string; type: string; summary: string; status: string; req
 type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
 type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
 type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }
+type Plugin = { id: string; name: string; version: string; enabled: boolean; capabilities: string[]; tools: string[]; description?: string | null }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -54,6 +55,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [secrets, setSecrets] = useState<Secret[]>([])
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [plugins, setPlugins] = useState<Plugin[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
@@ -61,11 +63,12 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [budgetDlg, setBudgetDlg] = useState(false)
   const [secretDlg, setSecretDlg] = useState(false)
   const [wsDlg, setWsDlg] = useState(false)
+  const [pluginDlg, setPluginDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc, ib, gl, bd, se, ws] = await Promise.all([
+      const [c, oc, ib, gl, bd, se, ws, pl] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
         call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
@@ -73,8 +76,9 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         call<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, tok),
         call<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, tok),
         call<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, tok),
+        call<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -105,6 +109,14 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const delWorkspace = async (id: string) => {
     setWorkspaces(x => x.filter(w => w.id !== id))
     try { await call(`/api/workspaces/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+  }
+  const togglePlugin = async (id: string, enabled: boolean) => {
+    setPlugins(x => x.map(p => p.id === id ? { ...p, enabled } : p))
+    try { await call(`/api/plugins/${id}`, await getToken(), { method: 'PATCH', body: JSON.stringify({ enabled }) }) } catch {}
+  }
+  const delPlugin = async (id: string) => {
+    setPlugins(x => x.filter(p => p.id !== id))
+    try { await call(`/api/plugins/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
   }
 
   useEffect(() => { load() }, [load])
@@ -260,6 +272,25 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {workspaces.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No workspaces — define a repo; runtimes get an operator branch + worktree per task.</p>}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={s.h2}>Plugins</h2>
+        <button style={s.ghostBtn} onClick={() => setPluginDlg(true)}>＋ Install plugin</button>
+      </div>
+      <div style={s.panel}>
+        {plugins.map(p => (
+          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
+            <span>🧩</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 560 }}>{p.name} <span style={{ color: '#555', fontSize: 11 }}>v{p.version}</span></div>
+              <div style={{ fontSize: 11, color: '#888' }}>{p.capabilities.join(', ') || 'no capabilities'}{p.tools.length ? ` · tools: ${p.tools.join(', ')}` : ''}</div>
+            </div>
+            <button style={{ ...s.iconBtn, color: p.enabled ? '#22c55e' : '#888' }} onClick={() => togglePlugin(p.id, !p.enabled)}>{p.enabled ? 'On' : 'Off'}</button>
+            <button style={s.iconBtn} onClick={() => delPlugin(p.id)}>✕</button>
+          </div>
+        ))}
+        {plugins.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No plugins — install a manifest to extend Mission Control (capability-gated).</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -285,6 +316,47 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       {budgetDlg && <BudgetDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setBudgetDlg(false)} onDone={() => { setBudgetDlg(false); load() }} />}
       {secretDlg && <SecretDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setSecretDlg(false)} onDone={() => { setSecretDlg(false); load() }} />}
       {wsDlg && <WorkspaceDialog orgId={orgId} getToken={getToken} onClose={() => setWsDlg(false)} onDone={() => { setWsDlg(false); load() }} />}
+      {pluginDlg && <PluginDialog orgId={orgId} getToken={getToken} onClose={() => setPluginDlg(false)} onDone={() => { setPluginDlg(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Plugin install dialog ───────────────────────────────────────────────────
+
+const SAMPLE_MANIFEST = `{
+  "name": "weekly-report",
+  "version": "1.0.0",
+  "description": "Posts a weekly summary",
+  "capabilities": ["read:tasks", "notify"],
+  "tools": [{ "name": "generate", "description": "Build the report" }]
+}`
+
+function PluginDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
+  const [text, setText] = useState(SAMPLE_MANIFEST)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const install = async () => {
+    setBusy(true); setErr(null)
+    let manifest: any
+    try { manifest = JSON.parse(text) } catch { setErr('Manifest is not valid JSON'); setBusy(false); return }
+    try {
+      const res = await fetch(`${API}/api/orgs/${orgId}/plugins`, { method: 'POST', headers: { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ manifest }) })
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error((j.errors?.join('; ')) || j.error || 'Install failed') }
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={{ ...s.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={s.h2}>Install plugin</h2><button onClick={onClose} style={s.x}>✕</button>
+        </div>
+        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Paste a manifest. Capabilities are gated to an allow-list; unknown ones are rejected.</p>
+        <textarea style={{ ...s.inp, minHeight: 200, marginTop: 12, fontFamily: 'monospace', fontSize: 12 }} value={text} onChange={e => setText(e.target.value)} />
+        {err && <div style={s.errBox}>⚠ {err}</div>}
+        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={install}>{busy ? 'Installing…' : 'Install'}</button>
+      </div>
     </div>
   )
 }
