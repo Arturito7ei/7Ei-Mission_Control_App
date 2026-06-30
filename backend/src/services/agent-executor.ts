@@ -110,7 +110,16 @@ export async function executeAgentTask(opts: {
       console.warn('Drive context fetch failed (non-critical):', err)
     }
 
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents)
+    // Org chart context (MCA-PC A1): manager + direct reports for the reporting line.
+    const hierAgents = await db.select({ id: schema.agents.id, name: schema.agents.name, reportsTo: schema.agents.reportsTo })
+      .from(schema.agents).where(eq(schema.agents.orgId, agent.orgId))
+    const hierarchy = {
+      title: agent.title,
+      manager: agent.reportsTo ? (hierAgents.find(a => a.id === agent.reportsTo)?.name ?? null) : null,
+      reports: hierAgents.filter(a => a.reportsTo === agent.id).map(a => a.name),
+    }
+
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy)
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
@@ -210,6 +219,7 @@ export function buildSystemPrompt(
   ragContext?: string,
   driveContext?: string,
   availableAgents?: Array<{ name: string; role: string }>,
+  hierarchy?: { title?: string | null; manager?: string | null; reports?: string[] },
 ): string {
   const lines: string[] = []
 
@@ -231,6 +241,13 @@ export function buildSystemPrompt(
     lines.push(`You are ${agent.name}, a Silver Board Advisor.`, `Persona: ${agent.advisorPersona}`, '', 'Embody this persona fully. Speak with their voice, wisdom, and philosophy.', '')
   } else {
     lines.push(`You are ${agent.name}, ${agent.role} at 7Ei.`, '')
+  }
+  if (hierarchy && (hierarchy.title || hierarchy.manager || (hierarchy.reports && hierarchy.reports.length))) {
+    lines.push('=== YOUR PLACE IN THE ORG ===')
+    if (hierarchy.title)   lines.push(`Title: ${hierarchy.title}`)
+    if (hierarchy.manager) lines.push(`Reports to: ${hierarchy.manager}`)
+    if (hierarchy.reports && hierarchy.reports.length) lines.push(`Direct reports: ${hierarchy.reports.join(', ')}`)
+    lines.push('Escalate to your manager; delegate to your reports.', '=== END ORG ===', '')
   }
   if (agent.personality)      lines.push(`Communication style: ${agent.personality}`, '')
   if (agent.persona)          lines.push('\nYOUR PERSONALITY AND STYLE:\n' + agent.persona, '')

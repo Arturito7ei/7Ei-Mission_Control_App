@@ -23,6 +23,7 @@ type CAgent = {
 }
 type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string }
 type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, number>; generatedAt: string }
+type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -35,12 +36,19 @@ const COLS: { key: string; label: string }[] = [
 
 export default function CockpitPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [data, setData] = useState<Cockpit | null>(null)
+  const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
 
   const load = useCallback(async () => {
-    try { setData(await call<Cockpit>(`/api/orgs/${orgId}/cockpit`, await getToken())); setErr(null) }
-    catch (e: any) { setErr(e?.message ?? 'Failed to load') }
+    try {
+      const tok = await getToken()
+      const [c, oc] = await Promise.all([
+        call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
+        call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
+      ])
+      setData(c); setChart(oc.tree); setErr(null)
+    } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
   useEffect(() => { load() }, [load])
@@ -88,6 +96,13 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {data && data.agents.length === 0 && <p style={{ color: '#888' }}>No agents yet — add one.</p>}
       </div>
 
+      <h2 style={s.h2}>Org chart</h2>
+      <div style={s.panel}>
+        {(chart ?? []).map(n => <OrgNodeRow key={n.id} node={n} depth={0} />)}
+        {chart && chart.length === 0 && <p style={{ color: '#888' }}>No agents yet.</p>}
+        {!chart && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -109,6 +124,23 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
     </div>
+  )
+}
+
+// ─── Org chart (recursive reporting tree) ────────────────────────────────────
+
+function OrgNodeRow({ node, depth }: { node: OrgNode; depth: number }) {
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', paddingLeft: depth * 22 }}>
+        {depth > 0 && <span style={{ color: '#444' }}>└─</span>}
+        <span style={{ fontSize: 18 }}>{node.avatarEmoji || '🤖'}</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{node.name}</span>
+        <span style={{ fontSize: 11.5, color: '#888' }}>{node.title || node.role}</span>
+        {node.runtime && <span style={s.badge}>{RUNTIME_BADGE[node.runtime] ?? '⚙️'} {node.runtime}</span>}
+      </div>
+      {node.children.map(c => <OrgNodeRow key={c.id} node={c} depth={depth + 1} />)}
+    </>
   )
 }
 
@@ -221,6 +253,7 @@ const s: Record<string, React.CSSProperties> = {
   statCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 4 },
   statVal: { fontSize: 28, fontWeight: 800, lineHeight: 1 }, statLabel: { fontSize: 12, color: '#888' },
   agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
+  panel: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 16 },
   agentCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
   badge: { fontSize: 10, color: '#aaa', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, padding: '1px 6px', fontWeight: 600 },
   board: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 },

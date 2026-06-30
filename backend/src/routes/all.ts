@@ -10,6 +10,7 @@ import { streamLLM } from '../services/llm-router'
 import { buildAuthUrl, exchangeCode } from '../services/google-auth'
 import { generateAgentToken } from '../middleware/agent-token'
 import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
+import { buildOrgChart } from '../services/orgchart'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -411,6 +412,18 @@ export async function agentRoutes(app: FastifyInstance) {
         blocked: inCol('blocked'), done: inCol('done'),
       },
     }
+  })
+
+  // Org chart & hierarchy (MCA-PC A1): reporting tree built from agents.reportsTo.
+  app.get('/api/orgs/:orgId/orgchart', async (req) => {
+    const { orgId } = req.params as any
+    const rows = await db.select({
+      id: schema.agents.id, name: schema.agents.name, role: schema.agents.role,
+      title: schema.agents.title, reportsTo: schema.agents.reportsTo,
+      avatarEmoji: schema.agents.avatarEmoji, status: schema.agents.status,
+      runtime: schema.agents.runtime,
+    }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    return { tree: buildOrgChart(rows), count: rows.length }
   })
 }
 
