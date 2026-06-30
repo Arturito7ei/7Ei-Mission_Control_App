@@ -96,8 +96,17 @@ export const tasks = sqliteTable('tasks', {
   assignedTo: text('assigned_to'),
   dueAt: integer('due_at', { mode: 'timestamp' }),
   parentTaskId: text('parent_task_id'),
+  inboxState: text('inbox_state').default('none'),   // none|needs_attention|blocked|awaiting_review|done (MCA-PC A3)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
+export const inboxDismissals = sqliteTable('inbox_dismissals', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  userId: text('user_id').notNull(),
+  taskId: text('task_id').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const skills = sqliteTable('skills', {
