@@ -24,11 +24,17 @@ type CAgent = {
 type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string }
 type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, number>; generatedAt: string }
 type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
+type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
 const RUNTIME_BADGE: Record<string, string> = { internal: '🧠', openclaw: '📎', cursor: '⌨️', claude_code: '🤖', custom: '⚙️' }
 const PRI_C: Record<string, string> = { high: '#ef4444', medium: '#f59e0b', low: '#555' }
+const KIND_LABEL: Record<string, string> = { blocked: 'Blocked', failed: 'Failed', review: 'Review', attention: 'Attention' }
+const KIND_C: Record<string, { bg: string; fg: string }> = {
+  blocked: { bg: '#2a1414', fg: '#ff6b6b' }, failed: { bg: '#2a1414', fg: '#ff8080' },
+  review: { bg: '#211c08', fg: '#FFB800' }, attention: { bg: '#0d1a2a', fg: '#4aa8ff' },
+}
 const COLS: { key: string; label: string }[] = [
   { key: 'todo', label: 'To do' }, { key: 'in_progress', label: 'In progress' },
   { key: 'blocked', label: 'Blocked' }, { key: 'done', label: 'Done' },
@@ -37,6 +43,7 @@ const COLS: { key: string; label: string }[] = [
 export default function CockpitPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
+  const [inbox, setInbox] = useState<InboxItem[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
@@ -44,13 +51,19 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc] = await Promise.all([
+      const [c, oc, ib] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
+        call<{ items: InboxItem[] }>(`/api/orgs/${orgId}/inbox`, tok),
       ])
-      setData(c); setChart(oc.tree); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
+
+  const dismiss = async (taskId: string) => {
+    setInbox(x => x.filter(i => i.taskId !== taskId))
+    try { await call(`/api/orgs/${orgId}/inbox/dismiss`, await getToken(), { method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -60,7 +73,10 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   return (
     <div style={s.page}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h1 style={s.h1}>Mission Control</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h1 style={s.h1}>Mission Control</h1>
+          {inbox.length > 0 && <span style={{ ...s.tag, background: '#211c08', color: '#FFB800' }}>📥 {inbox.length}</span>}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} style={s.ghostBtn}>↻ Refresh</button>
           <button onClick={() => setHire(true)} style={s.ghostBtn}>✨ Hire with a prompt</button>
@@ -78,6 +94,22 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
           { l: 'Done', v: sum.done ?? 0, c: '#22c55e' },
         ].map(k => <div key={k.l} style={s.statCard}><span style={{ ...s.statVal, color: k.c }}>{k.v}</span><span style={s.statLabel}>{k.l}</span></div>)}
       </div>
+
+      {inbox.length > 0 && (<>
+        <h2 style={s.h2}>Inbox <span style={s.colCount}>{inbox.length}</span></h2>
+        <div style={s.panel}>
+          {inbox.map(i => (
+            <div key={i.taskId} style={s.inboxRow}>
+              <span style={{ ...s.tag, background: (KIND_C[i.kind] ?? KIND_C.attention).bg, color: (KIND_C[i.kind] ?? KIND_C.attention).fg }}>{KIND_LABEL[i.kind] ?? i.kind}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 560 }}>{i.title}</div>
+                <div style={{ fontSize: 11, color: '#888' }}>{i.agentEmoji} {i.agentName}</div>
+              </div>
+              <button style={s.ghostBtn} onClick={() => dismiss(i.taskId)}>Dismiss</button>
+            </div>
+          ))}
+        </div>
+      </>)}
 
       <h2 style={s.h2}>Agent fleet</h2>
       <div style={s.agentGrid}>
@@ -338,6 +370,7 @@ const s: Record<string, React.CSSProperties> = {
   statVal: { fontSize: 28, fontWeight: 800, lineHeight: 1 }, statLabel: { fontSize: 12, color: '#888' },
   agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
   panel: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 16 },
+  inboxRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #1a1a1a' },
   agentCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
   badge: { fontSize: 10, color: '#aaa', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, padding: '1px 6px', fontWeight: 600 },
   board: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 },

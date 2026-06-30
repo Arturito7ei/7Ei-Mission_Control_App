@@ -86,7 +86,11 @@ export async function agentApiRoutes(app: FastifyInstance) {
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task || task.agentId !== agent.id) return reply.code(404).send({ error: 'Task not found' })
     await db.update(schema.tasks)
-      .set({ output, status, kanbanColumn: status === 'done' ? 'done' : 'blocked', completedAt: new Date() })
+      .set({
+        output, status, kanbanColumn: status === 'done' ? 'done' : 'blocked',
+        inboxState: status === 'done' ? 'awaiting_review' : 'needs_attention',  // MCA-PC A3
+        completedAt: new Date(),
+      })
       .where(eq(schema.tasks.id, taskId))
     await db.insert(schema.messages).values({
       id: randomUUID(), agentId: agent.id, taskId, role: 'assistant', content: output, createdAt: new Date(),

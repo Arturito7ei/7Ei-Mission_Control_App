@@ -12,6 +12,7 @@ import { generateAgentToken } from '../middleware/agent-token'
 import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
+import { buildInbox } from '../services/inbox'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -475,6 +476,48 @@ export async function agentRoutes(app: FastifyInstance) {
 // ─── TASKS ───────────────────────────────────────────────────────────────────
 
 export async function taskRoutes(app: FastifyInstance) {
+  // ─── Unified inbox (MCA-PC A3) ──────────────────────────────────────────
+  const inboxCols = {
+    id: schema.tasks.id, title: schema.tasks.title, status: schema.tasks.status,
+    inboxState: schema.tasks.inboxState, priority: schema.tasks.priority,
+    agentId: schema.tasks.agentId, createdAt: schema.tasks.createdAt,
+  }
+  const dismissedSet = async (orgId: string, userId: string) => new Set(
+    (await db.select({ taskId: schema.inboxDismissals.taskId }).from(schema.inboxDismissals)
+      .where(and(eq(schema.inboxDismissals.orgId, orgId), eq(schema.inboxDismissals.userId, userId)))).map(d => d.taskId))
+
+  app.get('/api/orgs/:orgId/inbox', async (req) => {
+    const { orgId } = req.params as any
+    const userId = (req as any).userId ?? 'anon'
+    const [tasks, dismissed, agents] = await Promise.all([
+      db.select(inboxCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(300),
+      dismissedSet(orgId, userId),
+      db.select({ id: schema.agents.id, name: schema.agents.name, avatarEmoji: schema.agents.avatarEmoji }).from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+    ])
+    const amap = new Map(agents.map(a => [a.id, a]))
+    const items = buildInbox(tasks as any, dismissed).map(i => ({
+      ...i, agentName: amap.get(i.agentId)?.name ?? '—', agentEmoji: amap.get(i.agentId)?.avatarEmoji ?? '🤖',
+    }))
+    return { items, count: items.length }
+  })
+  app.get('/api/orgs/:orgId/inbox/count', async (req) => {
+    const { orgId } = req.params as any
+    const userId = (req as any).userId ?? 'anon'
+    const [tasks, dismissed] = await Promise.all([
+      db.select(inboxCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).limit(300),
+      dismissedSet(orgId, userId),
+    ])
+    return { count: buildInbox(tasks as any, dismissed).length }
+  })
+  app.post('/api/orgs/:orgId/inbox/dismiss', async (req, reply) => {
+    const { orgId } = req.params as any
+    const userId = (req as any).userId ?? 'anon'
+    const { taskId } = (req.body ?? {}) as any
+    if (!taskId) return reply.code(400).send({ error: 'taskId is required' })
+    await db.insert(schema.inboxDismissals).values({ id: randomUUID(), orgId, userId, taskId, createdAt: new Date() })
+    return { ok: true }
+  })
+
   app.get('/api/orgs/:orgId/tasks', async (req) => {
     const { orgId } = req.params as any
     const q = req.query as any

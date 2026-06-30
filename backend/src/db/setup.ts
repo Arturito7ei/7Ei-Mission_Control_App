@@ -56,6 +56,10 @@ export async function setupDatabase() {
     `ALTER TABLE agents ADD COLUMN reports_to TEXT`,
     `ALTER TABLE agents ADD COLUMN title TEXT`,
     `ALTER TABLE agents ADD COLUMN job_description TEXT`,
+    // MCA-PC A3: unified inbox
+    `ALTER TABLE tasks ADD COLUMN inbox_state TEXT DEFAULT 'none'`,
+    `CREATE TABLE IF NOT EXISTS inbox_dismissals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, user_id TEXT NOT NULL, task_id TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_inbox_dismissals ON inbox_dismissals(org_id, user_id)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
