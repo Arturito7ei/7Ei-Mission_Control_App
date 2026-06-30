@@ -10,6 +10,7 @@ import { sendPushNotification } from '../routes/notifications'
 import { fireWebhook } from './outbound-webhooks'
 import { ensureFreshToken, searchDriveFiles } from './google-auth'
 import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
+import { goalAncestry, formatGoalContext } from './goals'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -119,7 +120,17 @@ export async function executeAgentTask(opts: {
       reports: hierAgents.filter(a => a.reportsTo === agent.id).map(a => a.name),
     }
 
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy)
+    // Goal alignment (MCA-PC B1): inject the task's goal ancestry as the "why".
+    let goalContext = ''
+    try {
+      const taskRow = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+      if (taskRow?.goalId) {
+        const goalRows = await db.select().from(schema.goals).where(eq(schema.goals.orgId, agent.orgId))
+        goalContext = formatGoalContext(goalAncestry(goalRows as any, taskRow.goalId), org?.mission)
+      }
+    } catch { /* non-critical */ }
+
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext)
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
@@ -220,6 +231,7 @@ export function buildSystemPrompt(
   driveContext?: string,
   availableAgents?: Array<{ name: string; role: string }>,
   hierarchy?: { title?: string | null; manager?: string | null; reports?: string[] },
+  goalContext?: string,
 ): string {
   const lines: string[] = []
 
@@ -235,6 +247,9 @@ export function buildSystemPrompt(
   }
   if (driveContext) {
     lines.push(driveContext, '')
+  }
+  if (goalContext) {
+    lines.push(goalContext, '')
   }
 
   if (agent.agentType === 'advisor' && agent.advisorPersona) {

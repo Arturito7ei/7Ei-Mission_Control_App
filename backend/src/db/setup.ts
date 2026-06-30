@@ -60,6 +60,10 @@ export async function setupDatabase() {
     `ALTER TABLE tasks ADD COLUMN inbox_state TEXT DEFAULT 'none'`,
     `CREATE TABLE IF NOT EXISTS inbox_dismissals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, user_id TEXT NOT NULL, task_id TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_inbox_dismissals ON inbox_dismissals(org_id, user_id)`,
+    // MCA-PC B1: goals & goal alignment
+    `ALTER TABLE tasks ADD COLUMN goal_id TEXT`,
+    `CREATE TABLE IF NOT EXISTS goals (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, parent_goal_id TEXT, title TEXT NOT NULL, description TEXT, metric TEXT, status TEXT NOT NULL DEFAULT 'active', owner_agent_id TEXT, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_goals_org ON goals(org_id)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

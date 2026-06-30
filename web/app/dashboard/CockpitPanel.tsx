@@ -25,6 +25,7 @@ type CTask = { id: string; title: string; status: string; kanbanColumn: string; 
 type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, number>; generatedAt: string }
 type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
 type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
+type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -44,19 +45,22 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [inbox, setInbox] = useState<InboxItem[]>([])
+  const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
+  const [goalDlg, setGoalDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc, ib] = await Promise.all([
+      const [c, oc, ib, gl] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
         call<{ items: InboxItem[] }>(`/api/orgs/${orgId}/inbox`, tok),
+        call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setGoals(gl.tree); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -137,6 +141,16 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {!chart && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={s.h2}>Goals</h2>
+        <button style={s.ghostBtn} onClick={() => setGoalDlg(true)}>＋ Goal</button>
+      </div>
+      <div style={s.panel}>
+        {(goals ?? []).map(g => <GoalNodeRow key={g.id} node={g} depth={0} />)}
+        {goals && goals.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No goals yet — add the company’s top-level goal so every task traces to a “why”.</p>}
+        {!goals && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -158,6 +172,67 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
+      {goalDlg && <GoalDialog orgId={orgId} getToken={getToken} goals={goals ?? []} onClose={() => setGoalDlg(false)} onDone={() => { setGoalDlg(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Goals (tree + new-goal dialog) ──────────────────────────────────────────
+
+function GoalNodeRow({ node, depth }: { node: GoalNode; depth: number }) {
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', paddingLeft: depth * 22 }}>
+        {depth > 0 && <span style={{ color: '#444' }}>└─</span>}
+        <span>🎯</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{node.title}</span>
+        {node.metric && <span style={s.badge}>{node.metric}</span>}
+        {node.status && node.status !== 'active' && <span style={{ fontSize: 10, color: '#888' }}>{node.status}</span>}
+      </div>
+      {node.children.map(c => <GoalNodeRow key={c.id} node={c} depth={depth + 1} />)}
+    </>
+  )
+}
+
+function flattenGoals(nodes: GoalNode[], depth = 0, acc: { id: string; label: string }[] = []) {
+  for (const n of nodes) { acc.push({ id: n.id, label: `${'— '.repeat(depth)}${n.title}` }); flattenGoals(n.children, depth + 1, acc) }
+  return acc
+}
+
+function GoalDialog({ orgId, getToken, goals, onClose, onDone }: { orgId: string; getToken: Getter; goals: GoalNode[]; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ title: '', metric: '', description: '', parentGoalId: '' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const opts = flattenGoals(goals)
+  const save = async () => {
+    if (!f.title.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      await call(`/api/orgs/${orgId}/goals`, await getToken(), { method: 'POST', body: JSON.stringify({ title: f.title, metric: f.metric || undefined, description: f.description || undefined, parentGoalId: f.parentGoalId || undefined }) })
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={s.h2}>New goal</h2><button onClick={onClose} style={s.x}>✕</button>
+        </div>
+        <div style={s.form}>
+          <label style={s.lab}>Goal<input style={s.inp} autoFocus value={f.title} placeholder="Build the #1 AI note-taking app" onChange={e => setF({ ...f, title: e.target.value })} /></label>
+          <label style={s.lab}>Success metric<input style={s.inp} value={f.metric} placeholder="$1M MRR" onChange={e => setF({ ...f, metric: e.target.value })} /></label>
+          <label style={s.lab}>Parent goal
+            <select style={s.inp} value={f.parentGoalId} onChange={e => setF({ ...f, parentGoalId: e.target.value })}>
+              <option value="">— top level —</option>
+              {opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+          <label style={s.lab}>Description<textarea style={{ ...s.inp, minHeight: 56 }} value={f.description} onChange={e => setF({ ...f, description: e.target.value })} /></label>
+        </div>
+        {err && <div style={s.errBox}>⚠ {err}</div>}
+        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create goal'}</button>
+      </div>
     </div>
   )
 }
