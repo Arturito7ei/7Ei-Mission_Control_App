@@ -101,8 +101,21 @@ export const tasks = sqliteTable('tasks', {
   parentTaskId: text('parent_task_id'),
   inboxState: text('inbox_state').default('none'),   // none|needs_attention|blocked|awaiting_review|done (MCA-PC A3)
   goalId: text('goal_id'),                            // links task to a goal (MCA-PC B1)
+  workspaceId: text('workspace_id'),                  // execution workspace (MCA-PC D1)
+  branch: text('branch'),                             // operator branch
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
+export const workspaces = sqliteTable('workspaces', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  projectId: text('project_id'),
+  name: text('name').notNull(),
+  repoUrl: text('repo_url'),
+  baseBranch: text('base_branch').default('main'),
+  previewUrl: text('preview_url'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const secrets = sqliteTable('secrets', {

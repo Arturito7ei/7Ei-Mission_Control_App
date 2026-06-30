@@ -5,6 +5,9 @@ import { eq, and, inArray, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { agentAuth } from '../middleware/agent-token'
 import { decrypt, resolveSecretsForAgent } from '../services/secrets'
+import { workspaceRuntime } from '../services/workspaces'
+
+const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
 // ─── AGENT-FACING API (MCA-EXT) ────────────────────────────────────────────
 //
@@ -72,6 +75,17 @@ export async function agentApiRoutes(app: FastifyInstance) {
     const tasks = await db.select().from(schema.tasks)
       .where(and(eq(schema.tasks.agentId, agent.id), inArray(schema.tasks.status, states)))
       .orderBy(desc(schema.tasks.createdAt)).limit(50)
+    // MCA-PC D1: enrich tasks that target a workspace with runtime/branch info.
+    const wsIds = [...new Set(tasks.map(t => (t as any).workspaceId).filter(Boolean))] as string[]
+    if (wsIds.length) {
+      const wss = await db.select().from(schema.workspaces).where(inArray(schema.workspaces.id, wsIds))
+      const wmap = new Map(wss.map(w => [w.id, w]))
+      const prefix = RUNTIME_BRANCH[agent.runtime] ?? 'op'
+      for (const t of tasks as any[]) {
+        const w = t.workspaceId ? wmap.get(t.workspaceId) : null
+        if (w) t.workspace = workspaceRuntime(w as any, t.id, prefix)
+      }
+    }
     return { tasks }
   })
 

@@ -29,6 +29,7 @@ type GoalNode = { id: string; title: string; metric?: string | null; status?: st
 type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
 type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
 type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
+type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -52,25 +53,28 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [secrets, setSecrets] = useState<Secret[]>([])
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
   const [goalDlg, setGoalDlg] = useState(false)
   const [budgetDlg, setBudgetDlg] = useState(false)
   const [secretDlg, setSecretDlg] = useState(false)
+  const [wsDlg, setWsDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc, ib, gl, bd, se] = await Promise.all([
+      const [c, oc, ib, gl, bd, se, ws] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
         call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
         call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
         call<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, tok),
         call<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, tok),
+        call<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -97,6 +101,10 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const delSecret = async (id: string) => {
     setSecrets(x => x.filter(s => s.id !== id))
     try { await call(`/api/secrets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+  }
+  const delWorkspace = async (id: string) => {
+    setWorkspaces(x => x.filter(w => w.id !== id))
+    try { await call(`/api/workspaces/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
   }
 
   useEffect(() => { load() }, [load])
@@ -233,6 +241,25 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {secrets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No secrets — store API keys here; runtimes fetch them scoped, never via prompts.</p>}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={s.h2}>Workspaces</h2>
+        <button style={s.ghostBtn} onClick={() => setWsDlg(true)}>＋ Workspace</button>
+      </div>
+      <div style={s.panel}>
+        {workspaces.map(w => (
+          <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
+            <span>🗂️</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 560 }}>{w.name} <span style={s.badge}>{w.baseBranch || 'main'}</span></div>
+              {w.repoUrl && <div style={{ fontSize: 11, color: '#888' }}>{w.repoUrl}</div>}
+            </div>
+            {w.previewUrl && <a href={w.previewUrl} target="_blank" rel="noreferrer" style={{ ...s.badge, color: '#4aa8ff' }}>preview ↗</a>}
+            <button style={s.iconBtn} onClick={() => delWorkspace(w.id)}>✕</button>
+          </div>
+        ))}
+        {workspaces.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No workspaces — define a repo; runtimes get an operator branch + worktree per task.</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -257,6 +284,44 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       {goalDlg && <GoalDialog orgId={orgId} getToken={getToken} goals={goals ?? []} onClose={() => setGoalDlg(false)} onDone={() => { setGoalDlg(false); load() }} />}
       {budgetDlg && <BudgetDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setBudgetDlg(false)} onDone={() => { setBudgetDlg(false); load() }} />}
       {secretDlg && <SecretDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setSecretDlg(false)} onDone={() => { setSecretDlg(false); load() }} />}
+      {wsDlg && <WorkspaceDialog orgId={orgId} getToken={getToken} onClose={() => setWsDlg(false)} onDone={() => { setWsDlg(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Workspace dialog ────────────────────────────────────────────────────────
+
+function WorkspaceDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ name: '', repoUrl: '', baseBranch: 'main', previewUrl: '' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const save = async () => {
+    if (!f.name.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      await call(`/api/orgs/${orgId}/workspaces`, await getToken(), { method: 'POST', body: JSON.stringify({ name: f.name, repoUrl: f.repoUrl || undefined, baseBranch: f.baseBranch || 'main', previewUrl: f.previewUrl || undefined }) })
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={s.h2}>New workspace</h2><button onClick={onClose} style={s.x}>✕</button>
+        </div>
+        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Runtimes create a git worktree + operator branch per task in this workspace.</p>
+        <div style={s.form}>
+          <label style={s.lab}>Name<input style={s.inp} autoFocus value={f.name} placeholder="mission-control-app" onChange={e => setF({ ...f, name: e.target.value })} /></label>
+          <label style={s.lab}>Repo URL<input style={s.inp} value={f.repoUrl} placeholder="git@github.com:Arturito7ei/…" onChange={e => setF({ ...f, repoUrl: e.target.value })} /></label>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ ...s.lab, flex: 1 }}>Base branch<input style={s.inp} value={f.baseBranch} onChange={e => setF({ ...f, baseBranch: e.target.value })} /></label>
+            <label style={{ ...s.lab, flex: 1 }}>Preview URL<input style={s.inp} value={f.previewUrl} placeholder="https://…" onChange={e => setF({ ...f, previewUrl: e.target.value })} /></label>
+          </div>
+        </div>
+        {err && <div style={s.errBox}>⚠ {err}</div>}
+        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create workspace'}</button>
+      </div>
     </div>
   )
 }
