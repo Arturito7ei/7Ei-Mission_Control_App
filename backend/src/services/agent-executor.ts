@@ -12,6 +12,7 @@ import { ensureFreshToken, searchDriveFiles } from './google-auth'
 import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 import { goalAncestry, formatGoalContext } from './goals'
 import { canAgentRun } from './governance'
+import { enforceAgentBudget } from './budget'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -35,6 +36,17 @@ export async function executeAgentTask(opts: {
     await db.update(schema.tasks).set({ status: agent.status === 'terminated' ? 'failed' : 'pending' }).where(eq(schema.tasks.id, taskId))
     const r: ExecuteResult = { output: `Agent is ${agent.status}; task not executed.`, tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'governance' }
     onDone?.(r); return r
+  }
+
+  // MCA-PC C2: scoped budget hard-stop — pause the agent and block on breach.
+  {
+    const t0 = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    const budget = await enforceAgentBudget(agent.orgId, agent.id, { projectId: t0?.projectId, goalId: t0?.goalId })
+    if (budget.blocked) {
+      await db.update(schema.tasks).set({ status: 'blocked', inboxState: 'needs_attention', output: budget.reason } as any).where(eq(schema.tasks.id, taskId))
+      const r: ExecuteResult = { output: budget.reason ?? 'Budget hard-stop.', tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'budget' }
+      onDone?.(r); return r
+    }
   }
 
   // MCA-EXT: external / bring-your-own runtimes are not driven by the LLM here.

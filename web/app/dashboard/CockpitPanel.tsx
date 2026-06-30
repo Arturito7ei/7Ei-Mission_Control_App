@@ -27,6 +27,7 @@ type OrgNode = { id: string; name: string; role: string; title?: string | null; 
 type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
 type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
 type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
+type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -48,21 +49,24 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
+  const [budgets, setBudgets] = useState<Budget[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
   const [goalDlg, setGoalDlg] = useState(false)
+  const [budgetDlg, setBudgetDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
       const tok = await getToken()
-      const [c, oc, ib, gl] = await Promise.all([
+      const [c, oc, ib, gl, bd] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
         call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
         call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
+        call<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -81,6 +85,10 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const sweep = async () => {
     try { await call(`/api/orgs/${orgId}/heartbeat/sweep`, await getToken(), { method: 'POST' }) } catch {}
     load()
+  }
+  const delBudget = async (id: string) => {
+    setBudgets(x => x.filter(b => b.id !== id))
+    try { await call(`/api/budgets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
   }
 
   useEffect(() => { load() }, [load])
@@ -182,6 +190,25 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         {!goals && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h2 style={s.h2}>Budgets</h2>
+        <button style={s.ghostBtn} onClick={() => setBudgetDlg(true)}>＋ Budget</button>
+      </div>
+      <div style={s.panel}>
+        {budgets.map(b => {
+          const c = b.state === 'breach' ? '#ff6b6b' : b.state === 'warn' ? '#FFB800' : '#22c55e'
+          return (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
+              <div style={{ minWidth: 130, fontSize: 12.5 }}>{b.scope}{b.scopeId ? ` · ${b.scopeId.slice(0, 6)}` : ''}</div>
+              <div style={{ flex: 1, height: 8, background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}><div style={{ height: '100%', width: `${Math.min(b.pct * 100, 100)}%`, background: c }} /></div>
+              <div style={{ minWidth: 120, textAlign: 'right', fontSize: 12, color: c }}>${b.spend.toFixed(2)} / ${b.limitUsd.toFixed(0)}</div>
+              <button style={s.iconBtn} onClick={() => delBudget(b.id)}>✕</button>
+            </div>
+          )
+        })}
+        {budgets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No budgets — add a hard-stop to cap spend by company, agent, project, or goal.</p>}
+      </div>
+
       <h2 style={s.h2}>Task board</h2>
       <div style={s.board}>
         {COLS.map(col => {
@@ -204,6 +231,63 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
       {goalDlg && <GoalDialog orgId={orgId} getToken={getToken} goals={goals ?? []} onClose={() => setGoalDlg(false)} onDone={() => { setGoalDlg(false); load() }} />}
+      {budgetDlg && <BudgetDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setBudgetDlg(false)} onDone={() => { setBudgetDlg(false); load() }} />}
+    </div>
+  )
+}
+
+// ─── Budget policy dialog ────────────────────────────────────────────────────
+
+function BudgetDialog({ orgId, getToken, agents, onClose, onDone }: { orgId: string; getToken: Getter; agents: CAgent[]; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({ scope: 'company', scopeId: '', limitUsd: '', warnPct: '0.8', hardStop: true })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const save = async () => {
+    if (!f.limitUsd) return
+    setBusy(true); setErr(null)
+    try {
+      await call(`/api/orgs/${orgId}/budgets`, await getToken(), { method: 'POST', body: JSON.stringify({ scope: f.scope, scopeId: f.scope === 'company' ? null : (f.scopeId || null), limitUsd: Number(f.limitUsd), warnPct: Number(f.warnPct), hardStop: f.hardStop }) })
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(false)
+  }
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={s.h2}>New budget</h2><button onClick={onClose} style={s.x}>✕</button>
+        </div>
+        <div style={s.form}>
+          <label style={s.lab}>Scope
+            <select style={s.inp} value={f.scope} onChange={e => setF({ ...f, scope: e.target.value, scopeId: '' })}>
+              <option value="company">Company (all spend)</option>
+              <option value="agent">Agent</option>
+              <option value="project">Project</option>
+              <option value="goal">Goal</option>
+            </select>
+          </label>
+          {f.scope === 'agent' && (
+            <label style={s.lab}>Agent
+              <select style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })}>
+                <option value="">— pick —</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          )}
+          {(f.scope === 'project' || f.scope === 'goal') && (
+            <label style={s.lab}>{f.scope === 'project' ? 'Project' : 'Goal'} id<input style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })} /></label>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ ...s.lab, flex: 1 }}>Limit (USD)<input style={s.inp} type="number" value={f.limitUsd} placeholder="100" onChange={e => setF({ ...f, limitUsd: e.target.value })} /></label>
+            <label style={{ ...s.lab, width: 110 }}>Warn at<input style={s.inp} type="number" step="0.05" value={f.warnPct} onChange={e => setF({ ...f, warnPct: e.target.value })} /></label>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#aaa' }}>
+            <input type="checkbox" checked={f.hardStop} onChange={e => setF({ ...f, hardStop: e.target.checked })} /> Hard-stop (pause agents on breach)
+          </label>
+        </div>
+        {err && <div style={s.errBox}>⚠ {err}</div>}
+        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create budget'}</button>
+      </div>
     </div>
   )
 }

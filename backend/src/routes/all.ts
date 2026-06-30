@@ -15,6 +15,7 @@ import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../servic
 import { buildInbox } from '../services/inbox'
 import { buildGoalTree } from '../services/goals'
 import { runHeartbeatSweep } from '../services/heartbeat-engine'
+import { spendForScope, evaluatePolicy } from '../services/budget'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -577,6 +578,33 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/heartbeat/sweep', async (req) => {
     const { orgId } = req.params as any
     return { result: await runHeartbeatSweep(orgId) }
+  })
+
+  // ─── Scoped budget policies (MCA-PC C2) ─────────────────────────────────
+  app.get('/api/orgs/:orgId/budgets', async (req) => {
+    const { orgId } = req.params as any
+    const [policies, tasks] = await Promise.all([
+      db.select().from(schema.budgetPolicies).where(eq(schema.budgetPolicies.orgId, orgId)),
+      db.select({ costUsd: schema.tasks.costUsd, agentId: schema.tasks.agentId, projectId: schema.tasks.projectId, goalId: schema.tasks.goalId }).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)),
+    ])
+    const budgets = policies.map(p => {
+      const spend = spendForScope(tasks as any, p.scope as any, p.scope === 'company' ? null : p.scopeId)
+      const ev = evaluatePolicy(p as any, spend)
+      return { ...p, spend, state: ev.state, pct: ev.pct }
+    })
+    return { budgets }
+  })
+  app.post('/api/orgs/:orgId/budgets', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.scope || b.limitUsd == null) return reply.code(400).send({ error: 'scope and limitUsd required' })
+    const policy = { id: randomUUID(), orgId, scope: b.scope, scopeId: b.scopeId ?? null, limitUsd: Number(b.limitUsd), warnPct: b.warnPct ?? 0.8, hardStop: b.hardStop ?? true, createdAt: new Date() }
+    await db.insert(schema.budgetPolicies).values(policy as any)
+    reply.code(201); return { policy }
+  })
+  app.delete('/api/budgets/:id', async (req, reply) => {
+    await db.delete(schema.budgetPolicies).where(eq(schema.budgetPolicies.id, (req.params as any).id))
+    reply.code(204)
   })
   app.post('/api/approvals/:id/decide', async (req, reply) => {
     const { id } = req.params as any
