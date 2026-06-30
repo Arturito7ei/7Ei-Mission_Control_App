@@ -186,6 +186,10 @@ export const scheduledTasks = sqliteTable('scheduled_tasks', {
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
   nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
+  // Routines+ (MCA-PC C3): trigger sources beyond cron
+  triggerType: text('trigger_type').default('cron'),  // cron | webhook | api
+  webhookToken: text('webhook_token'),               // for webhook/api triggers
+  lastTriggeredAt: integer('last_triggered_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

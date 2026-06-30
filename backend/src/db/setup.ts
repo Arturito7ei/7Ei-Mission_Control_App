@@ -70,6 +70,10 @@ export async function setupDatabase() {
     // MCA-PC B2: approvals & governance
     `CREATE TABLE IF NOT EXISTS approval_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending', requested_by_agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_approvals_org ON approval_requests(org_id, status)`,
+    // MCA-PC C3: routines+ triggers
+    `ALTER TABLE scheduled_tasks ADD COLUMN trigger_type TEXT DEFAULT 'cron'`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN webhook_token TEXT`,
+    `ALTER TABLE scheduled_tasks ADD COLUMN last_triggered_at INTEGER`,
     // MCA-PC C2: scoped budget policies
     `CREATE TABLE IF NOT EXISTS budget_policies (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT, limit_usd REAL NOT NULL, warn_pct REAL DEFAULT 0.8, hard_stop INTEGER DEFAULT 1, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_budget_policies_org ON budget_policies(org_id)`,

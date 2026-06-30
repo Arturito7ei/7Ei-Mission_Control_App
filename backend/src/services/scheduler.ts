@@ -51,39 +51,36 @@ async function runDueTasks() {
 }
 
 async function runScheduledTask(scheduled: any, triggerTime: Date) {
-  const taskId = randomUUID()
+  await fireRoutine(scheduled, triggerTime)
+}
 
-  // Create a task record
+// MCA-PC C3: fire a routine from any trigger (cron, webhook, or API). Creates a
+// tracked task, executes it, notifies, and advances the schedule (cron only).
+export async function fireRoutine(routine: any, triggerTime: Date): Promise<string> {
+  const taskId = randomUUID()
+  const label = routine.triggerType && routine.triggerType !== 'cron' ? 'Routine' : 'Scheduled'
+
   await db.insert(schema.tasks).values({
-    id: taskId,
-    orgId: scheduled.orgId,
-    agentId: scheduled.agentId,
-    title: `[Scheduled] ${scheduled.title}`,
-    input: scheduled.input ?? scheduled.title,
-    status: 'pending',
-    priority: 'medium',
-    createdAt: new Date(),
+    id: taskId, orgId: routine.orgId, agentId: routine.agentId,
+    title: `[${label}] ${routine.title}`, input: routine.input ?? routine.title,
+    status: 'pending', priority: 'medium', createdAt: new Date(),
   })
 
-  // Execute
   try {
-    await executeAgentTask({ agentId: scheduled.agentId, taskId, input: scheduled.input ?? scheduled.title })
+    await executeAgentTask({ agentId: routine.agentId, taskId, input: routine.input ?? routine.title })
   } catch (err) {
-    console.error(`Scheduled execution failed for ${scheduled.id}:`, err)
+    console.error(`Routine execution failed for ${routine.id}:`, err)
   }
 
-  // Notify org owner
-  const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, scheduled.orgId) })
+  const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, routine.orgId) })
   if (org?.ownerId) {
-    sendPushNotification(org.ownerId, `Scheduled task ran: ${scheduled.title}`, `Agent completed the scheduled task`, { taskId, scheduledId: scheduled.id }).catch(() => {})
+    sendPushNotification(org.ownerId, `Routine ran: ${routine.title}`, 'Agent completed the routine', { taskId, routineId: routine.id }).catch(() => {})
   }
 
-  // Update last/next run
-  const nextRun = calcNextRun(scheduled.cronExpression)
-  await db.update(schema.scheduledTasks).set({
-    lastRunAt: triggerTime,
-    nextRunAt: nextRun,
-  }).where(eq(schema.scheduledTasks.id, scheduled.id))
+  const update: any = { lastRunAt: triggerTime, lastTriggeredAt: triggerTime }
+  if (!routine.triggerType || routine.triggerType === 'cron') update.nextRunAt = calcNextRun(routine.cronExpression)
+  await db.update(schema.scheduledTasks).set(update).where(eq(schema.scheduledTasks.id, routine.id))
+  return taskId
 }
 
 // ─ Minimal cron parser ───────────────────────────────────────────────────────
