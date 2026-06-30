@@ -26,6 +26,7 @@ type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, numbe
 type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
 type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
 type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
+type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
 
 const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
 const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
@@ -45,6 +46,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [inbox, setInbox] = useState<InboxItem[]>([])
+  const [approvals, setApprovals] = useState<Approval[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
@@ -57,16 +59,24 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       const [c, oc, ib, gl] = await Promise.all([
         call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
         call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
-        call<{ items: InboxItem[] }>(`/api/orgs/${orgId}/inbox`, tok),
+        call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
         call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setGoals(gl.tree); setErr(null)
+      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
   const dismiss = async (taskId: string) => {
     setInbox(x => x.filter(i => i.taskId !== taskId))
     try { await call(`/api/orgs/${orgId}/inbox/dismiss`, await getToken(), { method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
+  }
+  const decide = async (id: string, decision: 'approved' | 'rejected') => {
+    setApprovals(x => x.filter(a => a.id !== id))
+    try { await call(`/api/approvals/${id}/decide`, await getToken(), { method: 'POST', body: JSON.stringify({ decision }) }) } catch {}
+  }
+  const agentControl = async (id: string, verb: 'pause' | 'resume' | 'terminate') => {
+    try { await call(`/api/agents/${id}/${verb}`, await getToken(), { method: 'POST' }) } catch {}
+    load()
   }
 
   useEffect(() => { load() }, [load])
@@ -79,7 +89,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <h1 style={s.h1}>Mission Control</h1>
-          {inbox.length > 0 && <span style={{ ...s.tag, background: '#211c08', color: '#FFB800' }}>📥 {inbox.length}</span>}
+          {(inbox.length + approvals.length) > 0 && <span style={{ ...s.tag, background: '#211c08', color: '#FFB800' }}>📥 {inbox.length + approvals.length}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={load} style={s.ghostBtn}>↻ Refresh</button>
@@ -99,9 +109,17 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         ].map(k => <div key={k.l} style={s.statCard}><span style={{ ...s.statVal, color: k.c }}>{k.v}</span><span style={s.statLabel}>{k.l}</span></div>)}
       </div>
 
-      {inbox.length > 0 && (<>
-        <h2 style={s.h2}>Inbox <span style={s.colCount}>{inbox.length}</span></h2>
+      {(inbox.length + approvals.length) > 0 && (<>
+        <h2 style={s.h2}>Inbox <span style={s.colCount}>{inbox.length + approvals.length}</span></h2>
         <div style={s.panel}>
+          {approvals.map(a => (
+            <div key={a.id} style={s.inboxRow}>
+              <span style={{ ...s.tag, background: '#1a0f2a', color: '#a96bff' }}>Approval · {a.type}</span>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 560 }}>{a.summary}</div></div>
+              <button style={{ ...s.ghostBtn, color: '#22c55e' }} onClick={() => decide(a.id, 'approved')}>Approve</button>
+              <button style={{ ...s.ghostBtn, color: '#ff6b6b' }} onClick={() => decide(a.id, 'rejected')}>Reject</button>
+            </div>
+          ))}
           {inbox.map(i => (
             <div key={i.taskId} style={s.inboxRow}>
               <span style={{ ...s.tag, background: (KIND_C[i.kind] ?? KIND_C.attention).bg, color: (KIND_C[i.kind] ?? KIND_C.attention).fg }}>{KIND_LABEL[i.kind] ?? i.kind}</span>
@@ -128,7 +146,15 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
               <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{a.role}</div>
               <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{a.llmProvider} · {a.llmModel}</div>
             </div>
-            <span title={`heartbeat: ${a.heartbeat}`} style={{ width: 10, height: 10, borderRadius: 5, background: HB[a.heartbeat] ?? '#555', flexShrink: 0 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+              <span title={`heartbeat: ${a.heartbeat}`} style={{ width: 10, height: 10, borderRadius: 5, background: a.status === 'terminated' ? '#444' : (HB[a.heartbeat] ?? '#555') }} />
+              <div style={{ display: 'flex', gap: 4 }}>
+                {a.status === 'paused'
+                  ? <button title="Resume" style={s.iconBtn} onClick={() => agentControl(a.id, 'resume')}>▶</button>
+                  : <button title="Pause" style={s.iconBtn} onClick={() => agentControl(a.id, 'pause')}>⏸</button>}
+                <button title="Terminate" style={s.iconBtn} onClick={() => agentControl(a.id, 'terminate')}>⏹</button>
+              </div>
+            </div>
           </div>
         ))}
         {data && data.agents.length === 0 && <p style={{ color: '#888' }}>No agents yet — add one.</p>}
@@ -446,6 +472,7 @@ const s: Record<string, React.CSSProperties> = {
   agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
   panel: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 16 },
   inboxRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #1a1a1a' },
+  iconBtn: { background: 'transparent', border: '1px solid #333', color: '#888', borderRadius: 6, padding: '1px 6px', fontSize: 11, cursor: 'pointer', lineHeight: 1.4 },
   agentCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
   badge: { fontSize: 10, color: '#aaa', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, padding: '1px 6px', fontWeight: 600 },
   board: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 },
