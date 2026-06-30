@@ -105,6 +105,16 @@ export const tasks = sqliteTable('tasks', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
 
+export const secrets = sqliteTable('secrets', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  scope: text('scope').notNull(),                     // company | agent
+  scopeId: text('scope_id'),                          // agent id for agent scope
+  key: text('key').notNull(),
+  valueEncrypted: text('value_encrypted').notNull(),  // AES-256-GCM
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const budgetPolicies = sqliteTable('budget_policies', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
