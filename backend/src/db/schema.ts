@@ -105,6 +105,17 @@ export const tasks = sqliteTable('tasks', {
   completedAt: integer('completed_at', { mode: 'timestamp' }),
 })
 
+export const budgetPolicies = sqliteTable('budget_policies', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  scope: text('scope').notNull(),                     // company | agent | project | goal
+  scopeId: text('scope_id'),                          // null for company scope
+  limitUsd: real('limit_usd').notNull(),
+  warnPct: real('warn_pct').default(0.8),
+  hardStop: integer('hard_stop', { mode: 'boolean' }).default(true),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const approvalRequests = sqliteTable('approval_requests', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
