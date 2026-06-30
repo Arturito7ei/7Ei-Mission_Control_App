@@ -2,7 +2,8 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { calcNextRun } from '../services/scheduler'
+import { calcNextRun, fireRoutine } from '../services/scheduler'
+import { makeWebhookToken, normalizeTriggerType, cronSentinel } from '../services/routines'
 
 const COMMON_CRONS = [
   { label: 'Every hour',     cron: '0 * * * *' },
@@ -28,19 +29,23 @@ export async function scheduledRoutes(app: FastifyInstance) {
   // Create scheduled task
   app.post('/api/orgs/:orgId/scheduled', async (req, reply) => {
     const { orgId } = req.params as any
-    const { agentId, title, input, cronExpression } = req.body as any
-    if (!agentId || !title || !cronExpression) return reply.code(400).send({ error: 'agentId, title, cronExpression required' })
+    const b = req.body as any
+    const { agentId, title, input } = b
+    const triggerType = normalizeTriggerType(b.triggerType)
+    if (!agentId || !title) return reply.code(400).send({ error: 'agentId, title required' })
+    if (triggerType === 'cron' && !b.cronExpression) return reply.code(400).send({ error: 'cronExpression required for cron routines' })
 
-    const nextRunAt = calcNextRun(cronExpression)
+    const cronExpression = triggerType === 'cron' ? b.cronExpression : cronSentinel(triggerType)
+    const nextRunAt = triggerType === 'cron' ? calcNextRun(cronExpression) : null
+    const webhookToken = triggerType === 'cron' ? null : makeWebhookToken()
     const task = {
-      id: randomUUID(), orgId, agentId, title,
-      input: input ?? title, cronExpression,
-      enabled: true, lastRunAt: null, nextRunAt,
-      createdAt: new Date(),
+      id: randomUUID(), orgId, agentId, title, input: input ?? title, cronExpression,
+      enabled: true, lastRunAt: null, nextRunAt, triggerType, webhookToken,
+      lastTriggeredAt: null, createdAt: new Date(),
     }
-    await db.insert(schema.scheduledTasks).values(task)
+    await db.insert(schema.scheduledTasks).values(task as any)
     reply.code(201)
-    return { task: { ...task, nextRunAt: nextRunAt.toISOString() } }
+    return { task: { ...task, nextRunAt: nextRunAt?.toISOString() ?? null }, triggerUrl: webhookToken ? `/api/routines/${webhookToken}/trigger` : undefined }
   })
 
   // Update (enable/disable, change cron)
@@ -74,5 +79,17 @@ export async function scheduledRoutes(app: FastifyInstance) {
       const next = calcNextRun(cronExpression)
       return { next: next.toISOString(), cronExpression }
     } catch { return { error: 'Invalid cron expression' } }
+  })
+}
+
+// Public webhook/API trigger (MCA-PC C3) — fires a routine by its token, no Clerk
+// session. External systems POST here to run a routine on demand.
+export async function routineTriggerRoutes(app: FastifyInstance) {
+  app.post('/api/routines/:token/trigger', async (req, reply) => {
+    const { token } = req.params as any
+    const routine = await db.query.scheduledTasks.findFirst({ where: eq(schema.scheduledTasks.webhookToken, token) })
+    if (!routine || !routine.enabled) return reply.code(404).send({ error: 'Routine not found' })
+    const taskId = await fireRoutine(routine, new Date())
+    return { ok: true, taskId }
   })
 }
