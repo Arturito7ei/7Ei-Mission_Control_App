@@ -97,8 +97,21 @@ export const tasks = sqliteTable('tasks', {
   dueAt: integer('due_at', { mode: 'timestamp' }),
   parentTaskId: text('parent_task_id'),
   inboxState: text('inbox_state').default('none'),   // none|needs_attention|blocked|awaiting_review|done (MCA-PC A3)
+  goalId: text('goal_id'),                            // links task to a goal (MCA-PC B1)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
+export const goals = sqliteTable('goals', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  parentGoalId: text('parent_goal_id'),
+  title: text('title').notNull(),
+  description: text('description'),
+  metric: text('metric'),                             // success metric, e.g. "$1M MRR"
+  status: text('status').notNull().default('active'), // active|done|paused|dropped
+  ownerAgentId: text('owner_agent_id'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const inboxDismissals = sqliteTable('inbox_dismissals', {

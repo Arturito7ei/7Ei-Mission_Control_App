@@ -13,6 +13,7 @@ import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
 import { buildInbox } from '../services/inbox'
+import { buildGoalTree } from '../services/goals'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -516,6 +517,34 @@ export async function taskRoutes(app: FastifyInstance) {
     if (!taskId) return reply.code(400).send({ error: 'taskId is required' })
     await db.insert(schema.inboxDismissals).values({ id: randomUUID(), orgId, userId, taskId, createdAt: new Date() })
     return { ok: true }
+  })
+
+  // ─── Goals & goal alignment (MCA-PC B1) ─────────────────────────────────
+  app.get('/api/orgs/:orgId/goals', async (req) => {
+    const { orgId } = req.params as any
+    const rows = await db.select().from(schema.goals).where(eq(schema.goals.orgId, orgId))
+    return { tree: buildGoalTree(rows as any), goals: rows }
+  })
+  app.post('/api/orgs/:orgId/goals', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.title) return reply.code(400).send({ error: 'title is required' })
+    const goal = {
+      id: randomUUID(), orgId, parentGoalId: b.parentGoalId ?? null, title: b.title,
+      description: b.description ?? null, metric: b.metric ?? null,
+      status: b.status ?? 'active', ownerAgentId: b.ownerAgentId ?? null, createdAt: new Date(),
+    }
+    await db.insert(schema.goals).values(goal)
+    reply.code(201); return { goal }
+  })
+  app.patch('/api/goals/:goalId', async (req) => {
+    const { goalId } = req.params as any
+    await db.update(schema.goals).set(req.body as any).where(eq(schema.goals.id, goalId))
+    return { goal: await db.query.goals.findFirst({ where: eq(schema.goals.id, goalId) }) }
+  })
+  app.delete('/api/goals/:goalId', async (req, reply) => {
+    await db.delete(schema.goals).where(eq(schema.goals.id, (req.params as any).goalId))
+    reply.code(204)
   })
 
   app.get('/api/orgs/:orgId/tasks', async (req) => {
