@@ -15,6 +15,7 @@ import multipart from '@fastify/multipart'
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from '../routes/all'
 import { knowledgeRoutes } from '../routes/knowledge'
 import { commsRoutes } from '../routes/comms'
+import { connectorRoutes } from '../routes/connectors'
 import { notificationRoutes } from '../routes/notifications'
 import { jiraRoutes } from '../routes/jira'
 import { jiraWebhookRoutes } from '../routes/jira-webhook'
@@ -43,6 +44,7 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(multiOrgRoutes)
     await secured.register(scheduledRoutes)
     await secured.register(credentialRoutes)
+    await secured.register(connectorRoutes)
   })
 
   // Public / externally-called route groups.

@@ -10,6 +10,7 @@ import { dbClient, db, schema } from './db/client'
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from './routes/all'
 import { knowledgeRoutes } from './routes/knowledge'
 import { commsRoutes } from './routes/comms'
+import { connectorRoutes } from './routes/connectors'
 import { notificationRoutes } from './routes/notifications'
 import { jiraRoutes } from './routes/jira'
 import { jiraWebhookRoutes } from './routes/jira-webhook'
@@ -70,6 +71,7 @@ async function start() {
     await secured.register(multiOrgRoutes)
     await secured.register(scheduledRoutes)
     await secured.register(credentialRoutes)
+    await secured.register(connectorRoutes)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
