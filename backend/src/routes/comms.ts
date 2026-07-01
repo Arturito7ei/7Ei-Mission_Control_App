@@ -21,8 +21,10 @@ const telegramWebhookSecrets = new Map<string, string>()
 
 export async function commsRoutes(app: FastifyInstance) {
 
-  // ── Get inbox (unified feed) ─────────────────────────────────────────────
-  app.get('/api/orgs/:orgId/inbox', async (req) => {
+  // ── Get comms inbox (unified message feed) ───────────────────────────────
+  // NOTE: namespaced under /comms to avoid colliding with the cockpit inbox
+  // (GET /api/orgs/:orgId/inbox in routes/all.ts). Declaring both crashed boot.
+  app.get('/api/orgs/:orgId/comms/inbox', async (req) => {
     const { orgId } = req.params as any
     const { channel, limit = '50' } = req.query as any
 
@@ -45,7 +47,7 @@ export async function commsRoutes(app: FastifyInstance) {
   })
 
   // ── Send message via agent ───────────────────────────────────────────────
-  app.post('/api/orgs/:orgId/inbox/send', async (req, reply) => {
+  app.post('/api/orgs/:orgId/comms/inbox/send', async (req, reply) => {
     const { orgId } = req.params as any
     const body = SendMessageSchema.parse(req.body)
 
