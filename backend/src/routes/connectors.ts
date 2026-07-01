@@ -6,6 +6,7 @@ import { encrypt, decrypt } from '../services/secrets'
 import { buildAuthUrl } from '../services/google-auth'
 import { getJiraCfg, clearJiraCfg } from './jira'
 import { CONNECTORS, getConnector, tokenTestRequest, parseAccount, buildStatus } from '../services/connectors'
+import { parseVaultConfig, vaultList } from '../services/vault-connector'
 
 // ─── Connectors tab (unified connection manager) ────────────────────────────
 // Token/basic credentials → D4 secret store (AES-256-GCM). Google trio →
@@ -37,11 +38,13 @@ export async function connectorRoutes(app: FastifyInstance) {
   // Status for all six connectors.
   app.get('/api/orgs/:orgId/connectors', async (req) => {
     const { orgId } = req.params as any
-    const [ghTok, ghAcc, hfTok, hfAcc, jcfg, gConn] = await Promise.all([
+    const [ghTok, ghAcc, hfTok, hfAcc, jcfg, gConn, vaultTok, vaultRaw] = await Promise.all([
       getSecret(orgId, 'GITHUB_TOKEN'), getSecret(orgId, 'GITHUB_ACCOUNT'),
       getSecret(orgId, 'HUGGINGFACE_TOKEN'), getSecret(orgId, 'HUGGINGFACE_ACCOUNT'),
       getJiraCfg(orgId), googleConnected(orgId),
+      getSecret(orgId, 'GITHUB_VAULT_TOKEN'), getSecret(orgId, 'VAULT_CONFIG'),
     ])
+    const vcfg = parseVaultConfig(vaultRaw)
     const byId: Record<string, { connected: boolean; detail?: string | null }> = {
       github: { connected: !!ghTok, detail: ghAcc },
       huggingface: { connected: !!hfTok, detail: hfAcc },
@@ -49,6 +52,7 @@ export async function connectorRoutes(app: FastifyInstance) {
       gmail: { connected: gConn, detail: gConn ? 'Google account' : null },
       gcal: { connected: gConn, detail: gConn ? 'Google account' : null },
       gdrive: { connected: gConn, detail: gConn ? 'Google account' : null },
+      obsidian: { connected: !!vaultTok, detail: vaultTok ? `${vcfg.repo} · ${vcfg.root}/ (${vcfg.branch})` : null },
     }
     return { connectors: CONNECTORS.map(m => buildStatus(m, byId[m.id])) }
   })
@@ -61,6 +65,19 @@ export async function connectorRoutes(app: FastifyInstance) {
     const body = (req.body ?? {}) as any
 
     if (meta.authType === 'oauth') return { authUrl: buildAuthUrl(orgId) }
+
+    if (id === 'obsidian') {
+      const repo = String(body.repo ?? '').trim()
+      const token = String(body.token ?? '').trim()
+      if (!repo || !token) return reply.code(400).send({ error: 'repo (owner/name) and token required' })
+      const cfg = { repo, root: (String(body.root ?? '').trim() || 'vault'), branch: (String(body.branch ?? '').trim() || 'main') }
+      let check
+      try { check = await vaultList(token, cfg, cfg.root) } catch { return reply.code(502).send({ error: 'GitHub unreachable' }) }
+      if (!check.ok) return reply.code(401).send({ error: `Cannot read ${repo}/${cfg.root} (GitHub ${check.status}) — check repo, root, branch, and token scope` })
+      await setSecret(orgId, 'VAULT_CONFIG', JSON.stringify(cfg))
+      await setSecret(orgId, 'GITHUB_VAULT_TOKEN', token)
+      return { connected: true, detail: `${repo} · ${cfg.root}/ (${check.entries?.length ?? 0} items)` }
+    }
 
     if (meta.authType === 'token') {
       const token = String(body.token ?? '').trim()
@@ -103,6 +120,14 @@ export async function connectorRoutes(app: FastifyInstance) {
       if (!res.ok) return reply.code(502).send({ ok: false, error: `${meta.name} auth failed` })
       return { ok: true, detail: parseAccount(id, await res.json().catch(() => ({}))) || null }
     }
+    if (id === 'obsidian') {
+      const token = await getSecret(orgId, 'GITHUB_VAULT_TOKEN')
+      if (!token) return reply.code(400).send({ ok: false, error: 'not connected' })
+      const cfg = parseVaultConfig(await getSecret(orgId, 'VAULT_CONFIG'))
+      const r = await vaultList(token, cfg, cfg.root)
+      if (!r.ok) return reply.code(502).send({ ok: false, error: `GitHub ${r.status}` })
+      return { ok: true, detail: `${cfg.repo} · ${cfg.root}/ (${r.entries?.length ?? 0} items)` }
+    }
     if (id === 'jira') {
       const cfg = await getJiraCfg(orgId)
       if (!cfg) return reply.code(400).send({ ok: false, error: 'not connected' })
@@ -126,6 +151,9 @@ export async function connectorRoutes(app: FastifyInstance) {
       if (meta.accountKey) await delSecret(orgId, meta.accountKey)
     } else if (id === 'jira') {
       await clearJiraCfg(orgId)
+    } else if (id === 'obsidian') {
+      await delSecret(orgId, 'VAULT_CONFIG')
+      await delSecret(orgId, 'GITHUB_VAULT_TOKEN')
     } else if (meta.authType === 'oauth') {
       await db.delete(schema.oauthTokens).where(and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google')))
     }

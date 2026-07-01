@@ -7,7 +7,7 @@ export type AuthType = 'token' | 'basic' | 'oauth'
 export interface ConnectorMeta {
   id: string
   name: string
-  category: 'Dev' | 'Google' | 'Project' | 'AI'
+  category: 'Dev' | 'Google' | 'Project' | 'AI' | 'Memory'
   authType: AuthType
   icon: string
   docsUrl: string
@@ -31,6 +31,8 @@ export const CONNECTORS: ConnectorMeta[] = [
     docsUrl: 'https://drive.google.com', provider: 'google' },
   { id: 'huggingface', name: 'Hugging Face', category: 'AI', authType: 'token', icon: '🤗',
     docsUrl: 'https://huggingface.co/settings/tokens', secretKey: 'HUGGINGFACE_TOKEN', accountKey: 'HUGGINGFACE_ACCOUNT' },
+  { id: 'obsidian', name: 'Obsidian Vault (shared memory)', category: 'Memory', authType: 'basic', icon: '🪨',
+    docsUrl: 'https://github.com/settings/tokens', fields: ['repo', 'root', 'branch', 'token'] },
 ]
 
 export const GOOGLE_MEMBERS = CONNECTORS.filter(c => c.provider === 'google').map(c => c.id)
@@ -57,7 +59,7 @@ export function parseAccount(id: string, json: any): string {
 
 export interface ConnectorStatus {
   id: string; name: string; category: string; authType: AuthType; icon: string; docsUrl: string
-  connected: boolean; detail: string | null
+  fields: string[]; connected: boolean; detail: string | null
 }
 
 // Compose a status row from resolved inputs (pure — no IO).
@@ -67,7 +69,7 @@ export function buildStatus(
 ): ConnectorStatus {
   return {
     id: meta.id, name: meta.name, category: meta.category, authType: meta.authType,
-    icon: meta.icon, docsUrl: meta.docsUrl,
+    icon: meta.icon, docsUrl: meta.docsUrl, fields: meta.fields ?? [],
     connected: opts.connected, detail: opts.detail ?? null,
   }
 }

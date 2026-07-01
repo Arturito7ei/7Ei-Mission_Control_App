@@ -18,7 +18,7 @@ import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
-import { VAULT_ROOT, isSafeVaultPath, ghContentsUrl, parseDirEntries, decodeFileContent } from '../services/vault-connector'
+import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
@@ -679,32 +679,54 @@ export async function taskRoutes(app: FastifyInstance) {
   // ─── Obsidian vault connector · Memory tab ──────────────────────────────
   // Reads the shared vault repo's markdown via GitHub, using a token stored in
   // the org secret store (company secret GITHUB_VAULT_TOKEN) or env VAULT_GH_TOKEN.
+  // Vault (Obsidian shared memory) — token + config resolved per org. Config is
+  // set via the Connectors tab's Obsidian card (VAULT_CONFIG); token in GITHUB_VAULT_TOKEN.
   const resolveVaultToken = async (orgId: string): Promise<string | null> => {
     if (process.env.VAULT_GH_TOKEN) return process.env.VAULT_GH_TOKEN
     const row = await db.query.secrets.findFirst({ where: and(eq(schema.secrets.orgId, orgId), eq(schema.secrets.scope, 'company'), eq(schema.secrets.key, 'GITHUB_VAULT_TOKEN')) })
     try { return row ? decrypt(row.valueEncrypted) : null } catch { return null }
   }
-  const ghFetch = (url: string, token: string) => fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': '7ei-mc' } })
+  const resolveVaultConfig = async (orgId: string) => {
+    const row = await db.query.secrets.findFirst({ where: and(eq(schema.secrets.orgId, orgId), eq(schema.secrets.scope, 'company'), eq(schema.secrets.key, 'VAULT_CONFIG')) })
+    let raw: string | null = null
+    try { raw = row ? decrypt(row.valueEncrypted) : null } catch {}
+    return parseVaultConfig(raw)
+  }
+  const NO_VAULT = { error: 'Vault not connected — configure it in Connectors → Obsidian Vault (repo, root, branch, GitHub token).' }
 
   app.get('/api/orgs/:orgId/memory/tree', async (req, reply) => {
     const { orgId } = req.params as any
-    const path = ((req.query as any)?.path) || VAULT_ROOT
-    if (!isSafeVaultPath(path)) return reply.code(400).send({ error: 'invalid path' })
+    const cfg = await resolveVaultConfig(orgId)
+    const path = ((req.query as any)?.path) || cfg.root
+    if (!isSafeVaultPath(path, cfg.root)) return reply.code(400).send({ error: 'invalid path' })
     const token = await resolveVaultToken(orgId)
-    if (!token) return reply.code(400).send({ error: 'No vault token — add a company secret GITHUB_VAULT_TOKEN (GitHub PAT with read access to the vault repo).' })
-    const res = await ghFetch(ghContentsUrl(path), token)
-    if (!res.ok) return reply.code(res.status).send({ error: `GitHub ${res.status}` })
-    return { path, entries: parseDirEntries(await res.json() as any) }
+    if (!token) return reply.code(400).send(NO_VAULT)
+    const r = await vaultList(token, cfg, path)
+    if (!r.ok) return reply.code(r.status).send({ error: `GitHub ${r.status}` })
+    return { path, repo: cfg.repo, root: cfg.root, branch: cfg.branch, entries: r.entries }
   })
   app.get('/api/orgs/:orgId/memory/file', async (req, reply) => {
     const { orgId } = req.params as any
+    const cfg = await resolveVaultConfig(orgId)
     const path = ((req.query as any)?.path) || ''
-    if (!isSafeVaultPath(path) || !/\.(md|markdown|txt)$/i.test(path)) return reply.code(400).send({ error: 'invalid path' })
+    if (!isSafeVaultPath(path, cfg.root) || !isMarkdownPath(path)) return reply.code(400).send({ error: 'invalid path' })
     const token = await resolveVaultToken(orgId)
-    if (!token) return reply.code(400).send({ error: 'No vault token configured.' })
-    const res = await ghFetch(ghContentsUrl(path), token)
-    if (!res.ok) return reply.code(res.status).send({ error: `GitHub ${res.status}` })
-    return { path, markdown: decodeFileContent(await res.json() as any) }
+    if (!token) return reply.code(400).send(NO_VAULT)
+    const r = await vaultRead(token, cfg, path)
+    if (!r.ok) return reply.code(r.status).send({ error: `GitHub ${r.status}` })
+    return { path, markdown: r.markdown }
+  })
+  app.put('/api/orgs/:orgId/memory/file', async (req, reply) => {
+    const { orgId } = req.params as any
+    const body = (req.body ?? {}) as any
+    const path = String(body.path ?? '')
+    const cfg = await resolveVaultConfig(orgId)
+    if (!isSafeVaultPath(path, cfg.root) || !isMarkdownPath(path)) return reply.code(400).send({ error: 'path must be a .md/.markdown/.txt file inside the vault root' })
+    const token = await resolveVaultToken(orgId)
+    if (!token) return reply.code(400).send(NO_VAULT)
+    const r = await vaultWrite(token, cfg, path, String(body.markdown ?? ''), body.message || `mc: update ${path}`)
+    if (!r.ok) return reply.code(r.status).send({ error: r.error ?? `GitHub ${r.status}` })
+    return { ok: true, path, commit: r.commit }
   })
 
   // ─── Company portability (MCA-PC D3) ────────────────────────────────────
