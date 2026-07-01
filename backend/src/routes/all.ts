@@ -7,7 +7,7 @@ import { requireOrgRole } from '../middleware/rbac'
 import { executeAgentTask } from '../services/agent-executor'
 import { upsertDocument } from '../services/vector-search'
 import { streamLLM } from '../services/llm-router'
-import { buildAuthUrl, exchangeCode } from '../services/google-auth'
+import { buildAuthUrl, exchangeCode, SCOPES as GOOGLE_SCOPES } from '../services/google-auth'
 import { generateAgentToken } from '../middleware/agent-token'
 import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
@@ -1154,11 +1154,11 @@ export async function authRoutes(app: FastifyInstance) {
       await db.insert(schema.oauthTokens).values({
         id: randomUUID(), orgId, provider: 'google',
         accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
-        expiresAt: tokens.expiresAt, scopes: 'drive.readonly drive.file',
+        expiresAt: tokens.expiresAt, scopes: GOOGLE_SCOPES,
         createdAt: new Date(),
       })
     }
-    reply.redirect(`${process.env.ALLOWED_ORIGINS?.split(',')[0] ?? '/'}/knowledge?connected=google`)
+    reply.redirect(`${process.env.ALLOWED_ORIGINS?.split(',')[0] ?? '/'}/dashboard?connected=google`)
   })
 
   app.get('/api/orgs/:orgId/auth/google/status', async (req) => {

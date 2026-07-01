@@ -1,6 +1,19 @@
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
-const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file'
+// One Google connection powers Gmail, Calendar, and Drive in the Connectors tab.
+// NOTE: gmail.* and calendar.events are sensitive/restricted scopes — the Google
+// Cloud OAuth consent screen must list them (and, for production/verified apps,
+// pass Google verification). In "testing" consent mode they work for listed test users.
+export const SCOPES = [
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/calendar.events',
+].join(' ')
 
 export function buildAuthUrl(orgId: string): string {
   const params = new URLSearchParams({
@@ -9,6 +22,7 @@ export function buildAuthUrl(orgId: string): string {
     response_type: 'code',
     scope: SCOPES,
     access_type: 'offline',
+    include_granted_scopes: 'true',
     prompt: 'consent',
     state: orgId,
   })
