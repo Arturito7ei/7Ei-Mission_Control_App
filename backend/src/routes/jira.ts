@@ -1,8 +1,9 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db, schema } from '../db/client'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { encrypt, decrypt } from '../services/secrets'
 
 // ─── Jira Integration ─────────────────────────────────────────────────────────
 // Project key: O7MC (per ADR + ITERATION_PLAN)
@@ -23,7 +24,31 @@ const ConnectSchema = z.object({
   defaultProjectKey: z.string().default('O7MC'),
 })
 
-const jiraConfigs = new Map<string, z.infer<typeof ConnectSchema>>()
+// Persisted in the D4 secret store (company scope) so the connection survives
+// backend restarts — previously an in-memory Map that was wiped on every boot.
+type JiraCfg = z.infer<typeof ConnectSchema>
+const JIRA_KEY = 'JIRA_CONNECTION'
+const jiraCache = new Map<string, JiraCfg>()
+const jiraSecretWhere = (orgId: string) =>
+  and(eq(schema.secrets.orgId, orgId), eq(schema.secrets.scope, 'company'), eq(schema.secrets.key, JIRA_KEY))
+
+export async function getJiraCfg(orgId: string): Promise<JiraCfg | undefined> {
+  if (jiraCache.has(orgId)) return jiraCache.get(orgId)
+  const row = await db.query.secrets.findFirst({ where: jiraSecretWhere(orgId) })
+  if (!row) return undefined
+  try { const cfg = JSON.parse(decrypt(row.valueEncrypted)) as JiraCfg; jiraCache.set(orgId, cfg); return cfg } catch { return undefined }
+}
+export async function setJiraCfg(orgId: string, cfg: JiraCfg): Promise<void> {
+  jiraCache.set(orgId, cfg)
+  const enc = encrypt(JSON.stringify(cfg))
+  const row = await db.query.secrets.findFirst({ where: jiraSecretWhere(orgId) })
+  if (row) await db.update(schema.secrets).set({ valueEncrypted: enc }).where(eq(schema.secrets.id, row.id))
+  else await db.insert(schema.secrets).values({ id: randomUUID(), orgId, scope: 'company', scopeId: null, key: JIRA_KEY, valueEncrypted: enc, createdAt: new Date() })
+}
+export async function clearJiraCfg(orgId: string): Promise<void> {
+  jiraCache.delete(orgId)
+  await db.delete(schema.secrets).where(jiraSecretWhere(orgId))
+}
 
 export async function jiraRoutes(app: FastifyInstance) {
 
@@ -35,25 +60,25 @@ export async function jiraRoutes(app: FastifyInstance) {
     })
     if (!testRes.ok) return reply.code(401).send({ error: 'Invalid Jira credentials' })
     const user = await testRes.json() as any
-    jiraConfigs.set(orgId, body)
+    await setJiraCfg(orgId, body)
     return { ok: true, jiraUser: user.displayName, email: user.emailAddress }
   })
 
   app.get('/api/orgs/:orgId/jira/status', async (req) => {
     const { orgId } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     return { connected: !!cfg, domain: cfg?.domain, defaultProjectKey: cfg?.defaultProjectKey }
   })
 
   app.delete('/api/orgs/:orgId/jira/connect', async (req, reply) => {
     const { orgId } = req.params as any
-    jiraConfigs.delete(orgId)
+    await clearJiraCfg(orgId)
     reply.code(204)
   })
 
   app.get('/api/orgs/:orgId/jira/projects', async (req, reply) => {
     const { orgId } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const res = await fetch(`${jiraBase(cfg.domain)}/project/search?maxResults=50`, {
       headers: { Authorization: jiraAuth(cfg.email, cfg.apiToken), Accept: 'application/json' },
@@ -66,7 +91,7 @@ export async function jiraRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/jira/issues', async (req, reply) => {
     const { orgId } = req.params as any
     const { projectKey, maxResults = '30', startAt = '0', status } = req.query as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const pk = projectKey ?? cfg.defaultProjectKey
     let jql = `project = ${pk} ORDER BY created DESC`
@@ -88,7 +113,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.get('/api/orgs/:orgId/jira/issues/:issueKey', async (req, reply) => {
     const { orgId, issueKey } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const res = await fetch(`${jiraBase(cfg.domain)}/issue/${issueKey}`, {
       headers: { Authorization: jiraAuth(cfg.email, cfg.apiToken), Accept: 'application/json' },
@@ -108,7 +133,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/issues', async (req, reply) => {
     const { orgId } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { summary, description, issueType = 'Task', priority = 'Medium', projectKey, assigneeEmail, agentId } = req.body as any
     const pk = projectKey ?? cfg.defaultProjectKey
@@ -143,7 +168,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.patch('/api/orgs/:orgId/jira/issues/:issueKey', async (req, reply) => {
     const { orgId, issueKey } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { summary, priority, description } = req.body as any
     const fields: any = {}
@@ -161,7 +186,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.get('/api/orgs/:orgId/jira/issues/:issueKey/transitions', async (req, reply) => {
     const { orgId, issueKey } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const res = await fetch(`${jiraBase(cfg.domain)}/issue/${issueKey}/transitions`, {
       headers: { Authorization: jiraAuth(cfg.email, cfg.apiToken), Accept: 'application/json' },
@@ -173,7 +198,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/issues/:issueKey/transitions', async (req, reply) => {
     const { orgId, issueKey } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { transitionId } = req.body as any
     const res = await fetch(`${jiraBase(cfg.domain)}/issue/${issueKey}/transitions`, {
@@ -187,7 +212,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/issues/:issueKey/comments', async (req, reply) => {
     const { orgId, issueKey } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { body: commentBody } = req.body as any
     const res = await fetch(`${jiraBase(cfg.domain)}/issue/${issueKey}/comment`, {
@@ -203,7 +228,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/sync', async (req, reply) => {
     const { orgId } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { agentId, projectKey } = req.body as any
     if (!agentId) return reply.code(400).send({ error: 'agentId required' })
@@ -230,7 +255,7 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/from-task/:taskId', async (req, reply) => {
     const { orgId, taskId } = req.params as any
-    const cfg = jiraConfigs.get(orgId)
+    const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task) return reply.code(404).send({ error: 'Task not found' })

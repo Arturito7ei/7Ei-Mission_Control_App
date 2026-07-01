@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CockpitPanel from './CockpitPanel'
 import MemoryPanel from './MemoryPanel'
+import ConnectorsPanel from './ConnectorsPanel'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
   useAuth = require('@clerk/nextjs').useAuth
@@ -34,7 +35,7 @@ const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paus
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
-type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage' | 'settings'
+type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'usage' | 'settings'
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
@@ -289,7 +290,7 @@ export default function DashboardPage() {
     { id: 'skills', icon: '⚡', label: 'Skills' },
     { id: 'costs', icon: '💰', label: 'Costs' },
     { id: 'comms', icon: '📬', label: 'Comms' },
-    { id: 'jira', icon: '🔗', label: `Jira${jiraConnected ? ' ●' : ''}` },
+    { id: 'connectors', icon: '🔌', label: 'Connectors' },
     { id: 'usage', icon: '📊', label: 'Usage' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
@@ -449,38 +450,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {tab === 'jira' && (
-          <div style={s.page}>
-            <h1 style={s.h1}>Jira — O7MC</h1>
-            {!jiraConnected ? (
-              <div style={s.emptyCard}>
-                <span style={{ fontSize: 48 }}>🔗</span>
-                <h3 style={{ margin: '12px 0 4px' }}>Jira not connected</h3>
-                <p style={{ color: '#888', fontSize: 14, margin: 0 }}>Connect in the mobile app (Jira screen) or via the API with your Atlassian credentials.</p>
-                <div style={{ marginTop: 16, background: '#1a1a1a', borderRadius: 8, padding: 16 }}>
-                  <code style={{ fontSize: 12, color: '#FFB800' }}>POST /api/orgs/:orgId/jira/connect</code>
-                  <pre style={{ fontSize: 12, color: '#888', margin: '8px 0 0' }}>{'{\n  "domain": "your-org",\n  "email": "you@company.com",\n  "apiToken": "...",\n  "defaultProjectKey": "O7MC"\n}'}</pre>
-                </div>
-              </div>
-            ) : (
-              <>
-                <p style={{ color: '#888', margin: '0 0 16px' }}>Project O7MC · {jiraIssues.length} issues loaded</p>
-                <div style={s.table}>
-                  <div style={{ ...s.thead, gridTemplateColumns: '1fr 3fr 1.5fr 1fr 1fr' }}><span>Key</span><span>Summary</span><span>Status</span><span>Priority</span><span>Assignee</span></div>
-                  {jiraIssues.map(i => (
-                    <div key={i.id} style={{ ...s.trow, gridTemplateColumns: '1fr 3fr 1.5fr 1fr 1fr' }}>
-                      <span style={{ color: '#FFB800', fontSize: 12, fontWeight: 700 }}>{i.key}</span>
-                      <span style={{ fontSize: 13 }}>{i.summary.slice(0, 60)}{i.summary.length > 60 ? '…' : ''}</span>
-                      <span style={{ color: JIRA_STATUS_C[i.status ?? ''] ?? '#888', fontSize: 12, fontWeight: 600 }}>{i.status}</span>
-                      <span style={{ fontSize: 12, color: '#888' }}>{i.priority ?? '—'}</span>
-                      <span style={{ fontSize: 12, color: '#888' }}>{i.assignee ?? '—'}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        {tab === 'connectors' && org && <ConnectorsPanel orgId={org.id} getToken={getToken} />}
 
         {tab === 'usage' && (
           <div style={s.page}>
