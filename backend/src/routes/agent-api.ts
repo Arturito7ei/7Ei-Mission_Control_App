@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { agentAuth } from '../middleware/agent-token'
 import { decrypt, resolveSecretsForAgent } from '../services/secrets'
 import { workspaceRuntime } from '../services/workspaces'
+import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
@@ -49,6 +50,51 @@ export async function agentApiRoutes(app: FastifyInstance) {
     const rows = await db.select().from(schema.secrets).where(eq(schema.secrets.orgId, agent.orgId))
     const decrypted = rows.map(s => { try { return { scope: s.scope, scopeId: s.scopeId, key: s.key, value: decrypt(s.valueEncrypted) } } catch { return null } }).filter(Boolean) as any[]
     return { secrets: resolveSecretsForAgent(decrypted, agent.id) }
+  })
+
+  // ── Shared memory (Obsidian vault) ───────────────────────────────────────
+  // All agents read/write ONE shared vault (the org's Obsidian repo). This is
+  // how agents leave notes other agents can read. Config + token come from the
+  // org's Connectors → Obsidian setup. Writes commit as the agent.
+  const resolveVault = async (orgId: string) => {
+    const rows = await db.select().from(schema.secrets).where(and(eq(schema.secrets.orgId, orgId), eq(schema.secrets.scope, 'company')))
+    const get = (k: string): string | null => { const r = rows.find(x => x.key === k); if (!r) return null; try { return decrypt(r.valueEncrypted) } catch { return null } }
+    return { token: process.env.VAULT_GH_TOKEN || get('GITHUB_VAULT_TOKEN'), cfg: parseVaultConfig(get('VAULT_CONFIG')) }
+  }
+
+  app.get('/api/agent/memory/tree', async (req, reply) => {
+    const agent = (req as any).agent
+    const { token, cfg } = await resolveVault(agent.orgId)
+    if (!token) return reply.code(400).send({ error: 'vault not connected' })
+    const path = ((req.query as any)?.path) || cfg.root
+    if (!isSafeVaultPath(path, cfg.root)) return reply.code(400).send({ error: 'invalid path' })
+    const r = await vaultList(token, cfg, path)
+    if (!r.ok) return reply.code(r.status).send({ error: `GitHub ${r.status}` })
+    return { path, repo: cfg.repo, root: cfg.root, entries: r.entries }
+  })
+
+  app.get('/api/agent/memory/file', async (req, reply) => {
+    const agent = (req as any).agent
+    const { token, cfg } = await resolveVault(agent.orgId)
+    if (!token) return reply.code(400).send({ error: 'vault not connected' })
+    const path = ((req.query as any)?.path) || ''
+    if (!isSafeVaultPath(path, cfg.root) || !isMarkdownPath(path)) return reply.code(400).send({ error: 'invalid path' })
+    const r = await vaultRead(token, cfg, path)
+    if (!r.ok) return reply.code(r.status).send({ error: `GitHub ${r.status}` })
+    return { path, markdown: r.markdown }
+  })
+
+  app.put('/api/agent/memory/file', async (req, reply) => {
+    const agent = (req as any).agent
+    const { token, cfg } = await resolveVault(agent.orgId)
+    if (!token) return reply.code(400).send({ error: 'vault not connected' })
+    const body = (req.body ?? {}) as any
+    const path = String(body.path ?? '')
+    if (!isSafeVaultPath(path, cfg.root) || !isMarkdownPath(path)) return reply.code(400).send({ error: 'path must be a .md/.markdown/.txt file inside the vault root' })
+    const committer = { name: `${agent.name} (7Ei agent)`, email: 'agents@7ei.ai' }
+    const r = await vaultWrite(token, cfg, path, String(body.markdown ?? ''), body.message || `mc(${agent.name}): update ${path}`, committer)
+    if (!r.ok) return reply.code(r.status).send({ error: r.error ?? `GitHub ${r.status}` })
+    return { ok: true, path, commit: r.commit }
   })
 
   // Liveness/heartbeat — also returns who the runtime is authenticated as.

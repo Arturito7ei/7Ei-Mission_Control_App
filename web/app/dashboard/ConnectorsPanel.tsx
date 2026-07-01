@@ -19,13 +19,18 @@ async function call<T>(path: string, token: string | null, opts?: RequestInit): 
   return j as T
 }
 
-type Row = { id: string; name: string; category: string; authType: 'token' | 'basic' | 'oauth'; icon: string; docsUrl: string; connected: boolean; detail: string | null }
+type Row = { id: string; name: string; category: string; authType: 'token' | 'basic' | 'oauth'; icon: string; docsUrl: string; fields: string[]; connected: boolean; detail: string | null }
 type JiraIssue = { id: string; key: string; summary: string; status?: string; priority?: string; assignee?: string }
 
-const CATEGORY_ORDER = ['Project', 'Dev', 'Google', 'AI']
+const CATEGORY_ORDER = ['Memory', 'Project', 'Dev', 'Google', 'AI']
 const HINT: Record<string, string> = {
   github: 'Personal access token (Contents/Repo read).',
   huggingface: 'Access token from huggingface.co/settings/tokens.',
+  obsidian: 'Point at your Obsidian vault’s Git repo — every agent reads & writes this one shared memory. Token needs repo read+write.',
+}
+const FIELD_LABEL: Record<string, string> = {
+  domain: 'domain (e.g. 7ei → 7ei.atlassian.net)', email: 'email', apiToken: 'API token', defaultProjectKey: 'default project key (O7MC)',
+  repo: 'owner/repo (e.g. Arturito7ei/7Ei-MC_TARCO)', root: 'root folder (vault)', branch: 'branch (main)', token: 'GitHub token (repo scope)',
 }
 
 export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
@@ -123,12 +128,13 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
                     {row.authType === 'token' ? (
                       <input style={s.input} type="password" placeholder="Paste token" value={form[row.id]?.token ?? ''} onChange={e => setF(row.id, 'token', e.target.value)} />
                     ) : (
-                      <>
-                        <input style={s.input} placeholder="domain (e.g. 7ei → 7ei.atlassian.net)" value={form[row.id]?.domain ?? ''} onChange={e => setF(row.id, 'domain', e.target.value)} />
-                        <input style={s.input} placeholder="email" value={form[row.id]?.email ?? ''} onChange={e => setF(row.id, 'email', e.target.value)} />
-                        <input style={s.input} type="password" placeholder="API token" value={form[row.id]?.apiToken ?? ''} onChange={e => setF(row.id, 'apiToken', e.target.value)} />
-                        <input style={s.input} placeholder="default project key (O7MC)" value={form[row.id]?.defaultProjectKey ?? ''} onChange={e => setF(row.id, 'defaultProjectKey', e.target.value)} />
-                      </>
+                      row.fields.map(f => (
+                        <input key={f} style={s.input}
+                          type={/token|secret|apitoken/i.test(f) ? 'password' : 'text'}
+                          placeholder={FIELD_LABEL[f] ?? f}
+                          value={form[row.id]?.[f] ?? ''}
+                          onChange={e => setF(row.id, f, e.target.value)} />
+                      ))
                     )}
                     {HINT[row.id] && <p style={s.hint}>{HINT[row.id]} <a style={s.link} href={row.docsUrl} target="_blank" rel="noreferrer">Get one ↗</a></p>}
                     <div style={s.actions}>

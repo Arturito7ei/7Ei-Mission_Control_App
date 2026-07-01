@@ -2,10 +2,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CONNECTORS, GOOGLE_MEMBERS, getConnector, tokenTestRequest, parseAccount, buildStatus } from '../services/connectors'
 
-test('registry has the six expected connectors, unique ids', () => {
+test('registry has the expected connectors, unique ids', () => {
   const ids = CONNECTORS.map(c => c.id)
-  assert.deepEqual(ids.sort(), ['gcal', 'gdrive', 'github', 'gmail', 'huggingface', 'jira'])
+  assert.deepEqual(ids.sort(), ['gcal', 'gdrive', 'github', 'gmail', 'huggingface', 'jira', 'obsidian'])
   assert.equal(new Set(ids).size, ids.length)
+})
+
+test('obsidian is a basic connector with vault fields', () => {
+  const o = getConnector('obsidian')!
+  assert.equal(o.authType, 'basic')
+  assert.deepEqual(o.fields, ['repo', 'root', 'branch', 'token'])
+  assert.equal(o.category, 'Memory')
 })
 
 test('google members are the three google connectors', () => {
