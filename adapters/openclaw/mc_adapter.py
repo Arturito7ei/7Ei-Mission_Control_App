@@ -35,6 +35,7 @@ EXECUTOR = os.environ.get("MC_EXECUTOR", "auto")
 LLM_BASE  = os.environ.get("MC_LLM_BASE_URL", "").rstrip("/")
 LLM_KEY   = os.environ.get("MC_LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("MC_LLM_MODEL", "MiniMax-Text-01")
+LLM_MAX_TOKENS = int(os.environ.get("MC_LLM_MAX_TOKENS", "1024"))  # some hosts (e.g. NVIDIA NIM minimax-m3) return empty choices without this
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -124,7 +125,7 @@ def llm_chat(messages):
         raise RuntimeError("MC_LLM_BASE_URL / MC_LLM_API_KEY not configured")
     req = urllib.request.Request(
         LLM_BASE + "/chat/completions",
-        data=json.dumps({"model": LLM_MODEL, "messages": messages, "temperature": 0.2}).encode(),
+        data=json.dumps({"model": LLM_MODEL, "messages": messages, "temperature": 0.2, "max_tokens": LLM_MAX_TOKENS}).encode(),
         headers={"Authorization": "Bearer " + LLM_KEY, "Content-Type": "application/json"},
         method="POST")
     with urllib.request.urlopen(req, timeout=120) as r:
