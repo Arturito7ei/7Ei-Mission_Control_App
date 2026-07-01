@@ -18,6 +18,7 @@ import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
+import { VAULT_ROOT, isSafeVaultPath, ghContentsUrl, parseDirEntries, decodeFileContent } from '../services/vault-connector'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
@@ -673,6 +674,37 @@ export async function taskRoutes(app: FastifyInstance) {
   app.delete('/api/workspaces/:id', async (req, reply) => {
     await db.delete(schema.workspaces).where(eq(schema.workspaces.id, (req.params as any).id))
     reply.code(204)
+  })
+
+  // ─── Obsidian vault connector · Memory tab ──────────────────────────────
+  // Reads the shared vault repo's markdown via GitHub, using a token stored in
+  // the org secret store (company secret GITHUB_VAULT_TOKEN) or env VAULT_GH_TOKEN.
+  const resolveVaultToken = async (orgId: string): Promise<string | null> => {
+    if (process.env.VAULT_GH_TOKEN) return process.env.VAULT_GH_TOKEN
+    const row = await db.query.secrets.findFirst({ where: and(eq(schema.secrets.orgId, orgId), eq(schema.secrets.scope, 'company'), eq(schema.secrets.key, 'GITHUB_VAULT_TOKEN')) })
+    try { return row ? decrypt(row.valueEncrypted) : null } catch { return null }
+  }
+  const ghFetch = (url: string, token: string) => fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': '7ei-mc' } })
+
+  app.get('/api/orgs/:orgId/memory/tree', async (req, reply) => {
+    const { orgId } = req.params as any
+    const path = ((req.query as any)?.path) || VAULT_ROOT
+    if (!isSafeVaultPath(path)) return reply.code(400).send({ error: 'invalid path' })
+    const token = await resolveVaultToken(orgId)
+    if (!token) return reply.code(400).send({ error: 'No vault token — add a company secret GITHUB_VAULT_TOKEN (GitHub PAT with read access to the vault repo).' })
+    const res = await ghFetch(ghContentsUrl(path), token)
+    if (!res.ok) return reply.code(res.status).send({ error: `GitHub ${res.status}` })
+    return { path, entries: parseDirEntries(await res.json() as any) }
+  })
+  app.get('/api/orgs/:orgId/memory/file', async (req, reply) => {
+    const { orgId } = req.params as any
+    const path = ((req.query as any)?.path) || ''
+    if (!isSafeVaultPath(path) || !/\.(md|markdown|txt)$/i.test(path)) return reply.code(400).send({ error: 'invalid path' })
+    const token = await resolveVaultToken(orgId)
+    if (!token) return reply.code(400).send({ error: 'No vault token configured.' })
+    const res = await ghFetch(ghContentsUrl(path), token)
+    if (!res.ok) return reply.code(res.status).send({ error: `GitHub ${res.status}` })
+    return { path, markdown: decodeFileContent(await res.json() as any) }
   })
 
   // ─── Company portability (MCA-PC D3) ────────────────────────────────────

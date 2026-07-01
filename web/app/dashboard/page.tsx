@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import CockpitPanel from './CockpitPanel'
+import MemoryPanel from './MemoryPanel'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
   useAuth = require('@clerk/nextjs').useAuth
@@ -33,7 +34,7 @@ const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paus
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
-type Tab = 'overview' | 'cockpit' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage' | 'settings'
+type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'jira' | 'usage' | 'settings'
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
@@ -281,6 +282,7 @@ export default function DashboardPage() {
   const NAV: { id: Tab; icon: string; label: string }[] = [
     { id: 'overview', icon: '🏠', label: 'Overview' },
     { id: 'cockpit', icon: '🛰️', label: 'Cockpit' },
+    { id: 'memory', icon: '🧠', label: 'Memory' },
     { id: 'agents', icon: '🤖', label: 'Agents' },
     { id: 'tasks', icon: '📋', label: 'Tasks' },
     { id: 'projects', icon: '📁', label: 'Projects' },
@@ -310,6 +312,8 @@ export default function DashboardPage() {
       <main style={s.main}>
 
         {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} />}
+
+        {tab === 'memory' && <MemoryPanel orgId={org.id} getToken={getToken} />}
 
         {tab === 'overview' && (
           <div style={s.page}>
