@@ -8,6 +8,7 @@ import { decrypt, resolveSecretsForAgent } from '../services/secrets'
 import { workspaceRuntime } from '../services/workspaces'
 import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
+import { agentRecentPath, appendSection, formatSessionSummary } from '../services/agent-memory'
 import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval } from '../services/governance2'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
@@ -22,6 +23,14 @@ const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'curs
 const HeartbeatSchema = z.object({
   status: z.enum(['green', 'amber', 'stale']).default('green'),
   note: z.string().max(500).optional(),
+})
+
+const SessionSummarySchema = z.object({
+  focus: z.string().min(1).max(2000),
+  completed: z.string().max(4000).optional(),
+  blockers: z.string().max(2000).optional(),
+  next: z.string().max(2000).optional(),
+  date: z.string().optional(),
 })
 
 const ResultSchema = z.object({
@@ -105,6 +114,33 @@ export async function agentApiRoutes(app: FastifyInstance) {
     if (!isSafeVaultPath(path, cfg.root) || !isMarkdownPath(path)) return reply.code(400).send({ error: 'path must be a .md/.markdown/.txt file inside the vault root' })
     const committer = { name: `${agent.name} (7Ei agent)`, email: 'agents@7ei.ai' }
     const r = await vaultWrite(token, cfg, path, String(body.markdown ?? ''), body.message || `mc(${agent.name}): update ${path}`, committer)
+    if (!r.ok) return reply.code(r.status).send({ error: r.error ?? `GitHub ${r.status}` })
+    return { ok: true, path, commit: r.commit }
+  })
+
+  // MCA-75 — append a session-continuity summary to the agent's OWN recent.md.
+  // The path is derived from the agent's name; the agent cannot choose it.
+  app.post('/api/agent/memory/session-summary', async (req, reply) => {
+    const agent = (req as any).agent
+    // S4.2 capability gate + S4.1 execution policy gate (same action as memory/file).
+    if (!isCapabilityAllowed(parseCapabilities(agent.permissions), 'memory:write')) return reply.code(403).send({ error: 'agent lacks capability memory:write' })
+    const pols = await db.select().from(schema.executionPolicies).where(and(eq(schema.executionPolicies.orgId, agent.orgId), eq(schema.executionPolicies.action, 'memory.write')))
+    if (requiresApproval(pols as any, 'memory.write')) {
+      await db.insert(schema.approvalRequests).values({ id: randomUUID(), orgId: agent.orgId, type: 'memory.write', summary: `${agent.name} → session summary`, payload: { agentId: agent.id }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      return reply.code(202).send({ pending: true, error: 'requires human approval (policy: memory.write)' })
+    }
+    const { token, cfg } = await resolveVault(agent.orgId)
+    if (!token) return reply.code(400).send({ error: 'vault not connected' })
+    const body = SessionSummarySchema.parse(req.body ?? {})
+    const date = body.date || new Date().toISOString().slice(0, 10)
+    const path = agentRecentPath(agent.name, cfg.root)
+    const existing = await vaultRead(token, cfg, path)
+    const markdown = appendSection(
+      existing.ok ? existing.markdown : undefined,
+      formatSessionSummary({ date, focus: body.focus, completed: body.completed, blockers: body.blockers, next: body.next, agentName: agent.name }),
+    )
+    const committer = { name: `${agent.name} (7Ei agent)`, email: 'agents@7ei.ai' }
+    const r = await vaultWrite(token, cfg, path, markdown, `mc(${agent.name}): session summary ${date}`, committer)
     if (!r.ok) return reply.code(r.status).send({ error: r.error ?? `GitHub ${r.status}` })
     return { ok: true, path, commit: r.commit }
   })
