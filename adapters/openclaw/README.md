@@ -26,11 +26,22 @@ curl -sX POST "$MC_BASE_URL/api/orgs/$ORG_ID/agents/external" \
 
 ## 2. Install on the Mac mini
 
+One command (recommended — installs adapter + preset + launchd keep-alive, runs a
+smoke test): see [`../mac-mini/`](../mac-mini/README.md).
+
+```bash
+cd adapters/mac-mini
+MC_AGENT_TOKEN=mca_xxx ./setup.sh --preset nvidia-minimax --yes
+```
+
+Or by hand:
+
 ```bash
 mkdir -p ~/.openclaw/mc-adapter
 cp mc_adapter.py mc.env.example ~/.openclaw/mc-adapter/
 cp ~/.openclaw/mc-adapter/mc.env.example ~/.openclaw/mc-adapter/mc.env
 # edit mc.env → paste MC_AGENT_TOKEN, set MC_BASE_URL + MC_WORKDIR
+# leave MC_LLM_API_KEY empty — it's injected from the encrypted secret store at boot
 ```
 
 ## 3. Run

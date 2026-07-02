@@ -122,13 +122,25 @@ def _extract_bash(text):
 
 
 def llm_chat(messages):
-    """OpenAI-compatible chat completion → assistant content string."""
-    if not (LLM_BASE and LLM_KEY):
+    """OpenAI-compatible chat completion → assistant content string.
+
+    Credentials are read from os.environ at call time (not import time) so a key
+    injected by load_secrets() from the encrypted D4 secret store is picked up —
+    no plaintext MC_LLM_API_KEY needs to live in mc.env on disk.
+    """
+    base = os.environ.get("MC_LLM_BASE_URL", LLM_BASE).rstrip("/")
+    key = os.environ.get("MC_LLM_API_KEY", LLM_KEY)
+    model = os.environ.get("MC_LLM_MODEL", LLM_MODEL)
+    try:
+        max_tokens = int(os.environ.get("MC_LLM_MAX_TOKENS", str(LLM_MAX_TOKENS)))
+    except ValueError:
+        max_tokens = LLM_MAX_TOKENS
+    if not (base and key):
         raise RuntimeError("MC_LLM_BASE_URL / MC_LLM_API_KEY not configured")
     req = urllib.request.Request(
-        LLM_BASE + "/chat/completions",
-        data=json.dumps({"model": LLM_MODEL, "messages": messages, "temperature": 0.2, "max_tokens": LLM_MAX_TOKENS}).encode(),
-        headers={"Authorization": "Bearer " + LLM_KEY, "Content-Type": "application/json"},
+        base + "/chat/completions",
+        data=json.dumps({"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}).encode(),
+        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         method="POST")
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.loads(r.read().decode())
@@ -204,8 +216,9 @@ def choose_executor():
         return llm_execute
     if EXECUTOR == "http":
         return http_execute
-    # auto
-    return llm_execute if LLM_KEY else shell_execute
+    # auto — read the key from env at call time so a secret injected by
+    # load_secrets() counts (falls back to the import-time module global)
+    return llm_execute if os.environ.get("MC_LLM_API_KEY", LLM_KEY) else shell_execute
 
 
 def execute(task):
@@ -253,11 +266,12 @@ def load_secrets():
 def main():
     if not TOKEN:
         print("MC_AGENT_TOKEN is required", file=sys.stderr); sys.exit(2)
+    # Load scoped secrets first so an injected MC_LLM_API_KEY influences auto-executor selection.
+    heartbeat("green")
+    load_secrets()
     _ex = choose_executor()
     mode = {id(llm_execute): "llm", id(shell_execute): "shell", id(http_execute): "http"}.get(id(_ex), "auto")
     print(f"7Ei MC adapter → {BASE}  (executor={mode}, shell={'on' if ALLOW_SHELL else 'off'}, workdir={WORKDIR})")
-    heartbeat("green")
-    load_secrets()
     if "--once" in sys.argv:
         n = poll_once(); print(f"processed {n} task(s)"); return
     while True:
