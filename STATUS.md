@@ -1,6 +1,6 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-02 (UI epic complete) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-02 (go-live hardening) · auto-maintained by the build agent (bumped at each story/phase)._
 
 **Live:** backend on Fly (`7ei-backend`), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis.md`.
@@ -24,9 +24,15 @@ Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.
 
 **MCA-69 (UI epic) — complete.**
 
-## Open items
-Clerk **production** instance · Google consent-screen scopes (Gmail/Calendar) · rotate exposed NVIDIA + vault tokens ·
-OpenClaw runs on this Mac (move to Mac mini when desired).
+## Go-live (runbook: `GO-LIVE.md`, PR #147)
+Engineering done: adapter now pulls `MC_LLM_API_KEY` from the encrypted secret store at boot (no plaintext key on disk);
+`adapters/mac-mini/setup.sh` one-command installer + launchd keep-alive; `GO-LIVE.md` documents each step.
+
+Remaining **user-only** console actions (assistant can't create accounts / enter credentials / rotate tokens):
+1. Clerk **production** instance + `pk_live`/`sk_live` on Vercel.
+2. Google consent-screen sensitive scopes (Gmail/Calendar) + add test user.
+3. Rotate NVIDIA key → set as `MC_LLM_API_KEY` secret; rotate vault GitHub PAT.
+4. Run `adapters/mac-mini/setup.sh` on the Mac mini; unload the laptop's launchd service.
 
 ## Verify
 `cd backend && npm test` · `npm run evals` · `cd web && npm run build` · self-host: `docker compose up -d --build`.
