@@ -106,8 +106,26 @@ export const tasks = sqliteTable('tasks', {
   lockToken: text('lock_token'),                      // MCA-EXEC S1.1: atomic checkout lock owner
   lockedAt: integer('locked_at', { mode: 'timestamp' }),
   blockedBy: text('blocked_by'),                      // MCA-EXEC S1.4: JSON array of blocker task ids
+  labels: text('labels'),                             // MCA-WORK S3.2: JSON array of label strings
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
+// MCA-WORK S3.1: attachments + work products on a task. kind = link | file | work_product.
+// Agent work-products commit to the shared vault; url points at the vault path (or an external link).
+export const taskAttachments = sqliteTable('task_attachments', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  taskId: text('task_id').notNull(),
+  kind: text('kind').notNull().default('link'),       // link | file | work_product
+  name: text('name').notNull(),
+  url: text('url'),
+  contentType: text('content_type'),
+  sizeBytes: integer('size_bytes'),
+  sha: text('sha'),
+  createdByAgentId: text('created_by_agent_id'),
+  createdByUser: text('created_by_user'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 // MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and
@@ -156,6 +174,8 @@ export const workspaces = sqliteTable('workspaces', {
   repoUrl: text('repo_url'),
   baseBranch: text('base_branch').default('main'),
   previewUrl: text('preview_url'),
+  runtimeStatus: text('runtime_status'),              // MCA-WORK S3.3: stopped | starting | running
+  devUrl: text('dev_url'),                             // running dev-server URL reported by the agent
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

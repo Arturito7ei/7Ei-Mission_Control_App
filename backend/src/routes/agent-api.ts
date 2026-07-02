@@ -131,6 +131,45 @@ export async function agentApiRoutes(app: FastifyInstance) {
     return { ok: true, comment: row }
   })
 
+  // MCA-WORK S3.1 — attach a work product (markdown → committed to the vault) or a link.
+  app.post('/api/agent/tasks/:taskId/attachment', async (req, reply) => {
+    const agent = (req as any).agent
+    const { taskId } = req.params as any
+    const b = (req.body ?? {}) as any
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task || task.orgId !== agent.orgId) return reply.code(404).send({ error: 'Task not found' })
+    let kind = 'link', url: string | null = b.url ?? null, name = b.name ?? 'attachment', sha: string | null = null
+    if (typeof b.markdown === 'string') {
+      const { token, cfg } = await resolveVault(agent.orgId)
+      if (!token) return reply.code(400).send({ error: 'vault not connected (required for work products)' })
+      const safeName = String(b.name || `work-product-${Date.now()}.md`).replace(/[^A-Za-z0-9._-]/g, '-')
+      const path = `${cfg.root}/07-Agents/work-products/${taskId}/${safeName}`
+      if (!isMarkdownPath(path)) return reply.code(400).send({ error: 'work product name must end .md/.markdown/.txt' })
+      const w = await vaultWrite(token, cfg, path, b.markdown, `mc(${agent.name}): work product for ${taskId}`, { name: `${agent.name} (7Ei agent)`, email: 'agents@7ei.ai' })
+      if (!w.ok) return reply.code(w.status).send({ error: w.error ?? `GitHub ${w.status}` })
+      kind = 'work_product'; url = `vault:${path}`; name = safeName; sha = w.commit ?? null
+    } else if (!url) {
+      return reply.code(400).send({ error: 'provide markdown (work product) or url (link)' })
+    }
+    const row = { id: randomUUID(), orgId: agent.orgId, taskId, kind, name: String(name).slice(0, 300), url, contentType: b.contentType ?? (kind === 'work_product' ? 'text/markdown' : null), sizeBytes: null, sha, createdByAgentId: agent.id, createdByUser: null, createdAt: new Date() }
+    await db.insert(schema.taskAttachments).values(row)
+    return { ok: true, attachment: row }
+  })
+
+  // MCA-WORK S3.3 — report a running dev server + preview URL for a workspace.
+  app.post('/api/agent/workspaces/:id/runtime', async (req, reply) => {
+    const agent = (req as any).agent
+    const { id } = req.params as any
+    const b = (req.body ?? {}) as any
+    const ws = await db.query.workspaces.findFirst({ where: eq(schema.workspaces.id, id) })
+    if (!ws || ws.orgId !== agent.orgId) return reply.code(404).send({ error: 'Workspace not found' })
+    const patch: any = { runtimeStatus: b.status ?? 'running' }
+    if (typeof b.previewUrl === 'string') patch.previewUrl = b.previewUrl
+    if (typeof b.devUrl === 'string') patch.devUrl = b.devUrl
+    await db.update(schema.workspaces).set(patch).where(eq(schema.workspaces.id, id))
+    return { ok: true, workspaceId: id, runtimeStatus: patch.runtimeStatus }
+  })
+
   // Liveness/heartbeat — also returns who the runtime is authenticated as.
   app.post('/api/agent/heartbeat', async (req) => {
     const agent = (req as any).agent

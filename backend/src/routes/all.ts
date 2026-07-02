@@ -19,6 +19,7 @@ import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
 import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
+import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
@@ -671,6 +672,17 @@ export async function taskRoutes(app: FastifyInstance) {
     await db.insert(schema.workspaces).values(ws)
     reply.code(201); return { workspace: ws }
   })
+  // MCA-WORK S3.3 — set a workspace's preview URL / dev-server runtime status.
+  app.patch('/api/workspaces/:id', async (req) => {
+    const { id } = req.params as any
+    const b = (req.body ?? {}) as any
+    const patch: any = {}
+    if (typeof b.previewUrl === 'string') patch.previewUrl = b.previewUrl
+    if (typeof b.devUrl === 'string') patch.devUrl = b.devUrl
+    if (typeof b.runtimeStatus === 'string') patch.runtimeStatus = b.runtimeStatus
+    if (Object.keys(patch).length) await db.update(schema.workspaces).set(patch).where(eq(schema.workspaces.id, id))
+    return { ok: true }
+  })
   app.delete('/api/workspaces/:id', async (req, reply) => {
     await db.delete(schema.workspaces).where(eq(schema.workspaces.id, (req.params as any).id))
     reply.code(204)
@@ -811,6 +823,51 @@ export async function taskRoutes(app: FastifyInstance) {
     const { taskId } = req.params as any
     const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId)).orderBy(desc(schema.agentRuns.startedAt)).limit(20)
     return { runs }
+  })
+
+  // MCA-WORK S3.1 — attachments + work products.
+  app.get('/api/tasks/:taskId/attachments', async (req) => {
+    const { taskId } = req.params as any
+    const attachments = await db.select().from(schema.taskAttachments).where(eq(schema.taskAttachments.taskId, taskId)).orderBy(desc(schema.taskAttachments.createdAt))
+    return { attachments }
+  })
+  app.post('/api/tasks/:taskId/attachments', async (req, reply) => {
+    const { taskId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.name || !b.url) return reply.code(400).send({ error: 'name and url required' })
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    const row = { id: randomUUID(), orgId: task.orgId, taskId, kind: normalizeAttachmentKind(b.kind), name: String(b.name).slice(0, 300), url: String(b.url).slice(0, 2000), contentType: b.contentType ?? null, sizeBytes: b.sizeBytes ?? null, sha: null, createdByAgentId: null, createdByUser: (req as any).userId ?? null, createdAt: new Date() }
+    await db.insert(schema.taskAttachments).values(row); reply.code(201); return { attachment: row }
+  })
+  app.delete('/api/attachments/:id', async (req, reply) => {
+    const { id } = req.params as any
+    await db.delete(schema.taskAttachments).where(eq(schema.taskAttachments.id, id)); reply.code(204)
+  })
+
+  // MCA-WORK S3.2 — labels, subtasks, unified ticket timeline.
+  app.patch('/api/tasks/:taskId/labels', async (req) => {
+    const { taskId } = req.params as any
+    const b = (req.body ?? {}) as any
+    const labels = Array.isArray(b.labels) ? b.labels.map(String) : []
+    await db.update(schema.tasks).set({ labels: JSON.stringify(labels) }).where(eq(schema.tasks.id, taskId))
+    return { ok: true, labels }
+  })
+  app.get('/api/tasks/:taskId/subtasks', async (req) => {
+    const { taskId } = req.params as any
+    const subtasks = await db.select().from(schema.tasks).where(eq(schema.tasks.parentTaskId, taskId)).orderBy(schema.tasks.createdAt)
+    return { subtasks }
+  })
+  app.get('/api/tasks/:taskId/timeline', async (req, reply) => {
+    const { taskId } = req.params as any
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    const [comments, runs, attachments] = await Promise.all([
+      db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId)),
+      db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId)),
+      db.select().from(schema.taskAttachments).where(eq(schema.taskAttachments.taskId, taskId)),
+    ])
+    return { timeline: buildTimeline({ task, comments, runs, attachments }) }
   })
 
   app.patch('/api/tasks/:taskId', async (req) => {
