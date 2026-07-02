@@ -12,8 +12,16 @@ import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { sendPushNotification } from './push'
 import { runHeartbeatSweep } from './heartbeat-engine'
-import { resolveVaultForOrg, formatKvExport, agentKvPath } from './agent-memory'
-import { vaultWrite } from './vault-connector'
+import {
+  resolveVaultForOrg, formatKvExport, appendSection,
+  agentKvPath, agentRecentPath, agentArchiveRecentPath, agentLessonsPath, slugifyAgentName,
+} from './agent-memory'
+import { vaultRead, vaultWrite } from './vault-connector'
+import {
+  parseSessionBlocks, partitionByAge, rebuildRecent, buildArchiveAppend,
+  countLessonEntries, isOrchestratorRole, buildConsolidationReport,
+} from './consolidation'
+import { isExternalAgent } from './agent-runtime'
 import type { MemoryEntry } from './memory'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
@@ -50,6 +58,8 @@ async function runDueTasks() {
     runHeartbeatSweep().catch(err => console.error('Heartbeat sweep error:', err))
     // MCA-75: nightly memory KV export (once per day, on the 03:00 UTC tick).
     maybeRunNightlyKvExport(now).catch(err => console.error('KV export error:', err))
+    // MCA-76: weekly memory consolidation (Sundays at/after 04:00 UTC, once per day).
+    maybeRunWeeklyConsolidation(now).catch(err => console.error('Weekly consolidation error:', err))
   } catch (err) {
     console.error('Scheduler tick error:', err)
   }
@@ -87,6 +97,81 @@ export async function maybeRunNightlyKvExport(now: Date): Promise<void> {
         .catch(err => console.warn(`KV export failed for ${agent.name} (non-critical):`, err))
     }
   }
+}
+
+// MCA-76: weekly memory consolidation — prune session blocks strictly older than
+// 7 days from each agent's recent.md into archive-recent.md, then hand the org's
+// orchestrator one review task quoting the Memory-Protocol promotion rules.
+// Runs on the first scheduler tick at/after CONSOLIDATION_HOUR_UTC on Sundays,
+// at most once per UTC day. Per-org work never breaks the scheduler tick.
+const CONSOLIDATION_DOW_UTC = 0   // Sunday
+const CONSOLIDATION_HOUR_UTC = 4
+const LESSON_REVIEW_THRESHOLD = 5
+let lastConsolidationDay: string | null = null
+
+export async function maybeRunWeeklyConsolidation(now: Date): Promise<void> {
+  const day = now.toISOString().slice(0, 10)
+  if (now.getUTCDay() !== CONSOLIDATION_DOW_UTC || now.getUTCHours() < CONSOLIDATION_HOUR_UTC || lastConsolidationDay === day) return
+  lastConsolidationDay = day
+  const orgs = await db.select({ id: schema.organisations.id, name: schema.organisations.name }).from(schema.organisations)
+  for (const org of orgs) {
+    try {
+      await consolidateOrgMemory(org, now, day)
+    } catch (err) {
+      console.warn(`Weekly consolidation failed for org ${org.id} (non-critical):`, err)
+    }
+  }
+}
+
+async function consolidateOrgMemory(org: { id: string; name: string | null }, now: Date, day: string): Promise<void> {
+  const { token, cfg } = await resolveVaultForOrg(org.id)
+  if (!token) return
+  const committer = { name: 'Mission Control (7Ei system)', email: 'agents@7ei.ai' }
+  const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, org.id))
+  const perAgent: Array<{ agent: string; archivedCount: number; keptCount: number; lessonCount: number }> = []
+
+  for (const agent of agents) {
+    const slug = slugifyAgentName(agent.name)
+    const recent = await vaultRead(token, cfg, agentRecentPath(agent.name, cfg.root))
+    if (!recent.ok) continue   // no recent.md yet → nothing to consolidate
+    const { preamble, blocks } = parseSessionBlocks(recent.markdown ?? '')
+    const { keep, stale } = partitionByAge(blocks, now)
+    const lessons = await vaultRead(token, cfg, agentLessonsPath(agent.name, cfg.root))
+    const lessonCount = lessons.ok ? countLessonEntries(lessons.markdown ?? '') : 0
+
+    if (stale.length > 0) {
+      const pruned = await vaultWrite(token, cfg, agentRecentPath(agent.name, cfg.root),
+        rebuildRecent(preamble, keep), `mc(system): weekly consolidation — prune ${slug} recent.md ${day}`, committer)
+      if (pruned.ok) {
+        // Prune commit landed (recoverable from git history) → append to the archive.
+        const archivePath = agentArchiveRecentPath(agent.name, cfg.root)
+        const existing = await vaultRead(token, cfg, archivePath)
+        const archived = await vaultWrite(token, cfg, archivePath,
+          appendSection(existing.ok ? existing.markdown : undefined, buildArchiveAppend(stale, now)),
+          `mc(system): weekly consolidation — archive ${slug} ${day}`, committer)
+        if (!archived.ok) console.warn(`Weekly consolidation: archive write failed for ${slug} (${archived.status}) — blocks remain in git history`)
+      } else {
+        console.warn(`Weekly consolidation: prune write failed for ${slug} (${pruned.status}) — skipping archive`)
+      }
+    }
+    perAgent.push({ agent: slug, archivedCount: stale.length, keptCount: keep.length, lessonCount })
+  }
+
+  const needsReview = perAgent.some(a => a.archivedCount > 0 || a.lessonCount >= LESSON_REVIEW_THRESHOLD)
+  if (!needsReview) return
+  const orchestrator = agents.find(a => isOrchestratorRole(a.role))
+  if (!orchestrator) {
+    console.warn(`Weekly consolidation: org ${org.id} has no orchestrator agent — skipping review task`)
+    return
+  }
+  const external = isExternalAgent(orchestrator)
+  await db.insert(schema.tasks).values({
+    id: randomUUID(), orgId: org.id, agentId: orchestrator.id, assignedTo: orchestrator.id,
+    title: `Weekly memory consolidation ${day}`,
+    input: buildConsolidationReport({ orgName: org.name ?? undefined, date: day, perAgent }),
+    status: external ? 'assigned' : 'pending', priority: 'medium',
+    kanbanColumn: external ? 'in_progress' : 'todo', createdAt: new Date(),
+  } as any)
 }
 
 // MCA-PC C3: fire a routine from any trigger (cron, webhook, or API). Creates a
