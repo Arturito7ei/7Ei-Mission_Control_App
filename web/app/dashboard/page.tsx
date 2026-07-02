@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import CockpitPanel from './CockpitPanel'
 import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
+import TaskDrawer from './TaskDrawer'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
   useAuth = require('@clerk/nextjs').useAuth
@@ -41,6 +42,7 @@ export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
   const router = useRouter()
   const [org, setOrg] = useState<Org | null>(null)
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -377,7 +379,7 @@ export default function DashboardPage() {
               {tasks.slice(0, 100).map(t => {
                 const a = agentMap.get(t.agentId)
                 return (
-                  <div key={t.id} style={{ ...s.trow, gridTemplateColumns: '3fr 1.5fr 1fr 1fr 1fr' }}>
+                  <div key={t.id} role="button" tabIndex={0} onClick={() => setOpenTaskId(t.id)} onKeyDown={e => { if (e.key === 'Enter') setOpenTaskId(t.id) }} style={{ ...s.trow, gridTemplateColumns: '3fr 1.5fr 1fr 1fr 1fr', cursor: 'pointer' }}>
                     <span style={{ fontSize: 13 }}>{t.title.slice(0, 60)}{t.title.length > 60 ? '…' : ''}</span>
                     <span style={{ fontSize: 12, color: '#888' }}>{a?.avatarEmoji} {a?.name ?? '—'}</span>
                     <span style={{ color: STATUS_C[t.status], fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{t.status}</span>
@@ -451,6 +453,8 @@ export default function DashboardPage() {
         )}
 
         {tab === 'connectors' && org && <ConnectorsPanel orgId={org.id} getToken={getToken} />}
+
+        {openTaskId && org && <TaskDrawer orgId={org.id} taskId={openTaskId} getToken={getToken} onClose={() => setOpenTaskId(null)} />}
 
         {tab === 'usage' && (
           <div style={s.page}>
