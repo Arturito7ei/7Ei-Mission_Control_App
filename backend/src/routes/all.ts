@@ -781,7 +781,7 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/tasks', async (req, reply) => {
     const { orgId } = req.params as any
     const body = req.body as any
-    const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, createdAt: new Date(), completedAt: null }
+    const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
     await db.insert(schema.tasks).values(task)
     reply.code(201); return { task }
   })
@@ -791,6 +791,28 @@ export async function taskRoutes(app: FastifyInstance) {
     if (!task) return reply.code(404).send({ error: 'Not found' })
     return { task }
   })
+  // MCA-EXEC S1.4 — ticket comments + S1.2 run history (read side for the UI).
+  app.get('/api/tasks/:taskId/comments', async (req) => {
+    const { taskId } = req.params as any
+    const comments = await db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId)).orderBy(schema.taskComments.createdAt)
+    return { comments }
+  })
+  app.post('/api/tasks/:taskId/comments', async (req, reply) => {
+    const { taskId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.body) return reply.code(400).send({ error: 'body required' })
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    const row = { id: randomUUID(), orgId: task.orgId, taskId, authorAgentId: null, authorUser: (req as any).userId ?? null, body: String(b.body).slice(0, 4000), createdAt: new Date() }
+    await db.insert(schema.taskComments).values(row)
+    reply.code(201); return { comment: row }
+  })
+  app.get('/api/tasks/:taskId/runs', async (req) => {
+    const { taskId } = req.params as any
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId)).orderBy(desc(schema.agentRuns.startedAt)).limit(20)
+    return { runs }
+  })
+
   app.patch('/api/tasks/:taskId', async (req) => {
     const { taskId } = req.params as any
     await db.update(schema.tasks).set(req.body as any).where(eq(schema.tasks.id, taskId))

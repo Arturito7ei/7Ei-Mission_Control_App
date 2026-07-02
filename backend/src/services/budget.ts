@@ -2,7 +2,7 @@
 // and evaluate policies; runtime enforcement pauses agents on a hard-stop breach.
 
 import { db, schema } from '../db/client'
-import { eq, and } from 'drizzle-orm'
+import { eq, and, inArray } from 'drizzle-orm'
 
 export type BudgetScope = 'company' | 'agent' | 'project' | 'goal'
 export interface BudgetPolicy {
@@ -64,7 +64,11 @@ export async function enforceAgentBudget(orgId: string, agentId: string, ctx: { 
       const { state } = evaluatePolicy(p, spend)
       if (state === 'breach' && isHardStop(p)) {
         await db.update(schema.agents).set({ status: 'paused' }).where(eq(schema.agents.id, agentId))
-        return { blocked: true, reason: `Budget hard-stop: ${p.scope} limit $${p.limitUsd} reached (spent $${spend.toFixed(2)}). Agent paused.` }
+        // MCA-EXEC S1.3: park the agent's queued work so nothing runs after the limit.
+        await db.update(schema.tasks)
+          .set({ status: 'blocked', kanbanColumn: 'blocked', inboxState: 'needs_attention' })
+          .where(and(eq(schema.tasks.agentId, agentId), inArray(schema.tasks.status, ['assigned', 'pending'])))
+        return { blocked: true, reason: `Budget hard-stop: ${p.scope} limit $${p.limitUsd} reached (spent $${spend.toFixed(2)}). Agent paused; queued tasks parked.` }
       }
     }
     return { blocked: false }

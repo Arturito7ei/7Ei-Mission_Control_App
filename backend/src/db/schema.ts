@@ -103,8 +103,39 @@ export const tasks = sqliteTable('tasks', {
   goalId: text('goal_id'),                            // links task to a goal (MCA-PC B1)
   workspaceId: text('workspace_id'),                  // execution workspace (MCA-PC D1)
   branch: text('branch'),                             // operator branch
+  lockToken: text('lock_token'),                      // MCA-EXEC S1.1: atomic checkout lock owner
+  lockedAt: integer('locked_at', { mode: 'timestamp' }),
+  blockedBy: text('blocked_by'),                      // MCA-EXEC S1.4: JSON array of blocker task ids
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+})
+
+// MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and
+// sessionState that persists across heartbeats so runs resume instead of restart.
+export const agentRuns = sqliteTable('agent_runs', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  taskId: text('task_id'),
+  status: text('status').notNull().default('running'),  // running|done|failed|orphaned
+  sessionState: text('session_state'),                  // opaque resume blob (JSON string)
+  logs: text('logs'),                                   // JSON array of { t, msg }
+  tokensUsed: integer('tokens_used'),
+  costUsd: real('cost_usd'),
+  startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  endedAt: integer('ended_at', { mode: 'timestamp' }),
+})
+
+// MCA-EXEC S1.4: threaded discussion on a task (ticket comments).
+export const taskComments = sqliteTable('task_comments', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  taskId: text('task_id').notNull(),
+  authorAgentId: text('author_agent_id'),
+  authorUser: text('author_user'),
+  body: text('body').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const plugins = sqliteTable('plugins', {
