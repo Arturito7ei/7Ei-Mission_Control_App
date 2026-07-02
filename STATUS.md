@@ -18,7 +18,7 @@ Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.
 | Story | Status |
 |---|---|
 | MCA-71 · Task detail drawer (timeline/attachments/runs/comments) | ✅ Done |
-| MCA-72 · Governance panel (policies, permissions, revisions/rollback) | 🔧 In progress |
+| MCA-72 · Governance panel (policies, permissions, revisions/rollback) | ✅ Done |
 | MCA-70 · Design tokens + shared primitives | ⬜ To do |
 | MCA-73 · Accessibility + responsive/mobile | ⬜ To do |
 

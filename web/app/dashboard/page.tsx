@@ -5,6 +5,7 @@ import CockpitPanel from './CockpitPanel'
 import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
 import TaskDrawer from './TaskDrawer'
+import GovernancePanel from './GovernancePanel'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
   useAuth = require('@clerk/nextjs').useAuth
@@ -36,7 +37,7 @@ const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paus
 const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
-type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'usage' | 'settings'
+type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'governance' | 'usage' | 'settings'
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
@@ -293,6 +294,7 @@ export default function DashboardPage() {
     { id: 'costs', icon: '💰', label: 'Costs' },
     { id: 'comms', icon: '📬', label: 'Comms' },
     { id: 'connectors', icon: '🔌', label: 'Connectors' },
+    { id: 'governance', icon: '🛡️', label: 'Governance' },
     { id: 'usage', icon: '📊', label: 'Usage' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
@@ -453,6 +455,8 @@ export default function DashboardPage() {
         )}
 
         {tab === 'connectors' && org && <ConnectorsPanel orgId={org.id} getToken={getToken} />}
+
+        {tab === 'governance' && org && <GovernancePanel orgId={org.id} getToken={getToken} />}
 
         {openTaskId && org && <TaskDrawer orgId={org.id} taskId={openTaskId} getToken={getToken} onClose={() => setOpenTaskId(null)} />}
 
