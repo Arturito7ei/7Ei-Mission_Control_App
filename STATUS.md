@@ -1,6 +1,6 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-02 · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-02 (UI epic complete) · auto-maintained by the build agent (bumped at each story/phase)._
 
 **Live:** backend on Fly (`7ei-backend`), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis.md`.
@@ -19,8 +19,10 @@ Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.
 |---|---|
 | MCA-71 · Task detail drawer (timeline/attachments/runs/comments) | ✅ Done |
 | MCA-72 · Governance panel (policies, permissions, revisions/rollback) | ✅ Done |
-| MCA-70 · Design tokens + shared primitives | ⬜ To do |
-| MCA-73 · Accessibility + responsive/mobile | ⬜ To do |
+| MCA-70 · Design tokens + shared primitives | ✅ Done |
+| MCA-73 · Accessibility + responsive/mobile | ✅ Done |
+
+**MCA-69 (UI epic) — complete.**
 
 ## Open items
 Clerk **production** instance · Google consent-screen scopes (Gmail/Calendar) · rotate exposed NVIDIA + vault tokens ·
