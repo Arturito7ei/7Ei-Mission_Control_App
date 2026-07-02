@@ -19,7 +19,7 @@ You're taking over the **7Ei Mission Control App** — an AI-agent "virtual offi
 - Paperclip-parity gap-bridge: **5/5 phases shipped** — epics MCA-47 (execution core: atomic checkout, run telemetry, deps, overspend), MCA-52 (adapter http-executor + presets + CLI), MCA-56 (attachments/work-products, ticket timeline, workspace preview URLs), MCA-60 (execution policies + config rollback + per-agent permissions + HMAC run-tokens + plugin jobs), MCA-65 (orchestration evals + PWA + self-host Docker).
 - UI epic **MCA-69 complete** (MCA-70/71/72/73): design tokens (`web/app/dashboard/tokens.ts`), task drawer, governance panel, a11y/responsive.
 - Go-live hardening (**PR #147**): OpenClaw adapter (`adapters/openclaw/mc_adapter.py`) reads `MC_LLM_API_KEY` from the encrypted secret store at boot (no plaintext key on disk); `adapters/mac-mini/setup.sh` one-command installer; `GO-LIVE.md` runbook.
-- **Not done:** the hardened adapter is committed but NOT yet copied to the live `~/.openclaw/mc-adapter/`.
+- Hardened adapter deployed to the laptop's live `~/.openclaw/mc-adapter/` on 2026-07-02 (backup: `mc_adapter.py.bak-*`). **Still pending:** key rotation (then strip `MC_LLM_API_KEY` from `mc.env`) and the move to the Mac mini — see GO-LIVE.md §3–4.
 
 ## Conventions
 
