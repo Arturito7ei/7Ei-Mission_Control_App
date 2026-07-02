@@ -65,3 +65,4 @@ coverage/
 # Misc
 .cache/
 tmp/
+adapters/openclaw/__pycache__/
