@@ -247,9 +247,74 @@ export async function agentRoutes(app: FastifyInstance) {
       }
       body.advisorIds = JSON.stringify(ids)
     }
+    const _before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     await db.update(schema.agents).set(body).where(eq(schema.agents.id, agentId))
-    return { agent: await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) }) }
+    const _after = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    // MCA-GOV2 S4.1: snapshot the change for audit + rollback.
+    if (_before) await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId: _before.orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(_before), after: JSON.stringify(_after), actor: (req as any).userId ?? 'human', createdAt: new Date() })
+    return { agent: _after }
   })
+
+  // MCA-GOV2 S4.2 — per-agent permissions (capabilities). null/empty = allow all.
+  app.patch('/api/agents/:agentId/permissions', async (req) => {
+    const { agentId } = req.params as any
+    const b = (req.body ?? {}) as any
+    const caps = Array.isArray(b.permissions) ? b.permissions.map(String) : []
+    const before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    await db.update(schema.agents).set({ permissions: JSON.stringify(caps) }).where(eq(schema.agents.id, agentId))
+    if (before) await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId: before.orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify({ ...before, permissions: JSON.stringify(caps) }), actor: (req as any).userId ?? 'human', createdAt: new Date() })
+    return { ok: true, permissions: caps }
+  })
+
+  // MCA-GOV2 S4.1 — execution policies (action → requires approval).
+  app.get('/api/orgs/:orgId/policies', async (req) => {
+    const { orgId } = req.params as any
+    return { policies: await db.select().from(schema.executionPolicies).where(eq(schema.executionPolicies.orgId, orgId)) }
+  })
+  app.post('/api/orgs/:orgId/policies', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.action) return reply.code(400).send({ error: 'action required' })
+    const row = { id: randomUUID(), orgId, action: String(b.action), requiresApproval: b.requiresApproval === false ? 0 : 1, createdAt: new Date() }
+    await db.insert(schema.executionPolicies).values(row); reply.code(201); return { policy: row }
+  })
+  app.delete('/api/policies/:id', async (req, reply) => {
+    await db.delete(schema.executionPolicies).where(eq(schema.executionPolicies.id, (req.params as any).id)); reply.code(204)
+  })
+
+  // MCA-GOV2 S4.1 — config revisions + rollback (restore a prior agent snapshot).
+  app.get('/api/orgs/:orgId/revisions', async (req) => {
+    const { orgId } = req.params as any
+    const revisions = await db.select().from(schema.configRevisions).where(eq(schema.configRevisions.orgId, orgId)).orderBy(desc(schema.configRevisions.createdAt)).limit(100)
+    return { revisions }
+  })
+  app.post('/api/revisions/:id/rollback', async (req, reply) => {
+    const { id } = req.params as any
+    const rev = await db.query.configRevisions.findFirst({ where: eq(schema.configRevisions.id, id) })
+    if (!rev || !rev.before) return reply.code(404).send({ error: 'Revision not found' })
+    let before: any; try { before = JSON.parse(rev.before) } catch { return reply.code(400).send({ error: 'corrupt snapshot' }) }
+    if (rev.entity === 'agent') {
+      const patch: any = {}
+      for (const k of ['name', 'role', 'title', 'jobDescription', 'personality', 'permissions', 'reportsTo', 'status', 'llmProvider', 'llmModel', 'avatarEmoji', 'termsOfReference']) if (k in before) patch[k] = before[k]
+      await db.update(schema.agents).set(patch).where(eq(schema.agents.id, rev.entityId))
+      return { ok: true, entity: 'agent', entityId: rev.entityId, restored: Object.keys(patch) }
+    }
+    return reply.code(400).send({ error: `rollback not supported for entity ${rev.entity}` })
+  })
+
+  // MCA-GOV2 S4.4 — plugin job queue (enqueue + list).
+  app.post('/api/orgs/:orgId/plugin-jobs', async (req, reply) => {
+    const { orgId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (!b.type) return reply.code(400).send({ error: 'type required' })
+    const row = { id: randomUUID(), orgId, pluginId: b.pluginId ?? null, type: String(b.type), payload: b.payload ? JSON.stringify(b.payload) : null, status: 'queued', result: null, createdAt: new Date(), updatedAt: null }
+    await db.insert(schema.pluginJobs).values(row); reply.code(201); return { job: row }
+  })
+  app.get('/api/orgs/:orgId/plugin-jobs', async (req) => {
+    const { orgId } = req.params as any
+    return { jobs: await db.select().from(schema.pluginJobs).where(eq(schema.pluginJobs.orgId, orgId)).orderBy(desc(schema.pluginJobs.createdAt)).limit(100) }
+  })
+
   app.patch('/api/agents/:agentId/status', async (req) => {
     const { agentId } = req.params as any
     const { status } = req.body as any
