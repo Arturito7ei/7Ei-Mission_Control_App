@@ -1,0 +1,41 @@
+# 7Ei Mission Control — one-command self-host (MCA-DIST S5.3).
+# Alongside the hosted path (backend on Fly, web on Vercel), this runs the whole
+# stack on your own box: libSQL (sqld) + backend + web.  `docker compose up -d`
+services:
+  db:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    restart: unless-stopped
+    environment:
+      - SQLD_NODE=primary
+    ports:
+      - "8080:8080"
+    volumes:
+      - mc_db:/var/lib/sqld
+
+  backend:
+    build: { context: ./backend }
+    restart: unless-stopped
+    depends_on: [db]
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=http://db:8080
+      - SECRETS_ENC_KEY=${SECRETS_ENC_KEY:-change-me-32-byte-key}
+      - RUN_TOKEN_SECRET=${RUN_TOKEN_SECRET:-change-me}
+      - ALLOWED_ORIGINS=http://localhost:3000
+      # Optional: CLERK_SECRET_KEY, GITHUB_VAULT_TOKEN, GOOGLE_CLIENT_ID/SECRET, etc.
+
+  web:
+    build: { context: ./web }
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      # Optional: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY (omit for trusted-local mode)
+
+volumes:
+  mc_db:
