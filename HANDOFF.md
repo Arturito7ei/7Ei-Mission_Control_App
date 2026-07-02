@@ -1,6 +1,6 @@
 # Mission Control — Session Handoff (for a fresh agent)
 
-_Last updated: 2026-07-02. Paste the "Kickoff prompt" below into a new session; the rest of this doc is the detail it should verify._
+_Last updated: 2026-07-02 (evening — post shared-memory sprint). Paste the "Kickoff prompt" below into a new session; the rest of this doc is the detail it should verify._
 
 ## Kickoff prompt
 
@@ -20,6 +20,10 @@ You're taking over the **7Ei Mission Control App** — an AI-agent "virtual offi
 - UI epic **MCA-69 complete** (MCA-70/71/72/73): design tokens (`web/app/dashboard/tokens.ts`), task drawer, governance panel, a11y/responsive.
 - Go-live hardening (**PR #147**): OpenClaw adapter (`adapters/openclaw/mc_adapter.py`) reads `MC_LLM_API_KEY` from the encrypted secret store at boot (no plaintext key on disk); `adapters/mac-mini/setup.sh` one-command installer; `GO-LIVE.md` runbook.
 - Hardened adapter deployed to the laptop's live `~/.openclaw/mc-adapter/` on 2026-07-02 (backup: `mc_adapter.py.bak-*`). **Still pending:** key rotation (then strip `MC_LLM_API_KEY` from `mc.env`) and the move to the Mac mini — see GO-LIVE.md §3–4.
+- Shared-memory sprint (2026-07-02 evening, proposal: vault `02-Architecture/Shared-Memory-Upgrade-2026-07-02.md`): **MCA-74** all.ts split into domain route modules + `services/push.ts` (PR #148); **MCA-75** memory bus — session-summary endpoint, org+agent long-term vault memory injected into `buildSystemPrompt()`, nightly KV export (PR #149); **MCA-76** weekly consolidation routine, Sun ≥04:00 UTC (PR #150). Backend now 448 tests. Vault has per-agent namespaces `Memory/agents/<slug>/`. **All memory-bus features dormant until `GITHUB_VAULT_TOKEN` is set** (GO-LIVE §3b).
+- CLAUDE.md is layered: slim root + `backend/`, `web/`, `adapters/` files (keep root <70 lines; state belongs in STATUS.md, not CLAUDE.md).
+- **7Ei_OS PR #3 open** (protocols: MC as primary coordination + memory bus) — human review required; after merge, re-sync the vault `Protocols/7Ei_OS/` mirror.
+- Next engineering candidates: R4 vault RAG (Turso native vectors, not Pinecone), web shared API client → CockpitPanel split, archive `app/` (Expo) decision, R6 Sync-Registry automation.
 
 ## Conventions
 
