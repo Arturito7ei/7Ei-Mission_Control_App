@@ -12,6 +12,9 @@ import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { sendPushNotification } from './push'
 import { runHeartbeatSweep } from './heartbeat-engine'
+import { resolveVaultForOrg, formatKvExport, agentKvPath } from './agent-memory'
+import { vaultWrite } from './vault-connector'
+import type { MemoryEntry } from './memory'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
 let schedulerTimer: NodeJS.Timeout | null = null
@@ -45,6 +48,8 @@ async function runDueTasks() {
     }
     // MCA-PC C1: heartbeat engine sweep (orphan recovery, status recompute, wakes).
     runHeartbeatSweep().catch(err => console.error('Heartbeat sweep error:', err))
+    // MCA-75: nightly memory KV export (once per day, on the 03:00 UTC tick).
+    maybeRunNightlyKvExport(now).catch(err => console.error('KV export error:', err))
   } catch (err) {
     console.error('Scheduler tick error:', err)
   }
@@ -52,6 +57,36 @@ async function runDueTasks() {
 
 async function runScheduledTask(scheduled: any, triggerTime: Date) {
   await fireRoutine(scheduled, triggerTime)
+}
+
+// MCA-75: nightly memory KV export — mirror each agent's DB memory (memoryLongTerm)
+// into the vault at Memory/agents/<slug>/kv.md. Runs on the first scheduler tick
+// at or after KV_EXPORT_HOUR_UTC, at most once per UTC day. Writes are
+// unconditional: the generated-at line changes nightly anyway, and vaultWrite
+// already does the sha-lookup read — a compare read would only double the GETs.
+const KV_EXPORT_HOUR_UTC = 3
+let lastKvExportDay: string | null = null
+
+export async function maybeRunNightlyKvExport(now: Date): Promise<void> {
+  const day = now.toISOString().slice(0, 10)
+  if (now.getUTCHours() !== KV_EXPORT_HOUR_UTC || lastKvExportDay === day) return
+  lastKvExportDay = day
+  const orgs = await db.select({ id: schema.organisations.id }).from(schema.organisations)
+  for (const org of orgs) {
+    const { token, cfg } = await resolveVaultForOrg(org.id)
+    if (!token) continue
+    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, org.id))
+    for (const agent of agents) {
+      const memory = (agent.memoryLongTerm ?? {}) as Record<string, MemoryEntry>
+      const entries = Object.values(memory)
+      if (entries.length === 0) continue
+      const kvs = entries.map(e => ({ key: e.key, value: e.value, updatedAt: e.updatedAt ? new Date(e.updatedAt) : null }))
+      // Fire-and-forget per agent — one bad write must not sink the sweep.
+      vaultWrite(token, cfg, agentKvPath(agent.name, cfg.root), formatKvExport(agent.name, kvs),
+        `mc(system): nightly memory KV export ${day}`, { name: 'Mission Control (7Ei system)', email: 'agents@7ei.ai' })
+        .catch(err => console.warn(`KV export failed for ${agent.name} (non-critical):`, err))
+    }
+  }
 }
 
 // MCA-PC C3: fire a routine from any trigger (cron, webhook, or API). Creates a

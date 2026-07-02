@@ -13,6 +13,7 @@ import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 import { goalAncestry, formatGoalContext } from './goals'
 import { canAgentRun } from './governance'
 import { enforceAgentBudget } from './budget'
+import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -131,6 +132,18 @@ export async function executeAgentTask(opts: {
       console.warn('Drive context fetch failed (non-critical):', err)
     }
 
+    // Shared memory bus (MCA-75): org + agent long-term vault notes into the prompt.
+    let sharedMemory = ''
+    try {
+      const vault = await resolveVaultForOrg(agent.orgId)
+      if (vault.token) {
+        const { block } = await fetchSharedMemory(vault.token, vault.cfg, agent.name)
+        sharedMemory = block
+      }
+    } catch (err) {
+      console.warn('Shared memory fetch failed (non-critical):', err)
+    }
+
     // Org chart context (MCA-PC A1): manager + direct reports for the reporting line.
     const hierAgents = await db.select({ id: schema.agents.id, name: schema.agents.name, reportsTo: schema.agents.reportsTo })
       .from(schema.agents).where(eq(schema.agents.orgId, agent.orgId))
@@ -150,7 +163,7 @@ export async function executeAgentTask(opts: {
       }
     } catch { /* non-critical */ }
 
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext)
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory)
     const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
     const provider = agent.llmProvider ?? 'anthropic'
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
@@ -252,6 +265,7 @@ export function buildSystemPrompt(
   availableAgents?: Array<{ name: string; role: string }>,
   hierarchy?: { title?: string | null; manager?: string | null; reports?: string[] },
   goalContext?: string,
+  sharedMemory?: string,
 ): string {
   const lines: string[] = []
 
@@ -270,6 +284,9 @@ export function buildSystemPrompt(
   }
   if (goalContext) {
     lines.push(goalContext, '')
+  }
+  if (sharedMemory) {
+    lines.push(sharedMemory, '')
   }
 
   if (agent.agentType === 'advisor' && agent.advisorPersona) {

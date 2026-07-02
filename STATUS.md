@@ -34,6 +34,9 @@ Remaining **user-only** console actions (assistant can't create accounts / enter
 3. Rotate NVIDIA key → set as `MC_LLM_API_KEY` secret; rotate vault GitHub PAT.
 4. Run `adapters/mac-mini/setup.sh` on the Mac mini; unload the laptop's launchd service.
 
+## Shared-memory bus (vault proposal R3)
+- **MCA-75** (2026-07-02): `POST /api/agent/memory/session-summary` (namespaced append to `Memory/agents/<slug>/recent.md`, same capability/policy gates as memory writes); `buildSystemPrompt()` now injects org + agent long-term vault memory (TTL-cached, truncated, non-critical on failure); nightly scheduler job exports each agent's DB memory KVs to `Memory/agents/<slug>/kv.md`. New `services/agent-memory.ts` + 19 tests (434 total).
+
 ## Refactors
 - **MCA-74** (2026-07-02): `routes/all.ts` (1,383 lines) split into domain modules (orgs/agents/tasks/projects/costs/skills/auth/credentials), `all.ts` kept as barrel; `sendPushNotification` + token map extracted to `services/push.ts` (fixes the routes→services inversion). No behavior change; 415 tests + 11/11 evals green.
 
