@@ -36,6 +36,8 @@ LLM_BASE  = os.environ.get("MC_LLM_BASE_URL", "").rstrip("/")
 LLM_KEY   = os.environ.get("MC_LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("MC_LLM_MODEL", "MiniMax-Text-01")
 LLM_MAX_TOKENS = int(os.environ.get("MC_LLM_MAX_TOKENS", "1024"))  # some hosts (e.g. NVIDIA NIM minimax-m3) return empty choices without this
+HTTP_URL   = os.environ.get("MC_HTTP_URL", "")        # MC_EXECUTOR=http → POST tasks here
+HTTP_HEADER = os.environ.get("MC_HTTP_HEADER", "")    # optional "Name: value" auth header for the webhook
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT  = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -170,11 +172,38 @@ def llm_execute(task):
         return "failed", f"llm executor error: {e}"
 
 
+def http_execute(task):
+    """Forward the task to a bring-your-own HTTP bot and use its reply as the result.
+    POSTs {id,title,input} to MC_HTTP_URL. Accepts a JSON {output,status?} reply or plain text."""
+    if not HTTP_URL:
+        return "failed", "MC_HTTP_URL not configured"
+    headers = {"Content-Type": "application/json"}
+    if HTTP_HEADER and ":" in HTTP_HEADER:
+        k, v = HTTP_HEADER.split(":", 1)
+        headers[k.strip()] = v.strip()
+    payload = {"id": task.get("id"), "title": task.get("title"), "input": task.get("input") or ""}
+    req = urllib.request.Request(HTTP_URL, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            raw = r.read().decode()
+    except Exception as e:
+        return "failed", f"http executor error: {e}"
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return (data.get("status") or "done"), str(data.get("output") or data.get("result") or raw)
+    except Exception:
+        pass
+    return "done", raw
+
+
 def choose_executor():
     if EXECUTOR == "shell":
         return shell_execute
     if EXECUTOR == "llm":
         return llm_execute
+    if EXECUTOR == "http":
+        return http_execute
     # auto
     return llm_execute if LLM_KEY else shell_execute
 
@@ -224,7 +253,8 @@ def load_secrets():
 def main():
     if not TOKEN:
         print("MC_AGENT_TOKEN is required", file=sys.stderr); sys.exit(2)
-    mode = "llm" if choose_executor() is llm_execute else "shell"
+    _ex = choose_executor()
+    mode = {id(llm_execute): "llm", id(shell_execute): "shell", id(http_execute): "http"}.get(id(_ex), "auto")
     print(f"7Ei MC adapter → {BASE}  (executor={mode}, shell={'on' if ALLOW_SHELL else 'off'}, workdir={WORKDIR})")
     heartbeat("green")
     load_secrets()
