@@ -10,7 +10,17 @@ try {
 export const metadata = {
   title: '7Ei Mission Control',
   description: 'Your modular virtual office — manage AI agents from web or mobile',
-  icons: { icon: '/android-chrome-512x512.png' },
+  icons: { icon: '/android-chrome-512x512.png', apple: '/apple-touch-icon.png' },
+  manifest: '/manifest.webmanifest',
+  appleWebApp: { capable: true, title: '7Ei MC', statusBarStyle: 'black-translucent' as const },
+}
+
+// MCA-DIST S5.2 — installable PWA + mobile viewport.
+export const viewport = {
+  themeColor: '#0a0a0a',
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover' as const,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

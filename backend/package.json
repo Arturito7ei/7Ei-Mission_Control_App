@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "evals": "node --import=tsx ../evals/orchestration.ts",
     "start": "node dist/index.js",
     "test": "node --test --import=tsx src/tests/*.test.ts",
     "test:watch": "node --test --watch --import=tsx src/tests/*.test.ts",
