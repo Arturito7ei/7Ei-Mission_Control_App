@@ -1,12 +1,13 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db, schema } from '../db/client'
-import { eq, and, inArray, desc } from 'drizzle-orm'
+import { eq, and, inArray, desc, isNull } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { agentAuth } from '../middleware/agent-token'
 import { decrypt, resolveSecretsForAgent } from '../services/secrets'
 import { workspaceRuntime } from '../services/workspaces'
 import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
+import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
@@ -25,6 +26,9 @@ const HeartbeatSchema = z.object({
 const ResultSchema = z.object({
   output: z.string(),
   status: z.enum(['done', 'failed']).default('done'),
+  runId: z.string().optional(),
+  tokensUsed: z.number().optional(),
+  costUsd: z.number().optional(),
 })
 
 export async function agentApiRoutes(app: FastifyInstance) {
@@ -97,6 +101,36 @@ export async function agentApiRoutes(app: FastifyInstance) {
     return { ok: true, path, commit: r.commit }
   })
 
+  // S1.2 — stream a run's progress: append a log line, update running cost/tokens,
+  // and persist sessionState so the next heartbeat resumes instead of restarting.
+  app.post('/api/agent/runs/:id/log', async (req, reply) => {
+    const agent = (req as any).agent
+    const { id } = req.params as any
+    const body = (req.body ?? {}) as any
+    const run = await db.query.agentRuns.findFirst({ where: eq(schema.agentRuns.id, id) })
+    if (!run || run.agentId !== agent.id) return reply.code(404).send({ error: 'Run not found' })
+    const patch: any = { updatedAt: new Date() }
+    if (typeof body.log === 'string') patch.logs = appendLog(run.logs, body.log)
+    if (typeof body.sessionState === 'string') patch.sessionState = body.sessionState
+    if (typeof body.tokensUsed === 'number') patch.tokensUsed = body.tokensUsed
+    if (typeof body.costUsd === 'number') patch.costUsd = body.costUsd
+    await db.update(schema.agentRuns).set(patch).where(eq(schema.agentRuns.id, id))
+    return { ok: true }
+  })
+
+  // S1.4 — comment on a task (ticket discussion), authored by the agent.
+  app.post('/api/agent/tasks/:taskId/comment', async (req, reply) => {
+    const agent = (req as any).agent
+    const { taskId } = req.params as any
+    const body = (req.body ?? {}) as any
+    if (!body.body) return reply.code(400).send({ error: 'body required' })
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task || task.orgId !== agent.orgId) return reply.code(404).send({ error: 'Task not found' })
+    const row = { id: randomUUID(), orgId: agent.orgId, taskId, authorAgentId: agent.id, authorUser: null, body: String(body.body).slice(0, 4000), createdAt: new Date() }
+    await db.insert(schema.taskComments).values(row)
+    return { ok: true, comment: row }
+  })
+
   // Liveness/heartbeat — also returns who the runtime is authenticated as.
   app.post('/api/agent/heartbeat', async (req) => {
     const agent = (req as any).agent
@@ -142,26 +176,73 @@ export async function agentApiRoutes(app: FastifyInstance) {
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task || task.agentId !== agent.id) return reply.code(404).send({ error: 'Task not found' })
     if (task.status === 'done') return reply.code(409).send({ error: 'Task already completed' })
-    await db.update(schema.tasks).set({ status: 'in_progress', kanbanColumn: 'in_progress' })
-      .where(eq(schema.tasks.id, taskId))
+
+    // S1.4 — all blocker dependencies must be done first.
+    const blockers = parseBlockedBy((task as any).blockedBy)
+    if (blockers.length) {
+      const rows = await db.select({ status: schema.tasks.status }).from(schema.tasks).where(inArray(schema.tasks.id, blockers))
+      if (!blockersSatisfied(rows.map(r => r.status))) {
+        return reply.code(409).send({ error: 'Task is blocked by unfinished dependencies', blockedBy: blockers })
+      }
+    }
+
+    // S1.1 — atomic checkout. Claim when assigned, or reclaim an in_progress task
+    // whose lease has expired (orphaned run). Compare-and-swap on the lock owner
+    // so exactly one concurrent claimer wins.
+    if (!isClaimable(task as any)) return reply.code(409).send({ error: 'Task is locked by an active run' })
+    const lockToken = randomUUID()
+    const now = new Date()
+    const guard = task.status === 'assigned'
+      ? and(eq(schema.tasks.id, taskId), eq(schema.tasks.status, 'assigned'))
+      : and(eq(schema.tasks.id, taskId), eq(schema.tasks.status, 'in_progress'),
+          task.lockToken ? eq(schema.tasks.lockToken, task.lockToken) : isNull(schema.tasks.lockToken))
+    const res: any = await db.update(schema.tasks)
+      .set({ status: 'in_progress', kanbanColumn: 'in_progress', lockToken, lockedAt: now })
+      .where(guard)
+    if ((res?.rowsAffected ?? 0) === 0) return reply.code(409).send({ error: 'Task was just claimed by another run' })
+
+    // S1.2 — orphan any stale running runs for this task, then start a fresh run,
+    // resuming sessionState from the most recent prior run so work continues.
+    await db.update(schema.agentRuns).set({ status: 'orphaned', endedAt: now })
+      .where(and(eq(schema.agentRuns.taskId, taskId), eq(schema.agentRuns.status, 'running')))
+    const prior = await db.select().from(schema.agentRuns)
+      .where(eq(schema.agentRuns.taskId, taskId)).orderBy(desc(schema.agentRuns.startedAt)).limit(1)
+    const sessionState = prior[0]?.sessionState ?? null
+    const runId = randomUUID()
+    await db.insert(schema.agentRuns).values({
+      id: runId, orgId: agent.orgId, agentId: agent.id, taskId, status: 'running',
+      sessionState, logs: null, tokensUsed: null, costUsd: null, startedAt: now, updatedAt: now, endedAt: null,
+    })
     await db.update(schema.agents).set({ status: 'active' }).where(eq(schema.agents.id, agent.id))
-    return { ok: true, task: { ...task, status: 'in_progress' } }
+    return { ok: true, runId, sessionState, task: { ...task, status: 'in_progress', lockToken } }
   })
 
   // Post the result of a task: done | failed.
   app.post('/api/agent/tasks/:taskId/result', async (req, reply) => {
     const agent = (req as any).agent
     const { taskId } = req.params as any
-    const { output, status } = ResultSchema.parse(req.body ?? {})
+    const parsed = ResultSchema.parse(req.body ?? {})
+    const { output, status } = parsed
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task || task.agentId !== agent.id) return reply.code(404).send({ error: 'Task not found' })
+    const now = new Date()
     await db.update(schema.tasks)
       .set({
         output, status, kanbanColumn: status === 'done' ? 'done' : 'blocked',
         inboxState: status === 'done' ? 'awaiting_review' : 'needs_attention',  // MCA-PC A3
-        completedAt: new Date(),
+        completedAt: now,
+        lockToken: null, lockedAt: null,  // S1.1 release the execution lock
+        tokensUsed: parsed.tokensUsed ?? task.tokensUsed, costUsd: parsed.costUsd ?? task.costUsd,
       })
       .where(eq(schema.tasks.id, taskId))
+    // S1.2 finish the run (explicit runId, else the task's running run)
+    const runWhere = parsed.runId
+      ? eq(schema.agentRuns.id, parsed.runId)
+      : and(eq(schema.agentRuns.taskId, taskId), eq(schema.agentRuns.status, 'running'))
+    await db.update(schema.agentRuns)
+      .set({ status: status === 'done' ? 'done' : 'failed', endedAt: now, updatedAt: now,
+        tokensUsed: parsed.tokensUsed ?? undefined, costUsd: parsed.costUsd ?? undefined })
+      .where(runWhere)
     await db.insert(schema.messages).values({
       id: randomUUID(), agentId: agent.id, taskId, role: 'assistant', content: output, createdAt: new Date(),
     })

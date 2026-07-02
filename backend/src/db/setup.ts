@@ -88,6 +88,15 @@ export async function setupDatabase() {
     // MCA-PC C2: scoped budget policies
     `CREATE TABLE IF NOT EXISTS budget_policies (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, scope TEXT NOT NULL, scope_id TEXT, limit_usd REAL NOT NULL, warn_pct REAL DEFAULT 0.8, hard_stop INTEGER DEFAULT 1, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_budget_policies_org ON budget_policies(org_id)`,
+    // MCA-EXEC (Phase 1): atomic checkout, run telemetry, task deps + comments
+    `ALTER TABLE tasks ADD COLUMN lock_token TEXT`,
+    `ALTER TABLE tasks ADD COLUMN locked_at INTEGER`,
+    `ALTER TABLE tasks ADD COLUMN blocked_by TEXT`,
+    `CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, task_id TEXT, status TEXT NOT NULL DEFAULT 'running', session_state TEXT, logs TEXT, tokens_used INTEGER, cost_usd REAL, started_at INTEGER NOT NULL, updated_at INTEGER, ended_at INTEGER)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_runs_task ON agent_runs(task_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id, status)`,
+    `CREATE TABLE IF NOT EXISTS task_comments (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, task_id TEXT NOT NULL, author_agent_id TEXT, author_user TEXT, body TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
