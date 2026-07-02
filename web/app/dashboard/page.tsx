@@ -300,11 +300,11 @@ export default function DashboardPage() {
   ]
 
   return (
-    <div style={s.layout}>
-      <aside style={s.sidebar}>
+    <div className="mc-layout" style={s.layout}>
+      <aside className="mc-sidebar" style={s.sidebar}>
         <div style={s.logoBox}><span style={s.logoText}>7Ei</span></div>
         <div style={s.orgLabel}>{org.name}</div>
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+        <nav className="mc-nav" style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
           {NAV.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ ...s.navBtn, ...(tab === n.id ? s.navActive : {}) }}>
               <span>{n.icon}</span> {n.label}
@@ -314,7 +314,7 @@ export default function DashboardPage() {
         {unread > 0 && <div style={s.notifBanner}><span>🔔</span><span style={{ flex: 1, fontSize: 13 }}>{unread} task{unread > 1 ? 's' : ''} done</span></div>}
       </aside>
 
-      <main style={s.main}>
+      <main className="mc-main" style={s.main}>
 
         {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} />}
 

@@ -293,3 +293,30 @@ p  { margin: 0; color: var(--text); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+
+/* ─── MCA-73: responsive dashboard shell ───────────────────────────────
+   Below tablet width the fixed sidebar becomes a horizontal, scrollable
+   top nav so the app is usable on phones (PWA is installable). !important
+   overrides the component's inline layout styles. */
+@media (max-width: 820px) {
+  .mc-layout { flex-direction: column !important; height: auto !important; min-height: 100vh; overflow: visible !important; }
+  .mc-sidebar {
+    width: 100% !important;
+    height: auto !important;
+    flex-direction: row !important;
+    align-items: center;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    border-right: none !important;
+    border-bottom: 1px solid #222 !important;
+    padding: 8px 10px !important;
+    position: sticky; top: 0; z-index: 20;
+  }
+  .mc-nav { flex-direction: row !important; flex: initial !important; gap: 4px !important; }
+  .mc-nav > button { white-space: nowrap; }
+  .mc-sidebar > div { flex: 0 0 auto; }        /* logo + org label stay inline */
+  .mc-main { width: 100% !important; }
+}
+/* Touch targets: nav buttons comfortably tappable */
+.mc-nav > button { min-height: 40px; }

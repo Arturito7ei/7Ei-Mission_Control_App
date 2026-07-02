@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
+import { STATUS_COLOR as STATUS_C } from './tokens'
 
 // MCA-UI U2 — Task detail drawer. Surfaces the shipped-but-invisible backend:
 // unified timeline, comments, attachments/work-products, run history, subtasks.
@@ -145,7 +146,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 function Empty() { return <div style={{ ...s.muted, fontSize: 12, padding: '4px 0' }}>Nothing yet.</div> }
 
-const STATUS_C: Record<string, string> = { done: '#22c55e', failed: '#ff8080', in_progress: '#4aa8ff', assigned: '#e0b000', blocked: '#ff8080', pending: '#9aa0a6' }
 const s: Record<string, React.CSSProperties> = {
   scrim: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' },
   drawer: { width: 'min(560px, 94vw)', height: '100%', background: '#0d0d0d', borderLeft: '1px solid #262626', display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)' },
