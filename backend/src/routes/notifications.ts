@@ -1,9 +1,10 @@
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, desc, and, gte } from 'drizzle-orm'
+import { pushTokens } from '../services/push'
 
-// Push notifications — Expo push tokens stored, used for task completion alerts
-const pushTokens = new Map<string, Set<string>>() // userId → Set<expoToken>
+// Re-exported for backwards compatibility — the implementation lives in services/push.
+export { sendPushNotification } from '../services/push'
 
 export async function notificationRoutes(app: FastifyInstance) {
   // Register Expo push token
@@ -53,22 +54,4 @@ export async function notificationRoutes(app: FastifyInstance) {
 
     return { notifications }
   })
-}
-
-// Called internally when a task completes — sends Expo push notification
-export async function sendPushNotification(userId: string, title: string, body: string, data?: Record<string, unknown>) {
-  const tokens = pushTokens.get(userId)
-  if (!tokens || tokens.size === 0) return
-
-  const messages = Array.from(tokens).map(to => ({ to, title, body, data: data ?? {}, sound: 'default' }))
-
-  try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(messages),
-    })
-  } catch (e) {
-    console.warn('Push notification failed:', e)
-  }
 }
