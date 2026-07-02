@@ -34,5 +34,8 @@ Remaining **user-only** console actions (assistant can't create accounts / enter
 3. Rotate NVIDIA key → set as `MC_LLM_API_KEY` secret; rotate vault GitHub PAT.
 4. Run `adapters/mac-mini/setup.sh` on the Mac mini; unload the laptop's launchd service.
 
+## Refactors
+- **MCA-74** (2026-07-02): `routes/all.ts` (1,383 lines) split into domain modules (orgs/agents/tasks/projects/costs/skills/auth/credentials), `all.ts` kept as barrel; `sendPushNotification` + token map extracted to `services/push.ts` (fixes the routes→services inversion). No behavior change; 415 tests + 11/11 evals green.
+
 ## Verify
 `cd backend && npm test` · `npm run evals` · `cd web && npm run build` · self-host: `docker compose up -d --build`.

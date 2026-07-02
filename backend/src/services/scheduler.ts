@@ -10,7 +10,7 @@ import { db, schema } from '../db/client'
 import { eq, and, lte } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
-import { sendPushNotification } from '../routes/notifications'
+import { sendPushNotification } from './push'
 import { runHeartbeatSweep } from './heartbeat-engine'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
