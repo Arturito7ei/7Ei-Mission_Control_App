@@ -39,6 +39,16 @@ export function agentKvPath(name: string, root: string): string {
   return withRoot(root, `${agentMemoryDir(name)}/kv.md`)
 }
 
+/** Session blocks pruned from recent.md (MCA-76): `<root>/Memory/agents/<slug>/archive-recent.md`. */
+export function agentArchiveRecentPath(name: string, root: string): string {
+  return withRoot(root, `${agentMemoryDir(name)}/archive-recent.md`)
+}
+
+/** Accumulated lessons log: `<root>/Memory/agents/<slug>/lessons.md`. */
+export function agentLessonsPath(name: string, root: string): string {
+  return withRoot(root, `${agentMemoryDir(name)}/lessons.md`)
+}
+
 /** Org-wide shared notes: `<root>/Memory/long-term.md`. */
 export function orgLongTermPath(root: string): string {
   return withRoot(root, 'Memory/long-term.md')
