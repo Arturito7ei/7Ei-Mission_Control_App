@@ -59,6 +59,7 @@ export const agents = sqliteTable('agents', {
   runtime: text('runtime').notNull().default('internal'),
   externalEndpoint: text('external_endpoint'),       // optional push callback URL
   apiTokenHash: text('api_token_hash'),              // sha256 of the agent token
+  permissions: text('permissions'),                  // MCA-GOV2 S4.2: JSON capability list (null = allow all)
   lastHeartbeatAt: integer('last_heartbeat_at', { mode: 'timestamp' }),
   heartbeatStatus: text('heartbeat_status').default('unknown'), // green|amber|stale|unknown
   contactChannel: text('contact_channel'),           // telegram chat id / email for pings
@@ -126,6 +127,40 @@ export const taskAttachments = sqliteTable('task_attachments', {
   createdByAgentId: text('created_by_agent_id'),
   createdByUser: text('created_by_user'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// MCA-GOV2 S4.1: immutable snapshots of config mutations, for audit + rollback.
+export const configRevisions = sqliteTable('config_revisions', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  entity: text('entity').notNull(),                   // agent | goal | ...
+  entityId: text('entity_id').notNull(),
+  before: text('before'),                             // JSON snapshot prior to the change
+  after: text('after'),                               // JSON snapshot after the change
+  actor: text('actor'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// MCA-GOV2 S4.1: execution policies — which actions require human approval.
+export const executionPolicies = sqliteTable('execution_policies', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  action: text('action').notNull(),                   // e.g. agent.hire | connector.connect | memory.write
+  requiresApproval: integer('requires_approval').default(1),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// MCA-GOV2 S4.4: plugin job queue — the scheduling surface for out-of-process plugin work.
+export const pluginJobs = sqliteTable('plugin_jobs', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  pluginId: text('plugin_id'),
+  type: text('type').notNull(),
+  payload: text('payload'),
+  status: text('status').notNull().default('queued'), // queued | running | done | failed
+  result: text('result'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
 })
 
 // MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and

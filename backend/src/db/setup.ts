@@ -103,6 +103,14 @@ export async function setupDatabase() {
     `ALTER TABLE workspaces ADD COLUMN dev_url TEXT`,
     `CREATE TABLE IF NOT EXISTS task_attachments (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, task_id TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'link', name TEXT NOT NULL, url TEXT, content_type TEXT, size_bytes INTEGER, sha TEXT, created_by_agent_id TEXT, created_by_user TEXT, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id)`,
+    // MCA-GOV2 (Phase 4): permissions, config revisions, execution policies, plugin jobs
+    `ALTER TABLE agents ADD COLUMN permissions TEXT`,
+    `CREATE TABLE IF NOT EXISTS config_revisions (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, entity TEXT NOT NULL, entity_id TEXT NOT NULL, before TEXT, after TEXT, actor TEXT, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_config_revisions_org ON config_revisions(org_id, entity)`,
+    `CREATE TABLE IF NOT EXISTS execution_policies (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, action TEXT NOT NULL, requires_approval INTEGER DEFAULT 1, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_execution_policies_org ON execution_policies(org_id)`,
+    `CREATE TABLE IF NOT EXISTS plugin_jobs (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, plugin_id TEXT, type TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'queued', result TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    `CREATE INDEX IF NOT EXISTS idx_plugin_jobs_org ON plugin_jobs(org_id, status)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

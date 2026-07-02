@@ -8,6 +8,7 @@ import { decrypt, resolveSecretsForAgent } from '../services/secrets'
 import { workspaceRuntime } from '../services/workspaces'
 import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
+import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval } from '../services/governance2'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
@@ -90,6 +91,13 @@ export async function agentApiRoutes(app: FastifyInstance) {
 
   app.put('/api/agent/memory/file', async (req, reply) => {
     const agent = (req as any).agent
+    // S4.2 capability gate + S4.1 execution policy gate.
+    if (!isCapabilityAllowed(parseCapabilities(agent.permissions), 'memory:write')) return reply.code(403).send({ error: 'agent lacks capability memory:write' })
+    const pols = await db.select().from(schema.executionPolicies).where(and(eq(schema.executionPolicies.orgId, agent.orgId), eq(schema.executionPolicies.action, 'memory.write')))
+    if (requiresApproval(pols as any, 'memory.write')) {
+      await db.insert(schema.approvalRequests).values({ id: randomUUID(), orgId: agent.orgId, type: 'memory.write', summary: `${agent.name} → write ${String((req.body as any)?.path ?? '')}`, payload: { agentId: agent.id, path: (req.body as any)?.path }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      return reply.code(202).send({ pending: true, error: 'requires human approval (policy: memory.write)' })
+    }
     const { token, cfg } = await resolveVault(agent.orgId)
     if (!token) return reply.code(400).send({ error: 'vault not connected' })
     const body = (req.body ?? {}) as any
@@ -138,6 +146,7 @@ export async function agentApiRoutes(app: FastifyInstance) {
     const b = (req.body ?? {}) as any
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task || task.orgId !== agent.orgId) return reply.code(404).send({ error: 'Task not found' })
+    if (!isCapabilityAllowed(parseCapabilities(agent.permissions), 'attachment:write')) return reply.code(403).send({ error: 'agent lacks capability attachment:write' })
     let kind = 'link', url: string | null = b.url ?? null, name = b.name ?? 'attachment', sha: string | null = null
     if (typeof b.markdown === 'string') {
       const { token, cfg } = await resolveVault(agent.orgId)
@@ -168,6 +177,43 @@ export async function agentApiRoutes(app: FastifyInstance) {
     if (typeof b.devUrl === 'string') patch.devUrl = b.devUrl
     await db.update(schema.workspaces).set(patch).where(eq(schema.workspaces.id, id))
     return { ok: true, workspaceId: id, runtimeStatus: patch.runtimeStatus }
+  })
+
+  // MCA-GOV2 S4.3 — mint a short-lived per-run token (HMAC) scoped to this agent.
+  app.post('/api/agent/run-token', async (req, reply) => {
+    const agent = (req as any).agent
+    const b = (req.body ?? {}) as any
+    const secret = process.env.RUN_TOKEN_SECRET || process.env.SECRETS_ENC_KEY || 'dev-7ei-mc-run'
+    const token = signRunToken({ agentId: agent.id, orgId: agent.orgId, runId: b.runId ?? null }, secret)
+    return { token, tokenType: 'run', expiresInSec: 900 }
+  })
+
+  // MCA-GOV2 S4.4 — plugin worker: pull queued jobs, claim atomically, report result.
+  app.get('/api/agent/plugin-jobs', async (req) => {
+    const agent = (req as any).agent
+    const jobs = await db.select().from(schema.pluginJobs)
+      .where(and(eq(schema.pluginJobs.orgId, agent.orgId), eq(schema.pluginJobs.status, 'queued')))
+      .orderBy(schema.pluginJobs.createdAt).limit(5)
+    return { jobs }
+  })
+  app.post('/api/agent/plugin-jobs/:id/claim', async (req, reply) => {
+    const agent = (req as any).agent
+    const { id } = req.params as any
+    const job = await db.query.pluginJobs.findFirst({ where: eq(schema.pluginJobs.id, id) })
+    if (!job || job.orgId !== agent.orgId) return reply.code(404).send({ error: 'Job not found' })
+    const res: any = await db.update(schema.pluginJobs).set({ status: 'running', updatedAt: new Date() })
+      .where(and(eq(schema.pluginJobs.id, id), eq(schema.pluginJobs.status, 'queued')))
+    if ((res?.rowsAffected ?? 0) === 0) return reply.code(409).send({ error: 'already claimed' })
+    return { ok: true, job: { ...job, status: 'running' } }
+  })
+  app.post('/api/agent/plugin-jobs/:id/result', async (req, reply) => {
+    const agent = (req as any).agent
+    const { id } = req.params as any
+    const b = (req.body ?? {}) as any
+    const job = await db.query.pluginJobs.findFirst({ where: eq(schema.pluginJobs.id, id) })
+    if (!job || job.orgId !== agent.orgId) return reply.code(404).send({ error: 'Job not found' })
+    await db.update(schema.pluginJobs).set({ status: b.status === 'failed' ? 'failed' : 'done', result: b.result ? JSON.stringify(b.result) : null, updatedAt: new Date() }).where(eq(schema.pluginJobs.id, id))
+    return { ok: true }
   })
 
   // Liveness/heartbeat — also returns who the runtime is authenticated as.
