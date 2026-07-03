@@ -1,36 +1,17 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { tk, ui } from './tokens'
+import { api } from '@/lib/api'
+import { tk, ui, text, space } from './tokens'
+import { Button, Card, DenseRow, DenseTable, Pill, SectionLabel, TextInput, type PillTone } from './ui'
 
 // Connectors tab — unified connection manager for Jira, GitHub, Gmail,
 // Google Calendar, Google Drive, and Hugging Face. Credentials go to the
 // backend's encrypted secret store; Google rides on one shared OAuth.
 // MCA-77: inline token rotation, honest error mapping, per-connector
 // health pill (session-local test results), tokenized styles.
+// MCA-79: shared api() client + ui.tsx primitives + density scale.
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
 type Getter = () => Promise<string | null>
-
-async function call<T>(path: string, token: string | null, opts?: RequestInit): Promise<T> {
-  let res: Response
-  try {
-    res = await fetch(`${API}${path}`, {
-      ...opts,
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
-    })
-  } catch {
-    // fetch rejects (TypeError) only on network-level failure
-    throw new Error('Network error — backend unreachable')
-  }
-  if (res.status === 204) return {} as T
-  const j = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}: ${(j as any)?.error ?? (res.statusText || 'Request failed')}`
-    if (res.status === 401 || res.status === 403) msg += ' — token invalid or revoked. Use Replace token.'
-    throw new Error(msg)
-  }
-  return j as T
-}
 
 type Row = { id: string; name: string; category: string; authType: 'token' | 'basic' | 'oauth'; icon: string; docsUrl: string; fields: string[]; connected: boolean; detail: string | null }
 type JiraIssue = { id: string; key: string; summary: string; status?: string; priority?: string; assignee?: string }
@@ -80,7 +61,7 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
   const [showIssues, setShowIssues] = useState(false)
 
   const load = useCallback(async () => {
-    try { const r = await call<{ connectors: Row[] }>(`/api/orgs/${orgId}/connectors`, await getToken()); setRows(r.connectors) }
+    try { const r = await api<{ connectors: Row[] }>(`/api/orgs/${orgId}/connectors`, { token: await getToken() }); setRows(r.connectors) }
     catch (e: any) { setMsg(m => ({ ...m, _global: e?.message ?? 'Failed to load' })) }
   }, [orgId, getToken])
 
@@ -92,7 +73,7 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
   const test = useCallback(async (row: Row) => {
     setBusy(row.id); note(row.id, 'Testing…')
     try {
-      const r = await call<{ ok: boolean; detail: string | null }>(`/api/orgs/${orgId}/connectors/${row.id}/test`, await getToken(), { method: 'POST', body: '{}' })
+      const r = await api<{ ok: boolean; detail: string | null }>(`/api/orgs/${orgId}/connectors/${row.id}/test`, { token: await getToken(), method: 'POST', body: '{}' })
       setTests(t => ({ ...t, [row.id]: { ok: r.ok, at: Date.now() } }))
       note(row.id, r.ok ? `✓ ${r.detail ?? 'OK'}` : '✗ failed')
     } catch (e: any) {
@@ -108,11 +89,11 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
     setBusy(row.id); note(row.id, '')
     try {
       if (row.authType === 'oauth') {
-        const r = await call<{ authUrl: string }>(`/api/orgs/${orgId}/connectors/${row.id}/connect`, await getToken(), { method: 'POST', body: '{}' })
+        const r = await api<{ authUrl: string }>(`/api/orgs/${orgId}/connectors/${row.id}/connect`, { token: await getToken(), method: 'POST', body: '{}' })
         window.location.href = r.authUrl; return
       }
       const body = replacementBody ?? (row.authType === 'token' ? { token: (form[row.id]?.token ?? '').trim() } : (form[row.id] ?? {}))
-      await call(`/api/orgs/${orgId}/connectors/${row.id}/connect`, await getToken(), { method: 'POST', body: JSON.stringify(body) })
+      await api(`/api/orgs/${orgId}/connectors/${row.id}/connect`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
       setOpenForm(null); setForm(f => ({ ...f, [row.id]: {} }))
       await load()
       if (replacementBody) {
@@ -137,7 +118,7 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
   const disconnect = async (row: Row) => {
     setBusy(row.id); note(row.id, '')
     try {
-      await call(`/api/orgs/${orgId}/connectors/${row.id}`, await getToken(), { method: 'DELETE' })
+      await api(`/api/orgs/${orgId}/connectors/${row.id}`, { token: await getToken(), method: 'DELETE' })
       setTests(t => { const rest = { ...t }; delete rest[row.id]; return rest })
       if (row.id === 'jira') { setShowIssues(false); setIssues([]) }
       await load()
@@ -147,16 +128,16 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
 
   const loadIssues = async () => {
     if (showIssues) { setShowIssues(false); return }
-    try { const r = await call<{ issues: JiraIssue[] }>(`/api/orgs/${orgId}/jira/issues`, await getToken()); setIssues(r.issues); setShowIssues(true) }
+    try { const r = await api<{ issues: JiraIssue[] }>(`/api/orgs/${orgId}/jira/issues`, { token: await getToken() }); setIssues(r.issues); setShowIssues(true) }
     catch (e: any) { note('jira', e?.message ?? 'Could not load issues') }
   }
 
   // Connected → last test ok · Failing → last test failed · Untested → no test this session.
-  const health = (row: Row): { label: string; color: string } | null => {
+  const health = (row: Row): { label: string; tone: PillTone; color: string } | null => {
     if (!row.connected) return null
     const t = tests[row.id]
-    if (!t) return { label: 'Untested', color: tk.muted }
-    return t.ok ? { label: 'Connected', color: tk.green } : { label: 'Failing', color: tk.red }
+    if (!t) return { label: 'Untested', tone: 'muted', color: tk.muted }
+    return t.ok ? { label: 'Connected', tone: 'ok', color: tk.green } : { label: 'Failing', tone: 'fail', color: tk.red }
   }
 
   const grouped = CATEGORY_ORDER.map(cat => ({ cat, items: rows.filter(r => r.category === cat) })).filter(g => g.items.length)
@@ -166,27 +147,27 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
     <div style={s.page}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h1 style={s.h1}>Connectors <span style={s.sub}>{healthyCount}/{rows.length} connected</span></h1>
-        <button style={s.ghost} onClick={load}>↻ Refresh</button>
+        <Button style={{ color: tk.accent }} onClick={load}>↻ Refresh</Button>
       </div>
       {msg._global && <div style={s.err}>⚠ {msg._global}</div>}
 
       {grouped.map(g => (
         <div key={g.cat}>
-          <h2 style={s.h2}>{g.cat}</h2>
+          <SectionLabel style={{ margin: '4px 0 8px' }}>{g.cat}</SectionLabel>
           <div style={s.grid}>
             {g.items.map(row => {
               const pill = health(row)
               const t = tests[row.id]
               return (
-              <div key={row.id} style={s.card}>
+              <Card key={row.id}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 26 }}>{row.icon}</span>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ fontWeight: 700, fontSize: text.lg.fontSize, display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap' }}>
                       {row.name}
-                      {pill && <span style={{ ...s.pill, color: pill.color, border: `1px solid ${pill.color}` }}>{pill.label}</span>}
+                      {pill && <Pill tone={pill.tone}>{pill.label}</Pill>}
                     </div>
-                    <div style={{ fontSize: 12, color: pill ? pill.color : tk.muted }}>
+                    <div style={{ fontSize: text.sm.fontSize, color: pill ? pill.color : tk.muted }}>
                       {row.connected ? `● ${row.detail ?? 'Connected'}` : '○ Not connected'}
                       {t && <span style={{ color: tk.muted }}> · tested {rel(t.at)}</span>}
                     </div>
@@ -195,36 +176,36 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
 
                 {row.connected ? (
                   replacing === row.id ? (
-                    <div style={{ marginTop: 10 }}>
-                      <input style={s.input} type="password" autoFocus autoComplete="off"
+                    <div style={{ marginTop: space.md }}>
+                      <TextInput style={s.input} type="password" autoFocus autoComplete="off"
                         placeholder="Paste new token" aria-label={`New ${row.name} token`}
                         value={replaceTok} onChange={e => setReplaceTok(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') saveReplace(row); if (e.key === 'Escape') cancelReplace(row) }} />
                       <div style={s.actions}>
-                        <button style={s.btnPrimary} disabled={busy === row.id || !replaceTok.trim()} onClick={() => saveReplace(row)}>{busy === row.id ? 'Saving…' : 'Save'}</button>
-                        <button style={s.btn} onClick={() => cancelReplace(row)}>Cancel</button>
+                        <Button variant="primary" disabled={busy === row.id || !replaceTok.trim()} onClick={() => saveReplace(row)}>{busy === row.id ? 'Saving…' : 'Save'}</Button>
+                        <Button onClick={() => cancelReplace(row)}>Cancel</Button>
                       </div>
                     </div>
                   ) : (
                     <div style={s.actions}>
-                      <button style={s.btn} disabled={busy === row.id} onClick={() => test(row)}>Test</button>
-                      {takesToken(row) && <button style={s.btn} disabled={busy === row.id} onClick={() => { setReplacing(row.id); setReplaceTok(''); note(row.id, '') }}>Replace token</button>}
-                      {row.id === 'jira' && <button style={s.btn} onClick={loadIssues}>{showIssues ? 'Hide issues' : 'View issues'}</button>}
-                      <button style={s.btnDanger} disabled={busy === row.id} onClick={() => disconnect(row)}>Disconnect</button>
+                      <Button disabled={busy === row.id} onClick={() => test(row)}>Test</Button>
+                      {takesToken(row) && <Button disabled={busy === row.id} onClick={() => { setReplacing(row.id); setReplaceTok(''); note(row.id, '') }}>Replace token</Button>}
+                      {row.id === 'jira' && <Button onClick={loadIssues}>{showIssues ? 'Hide issues' : 'View issues'}</Button>}
+                      <Button variant="danger" disabled={busy === row.id} onClick={() => disconnect(row)}>Disconnect</Button>
                     </div>
                   )
                 ) : row.authType === 'oauth' ? (
                   <div style={s.actions}>
-                    <button style={s.btnPrimary} disabled={busy === row.id} onClick={() => connect(row)}>Connect with Google</button>
+                    <Button variant="primary" disabled={busy === row.id} onClick={() => connect(row)}>Connect with Google</Button>
                     <a style={s.link} href={row.docsUrl} target="_blank" rel="noreferrer">Docs ↗</a>
                   </div>
                 ) : openForm === row.id ? (
-                  <div style={{ marginTop: 10 }}>
+                  <div style={{ marginTop: space.md }}>
                     {row.authType === 'token' ? (
-                      <input style={s.input} type="password" placeholder="Paste token" value={form[row.id]?.token ?? ''} onChange={e => setF(row.id, 'token', e.target.value)} />
+                      <TextInput style={s.input} type="password" placeholder="Paste token" value={form[row.id]?.token ?? ''} onChange={e => setF(row.id, 'token', e.target.value)} />
                     ) : (
                       row.fields.map(f => (
-                        <input key={f} style={s.input}
+                        <TextInput key={f} style={s.input}
                           type={/token|secret|apitoken/i.test(f) ? 'password' : 'text'}
                           placeholder={FIELD_LABEL[f] ?? f}
                           value={form[row.id]?.[f] ?? ''}
@@ -233,22 +214,22 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
                     )}
                     {HINT[row.id] && <p style={s.hint}>{HINT[row.id]} <a style={s.link} href={row.docsUrl} target="_blank" rel="noreferrer">Docs ↗</a></p>}
                     <div style={s.actions}>
-                      <button style={s.btnPrimary} disabled={busy === row.id} onClick={() => connect(row)}>{busy === row.id ? 'Connecting…' : 'Connect'}</button>
-                      <button style={s.btn} onClick={() => { setOpenForm(null); note(row.id, '') }}>Cancel</button>
+                      <Button variant="primary" disabled={busy === row.id} onClick={() => connect(row)}>{busy === row.id ? 'Connecting…' : 'Connect'}</Button>
+                      <Button onClick={() => { setOpenForm(null); note(row.id, '') }}>Cancel</Button>
                     </div>
                   </div>
                 ) : (
                   <div style={s.actions}>
-                    <button style={s.btnPrimary} onClick={() => setOpenForm(row.id)}>Connect</button>
+                    <Button variant="primary" onClick={() => setOpenForm(row.id)}>Connect</Button>
                     <a style={s.link} href={row.docsUrl} target="_blank" rel="noreferrer">Docs ↗</a>
                   </div>
                 )}
                 {msg[row.id] && (
-                  <div style={{ fontSize: 12, color: msg[row.id].startsWith('✓') ? tk.green : msg[row.id].startsWith('✗') ? tk.red : msg[row.id] === 'Testing…' ? tk.muted : tk.red, marginTop: 8 }}>
+                  <div style={{ fontSize: text.sm.fontSize, color: msg[row.id].startsWith('✓') ? tk.green : msg[row.id].startsWith('✗') ? tk.red : msg[row.id] === 'Testing…' ? tk.muted : tk.red, marginTop: space.md }}>
                     {msg[row.id]}
                   </div>
                 )}
-              </div>
+              </Card>
             )})}
           </div>
         </div>
@@ -256,19 +237,18 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
 
       {showIssues && (
         <div>
-          <h2 style={s.h2}>Jira issues · {issues.length}</h2>
-          <div style={s.table}>
-            <div style={{ ...s.thead, gridTemplateColumns: '1fr 3fr 1.5fr 1fr 1.5fr' }}><span>Key</span><span>Summary</span><span>Status</span><span>Priority</span><span>Assignee</span></div>
+          <SectionLabel style={{ margin: '4px 0 8px' }}>Jira issues · {issues.length}</SectionLabel>
+          <DenseTable cols="1fr 3fr 1.5fr 1fr 1.5fr" head={['Key', 'Summary', 'Status', 'Priority', 'Assignee']}>
             {issues.map(i => (
-              <div key={i.id} style={{ ...s.trow, gridTemplateColumns: '1fr 3fr 1.5fr 1fr 1.5fr' }}>
-                <span style={{ color: tk.accent, fontSize: 12, fontWeight: 700 }}>{i.key}</span>
-                <span style={{ fontSize: 13 }}>{i.summary.slice(0, 64)}{i.summary.length > 64 ? '…' : ''}</span>
-                <span style={{ fontSize: 12, color: tk.muted }}>{i.status}</span>
-                <span style={{ fontSize: 12, color: tk.muted }}>{i.priority ?? '—'}</span>
-                <span style={{ fontSize: 12, color: tk.muted }}>{i.assignee ?? '—'}</span>
-              </div>
+              <DenseRow key={i.id}>
+                <span style={{ color: tk.accent, fontWeight: 700 }}>{i.key}</span>
+                <span>{i.summary.slice(0, 64)}{i.summary.length > 64 ? '…' : ''}</span>
+                <span style={{ color: tk.muted }}>{i.status}</span>
+                <span style={{ color: tk.muted }}>{i.priority ?? '—'}</span>
+                <span style={{ color: tk.muted }}>{i.assignee ?? '—'}</span>
+              </DenseRow>
             ))}
-          </div>
+          </DenseTable>
         </div>
       )}
     </div>
@@ -276,23 +256,13 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { ...ui.page, gap: 18 },
+  page: { ...ui.page, gap: space.xl },
   h1: ui.h1,
   sub: ui.sub,
-  h2: { ...ui.h2, margin: '4px 0 10px' },
-  ghost: ui.ghost,
   err: ui.err,
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 },
-  card: ui.card,
-  actions: { display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' },
-  btn: ui.btn,
-  btnPrimary: ui.btnPrimary,
-  btnDanger: ui.btnDanger,
-  pill: ui.pill,
-  link: { color: tk.blue, fontSize: 12, textDecoration: 'none' },
-  input: { ...ui.input, width: '100%', marginBottom: 8, boxSizing: 'border-box' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: space.lg },
+  actions: { display: 'flex', gap: space.md, marginTop: space.lg, alignItems: 'center', flexWrap: 'wrap' },
+  link: { color: tk.blue, fontSize: text.sm.fontSize, textDecoration: 'none' },
+  input: { width: '100%', marginBottom: space.md },
   hint: { ...ui.hint, fontSize: 11.5, margin: '2px 0 6px' },
-  table: { border: `1px solid ${tk.line}`, borderRadius: tk.r.md, overflow: 'hidden' },
-  thead: { display: 'grid', gap: 10, padding: '10px 14px', background: tk.surfaceHigh, fontSize: 11, color: tk.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 },
-  trow: { display: 'grid', gap: 10, padding: '10px 14px', borderTop: `1px solid ${tk.lineSoft}`, alignItems: 'center' },
 }

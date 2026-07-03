@@ -15,6 +15,25 @@ export const tk = {
   sp: { xs: 6, sm: 8, md: 12, lg: 16, xl: 20 },
 } as const
 
+// MCA-79 — max-density utilitarian scales (additive; nothing above is renamed).
+// Rows target ~28px: cellY 6 + 16px text line + cellY 6. Controls match rows.
+export const density = {
+  row: 28,             // table/list row height (border-box)
+  cellX: 8, cellY: 6,  // cell padding
+  ctrl: 28,            // button/input height
+} as const
+
+// Type ramp — small but legible on the near-black surfaces (pairs with tk.text*).
+export const text = {
+  xs: { fontSize: 11, lineHeight: '14px' },
+  sm: { fontSize: 12, lineHeight: '16px' },
+  md: { fontSize: 13, lineHeight: '18px' },
+  lg: { fontSize: 14, lineHeight: '20px' },
+} as const
+
+// Spacing steps (px) — prefer these over ad-hoc margins in dense layouts.
+export const space = { xxs: 2, xs: 4, sm: 6, md: 8, lg: 12, xl: 16, xxl: 24 } as const
+
 export const STATUS_COLOR: Record<string, string> = {
   done: tk.green, failed: tk.red, in_progress: tk.blue, assigned: tk.amber, blocked: tk.red, pending: tk.muted,
   idle: tk.muted, active: tk.green, paused: tk.amber, terminated: tk.red,
