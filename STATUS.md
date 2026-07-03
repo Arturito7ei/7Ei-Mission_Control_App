@@ -38,6 +38,9 @@ Remaining **user-only** console actions (assistant can't create accounts / enter
 - **MCA-76** (2026-07-02): weekly consolidation routine (Sun ≥04:00 UTC) — losslessly archives >7-day session blocks from each agent's `recent.md` to `archive-recent.md` (prune-then-archive with failure guard), then creates a review task for the org's orchestrator with a consolidation report (promotion per Memory-Protocol via gated memory writes). New `services/consolidation.ts` + 14 tests (448 total).
 - **MCA-75** (2026-07-02): `POST /api/agent/memory/session-summary` (namespaced append to `Memory/agents/<slug>/recent.md`, same capability/policy gates as memory writes); `buildSystemPrompt()` now injects org + agent long-term vault memory (TTL-cached, truncated, non-critical on failure); nightly scheduler job exports each agent's DB memory KVs to `Memory/agents/<slug>/kv.md`. New `services/agent-memory.ts` + 19 tests (434 total).
 
+## UI
+- **MCA-77** (2026-07-03): Connectors UX from design critique — inline Replace-token (GitHub/HF/vault; no disconnect needed for rotation), honest error mapping (network vs HTTP status + 401/403 hint), status pills (Connected/Failing/Untested) + last-tested time, truthful header count, design-token adoption in the panel.
+
 ## Refactors
 - **MCA-74** (2026-07-02): `routes/all.ts` (1,383 lines) split into domain modules (orgs/agents/tasks/projects/costs/skills/auth/credentials), `all.ts` kept as barrel; `sendPushNotification` + token map extracted to `services/push.ts` (fixes the routes→services inversion). No behavior change; 415 tests + 11/11 evals green.
 
