@@ -3,7 +3,7 @@
 // token-fed, max-density utilitarian. Not a component library: same dark
 // aesthetic as before, just consistent and tighter. Keep additions minimal.
 import { createContext, useContext } from 'react'
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
 import { tk, density, text, space } from './tokens'
 
 // ——— Button ———————————————————————————————————————————————————————————————
@@ -53,6 +53,36 @@ export function TextInput({ style, ...rest }: InputHTMLAttributes<HTMLInputEleme
   return (
     <input {...rest}
       style={{ height: density.ctrl, boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, ...style }} />
+  )
+}
+
+// ——— Select ———————————————————————————————————————————————————————————————
+// Same box as TextInput; native element, no custom dropdown.
+
+export function Select({ style, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select {...rest}
+      style={{ height: density.ctrl, boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', ...style }} />
+  )
+}
+
+// ——— TextArea ——————————————————————————————————————————————————————————————
+
+export function TextArea({ style, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea {...rest}
+      style={{ boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `${density.cellY}px ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', resize: 'vertical', ...style }} />
+  )
+}
+
+// ——— IconButton ———————————————————————————————————————————————————————————
+// Tiny inline row action (✕ / ▶ / ⏸ / On / Off) — smaller than density.ctrl on
+// purpose so dense rows stay 28px.
+
+export function IconButton({ style, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button {...rest}
+      style={{ background: 'transparent', border: '1px solid #333', color: tk.muted, borderRadius: 6, padding: '1px 6px', fontSize: text.xs.fontSize, lineHeight: 1.4, cursor: 'pointer', ...style }} />
   )
 }
 

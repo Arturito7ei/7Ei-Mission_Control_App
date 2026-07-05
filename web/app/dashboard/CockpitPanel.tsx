@@ -1,50 +1,25 @@
 'use client'
+// Mission Control cockpit (MCA-EXT Phase 3; split into cockpit/* in MCA-80).
+// Composition root: owns all shared state + mutations (loads on mount, no
+// polling; optimistic deletes/decisions), sections render via props.
+// Reads GET /api/orgs/:id/cockpit and friends via the shared api() client.
 import { useCallback, useEffect, useState } from 'react'
-
-// Mission Control cockpit (MCA-EXT Phase 3): live roster + task board + health,
-// plus onboarding for external / bring-your-own runtimes (OpenClaw, Cursor, …).
-// Reads GET /api/orgs/:id/cockpit and POSTs /api/orgs/:id/agents/external.
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
-
-type Getter = () => Promise<string | null>
-async function call<T>(path: string, token: string | null, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    ...opts,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
-  })
-  if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? 'Request failed')
-  return res.json()
-}
-
-type CAgent = {
-  id: string; name: string; role: string; runtime: string; llmProvider: string; llmModel: string
-  status: string; agentType: string; avatarEmoji: string; heartbeat: string; lastHeartbeatAt: number | null
-}
-type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string }
-type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, number>; generatedAt: string }
-type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
-type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
-type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
-type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
-type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
-type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
-type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }
-type Plugin = { id: string; name: string; version: string; enabled: boolean; capabilities: string[]; tools: string[]; description?: string | null }
-
-const HB: Record<string, string> = { green: '#22c55e', amber: '#f59e0b', stale: '#ef4444', unknown: '#555' }
-const STATUS_C: Record<string, string> = { idle: '#888', active: '#22c55e', external: '#a96bff' }
-const RUNTIME_BADGE: Record<string, string> = { internal: '🧠', openclaw: '📎', cursor: '⌨️', claude_code: '🤖', custom: '⚙️' }
-const PRI_C: Record<string, string> = { high: '#ef4444', medium: '#f59e0b', low: '#555' }
-const KIND_LABEL: Record<string, string> = { blocked: 'Blocked', failed: 'Failed', review: 'Review', attention: 'Attention' }
-const KIND_C: Record<string, { bg: string; fg: string }> = {
-  blocked: { bg: '#2a1414', fg: '#ff6b6b' }, failed: { bg: '#2a1414', fg: '#ff8080' },
-  review: { bg: '#211c08', fg: '#FFB800' }, attention: { bg: '#0d1a2a', fg: '#4aa8ff' },
-}
-const COLS: { key: string; label: string }[] = [
-  { key: 'todo', label: 'To do' }, { key: 'in_progress', label: 'In progress' },
-  { key: 'blocked', label: 'Blocked' }, { key: 'done', label: 'Done' },
-]
+import { api } from '@/lib/api'
+import { tk, ui, space } from './tokens'
+import { Button } from './ui'
+import { sx, type Approval, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Workspace } from './cockpit/shared'
+import StatsRow from './cockpit/StatsRow'
+import InboxSection from './cockpit/InboxSection'
+import AgentFleet from './cockpit/AgentFleet'
+import OrgChart from './cockpit/OrgChart'
+import GoalsSection from './cockpit/GoalsSection'
+import BudgetsSection from './cockpit/BudgetsSection'
+import SecretsSection from './cockpit/SecretsSection'
+import WorkspacesSection from './cockpit/WorkspacesSection'
+import PluginsSection from './cockpit/PluginsSection'
+import TaskBoard from './cockpit/TaskBoard'
+import AddAgentWizard from './cockpit/AddAgentWizard'
+import HireDialog from './cockpit/HireDialog'
 
 export default function CockpitPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [data, setData] = useState<Cockpit | null>(null)
@@ -59,750 +34,96 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
-  const [goalDlg, setGoalDlg] = useState(false)
-  const [budgetDlg, setBudgetDlg] = useState(false)
-  const [secretDlg, setSecretDlg] = useState(false)
-  const [wsDlg, setWsDlg] = useState(false)
-  const [pluginDlg, setPluginDlg] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const tok = await getToken()
+      const token = await getToken()
       const [c, oc, ib, gl, bd, se, ws, pl] = await Promise.all([
-        call<Cockpit>(`/api/orgs/${orgId}/cockpit`, tok),
-        call<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, tok),
-        call<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, tok),
-        call<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, tok),
-        call<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, tok),
-        call<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, tok),
-        call<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, tok),
-        call<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, tok),
+        api<Cockpit>(`/api/orgs/${orgId}/cockpit`, { token }),
+        api<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, { token }),
+        api<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, { token }),
+        api<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, { token }),
+        api<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, { token }),
+        api<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, { token }),
+        api<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, { token }),
+        api<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, { token }),
       ])
       setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
+  useEffect(() => { load() }, [load])
+
   const dismiss = async (taskId: string) => {
     setInbox(x => x.filter(i => i.taskId !== taskId))
-    try { await call(`/api/orgs/${orgId}/inbox/dismiss`, await getToken(), { method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
+    try { await api(`/api/orgs/${orgId}/inbox/dismiss`, { token: await getToken(), method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
   }
   const decide = async (id: string, decision: 'approved' | 'rejected') => {
     setApprovals(x => x.filter(a => a.id !== id))
-    try { await call(`/api/approvals/${id}/decide`, await getToken(), { method: 'POST', body: JSON.stringify({ decision }) }) } catch {}
+    try { await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision }) }) } catch {}
   }
   const agentControl = async (id: string, verb: 'pause' | 'resume' | 'terminate') => {
-    try { await call(`/api/agents/${id}/${verb}`, await getToken(), { method: 'POST' }) } catch {}
+    try { await api(`/api/agents/${id}/${verb}`, { token: await getToken(), method: 'POST' }) } catch {}
     load()
   }
   const sweep = async () => {
-    try { await call(`/api/orgs/${orgId}/heartbeat/sweep`, await getToken(), { method: 'POST' }) } catch {}
+    try { await api(`/api/orgs/${orgId}/heartbeat/sweep`, { token: await getToken(), method: 'POST' }) } catch {}
     load()
   }
   const delBudget = async (id: string) => {
     setBudgets(x => x.filter(b => b.id !== id))
-    try { await call(`/api/budgets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+    try { await api(`/api/budgets/${id}`, { token: await getToken(), method: 'DELETE' }) } catch {}
   }
   const delSecret = async (id: string) => {
     setSecrets(x => x.filter(s => s.id !== id))
-    try { await call(`/api/secrets/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+    try { await api(`/api/secrets/${id}`, { token: await getToken(), method: 'DELETE' }) } catch {}
   }
   const delWorkspace = async (id: string) => {
     setWorkspaces(x => x.filter(w => w.id !== id))
-    try { await call(`/api/workspaces/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+    try { await api(`/api/workspaces/${id}`, { token: await getToken(), method: 'DELETE' }) } catch {}
   }
   const togglePlugin = async (id: string, enabled: boolean) => {
     setPlugins(x => x.map(p => p.id === id ? { ...p, enabled } : p))
-    try { await call(`/api/plugins/${id}`, await getToken(), { method: 'PATCH', body: JSON.stringify({ enabled }) }) } catch {}
+    try { await api(`/api/plugins/${id}`, { token: await getToken(), method: 'PATCH', body: JSON.stringify({ enabled }) }) } catch {}
   }
   const delPlugin = async (id: string) => {
     setPlugins(x => x.filter(p => p.id !== id))
-    try { await call(`/api/plugins/${id}`, await getToken(), { method: 'DELETE' }) } catch {}
+    try { await api(`/api/plugins/${id}`, { token: await getToken(), method: 'DELETE' }) } catch {}
   }
 
-  useEffect(() => { load() }, [load])
-
   const agentName = (id: string) => data?.agents.find(a => a.id === id)?.name ?? '—'
-  const sum = data?.summary ?? {}
+  const inboxCount = inbox.length + approvals.length
 
   return (
-    <div style={s.page}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h1 style={s.h1}>Mission Control</h1>
-          {(inbox.length + approvals.length) > 0 && <span style={{ ...s.tag, background: '#211c08', color: '#FFB800' }}>📥 {inbox.length + approvals.length}</span>}
+    <div style={{ ...ui.page, maxWidth: 1200, gap: space.xl }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.md }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: space.md }}>
+          <h1 style={ui.h1}>Mission Control</h1>
+          {inboxCount > 0 && <span style={{ ...sx.tag, background: '#211c08', color: tk.accent }}>📥 {inboxCount}</span>}
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={load} style={s.ghostBtn}>↻ Refresh</button>
-          <button onClick={sweep} style={s.ghostBtn} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</button>
-          <button onClick={() => setHire(true)} style={s.ghostBtn}>✨ Hire with a prompt</button>
-          <button onClick={() => setWizard(true)} style={s.primaryBtn}>＋ Add agent</button>
+        <div style={{ display: 'flex', gap: space.md, flexWrap: 'wrap' }}>
+          <Button style={{ color: tk.accent }} onClick={load}>↻ Refresh</Button>
+          <Button style={{ color: tk.accent }} onClick={sweep} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</Button>
+          <Button style={{ color: tk.accent }} onClick={() => setHire(true)}>✨ Hire with a prompt</Button>
+          <Button variant="primary" onClick={() => setWizard(true)}>＋ Add agent</Button>
         </div>
       </div>
 
-      {err && <div style={s.errBox}>⚠ {err}</div>}
+      {err && <div style={ui.err}>⚠ {err}</div>}
 
-      <div style={s.grid4}>
-        {[
-          { l: 'Agents', v: sum.agents ?? 0, c: '#fff' },
-          { l: 'External', v: sum.external ?? 0, c: '#a96bff' },
-          { l: 'In progress', v: sum.in_progress ?? 0, c: '#3b82f6' },
-          { l: 'Done', v: sum.done ?? 0, c: '#22c55e' },
-        ].map(k => <div key={k.l} style={s.statCard}><span style={{ ...s.statVal, color: k.c }}>{k.v}</span><span style={s.statLabel}>{k.l}</span></div>)}
-      </div>
-
-      {(inbox.length + approvals.length) > 0 && (<>
-        <h2 style={s.h2}>Inbox <span style={s.colCount}>{inbox.length + approvals.length}</span></h2>
-        <div style={s.panel}>
-          {approvals.map(a => (
-            <div key={a.id} style={s.inboxRow}>
-              <span style={{ ...s.tag, background: '#1a0f2a', color: '#a96bff' }}>Approval · {a.type}</span>
-              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 560 }}>{a.summary}</div></div>
-              <button style={{ ...s.ghostBtn, color: '#22c55e' }} onClick={() => decide(a.id, 'approved')}>Approve</button>
-              <button style={{ ...s.ghostBtn, color: '#ff6b6b' }} onClick={() => decide(a.id, 'rejected')}>Reject</button>
-            </div>
-          ))}
-          {inbox.map(i => (
-            <div key={i.taskId} style={s.inboxRow}>
-              <span style={{ ...s.tag, background: (KIND_C[i.kind] ?? KIND_C.attention).bg, color: (KIND_C[i.kind] ?? KIND_C.attention).fg }}>{KIND_LABEL[i.kind] ?? i.kind}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 560 }}>{i.title}</div>
-                <div style={{ fontSize: 11, color: '#888' }}>{i.agentEmoji} {i.agentName}</div>
-              </div>
-              <button style={s.ghostBtn} onClick={() => dismiss(i.taskId)}>Dismiss</button>
-            </div>
-          ))}
-        </div>
-      </>)}
-
-      <h2 style={s.h2}>Agent fleet</h2>
-      <div style={s.agentGrid}>
-        {(data?.agents ?? []).map(a => (
-          <div key={a.id} style={s.agentCard}>
-            <span style={{ fontSize: 26 }}>{a.avatarEmoji || '🤖'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                {a.name}
-                <span title={a.runtime} style={s.badge}>{RUNTIME_BADGE[a.runtime] ?? '⚙️'} {a.runtime}</span>
-              </div>
-              <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{a.role}</div>
-              <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>{a.llmProvider} · {a.llmModel}</div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-              <span title={`heartbeat: ${a.heartbeat}`} style={{ width: 10, height: 10, borderRadius: 5, background: a.status === 'terminated' ? '#444' : (HB[a.heartbeat] ?? '#555') }} />
-              <div style={{ display: 'flex', gap: 4 }}>
-                {a.status === 'paused'
-                  ? <button title="Resume" style={s.iconBtn} onClick={() => agentControl(a.id, 'resume')}>▶</button>
-                  : <button title="Pause" style={s.iconBtn} onClick={() => agentControl(a.id, 'pause')}>⏸</button>}
-                <button title="Terminate" style={s.iconBtn} onClick={() => agentControl(a.id, 'terminate')}>⏹</button>
-              </div>
-            </div>
-          </div>
-        ))}
-        {data && data.agents.length === 0 && <p style={{ color: '#888' }}>No agents yet — add one.</p>}
-      </div>
-
-      <h2 style={s.h2}>Org chart</h2>
-      <div style={s.panel}>
-        {(chart ?? []).map(n => <OrgNodeRow key={n.id} node={n} depth={0} />)}
-        {chart && chart.length === 0 && <p style={{ color: '#888' }}>No agents yet.</p>}
-        {!chart && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={s.h2}>Goals</h2>
-        <button style={s.ghostBtn} onClick={() => setGoalDlg(true)}>＋ Goal</button>
-      </div>
-      <div style={s.panel}>
-        {(goals ?? []).map(g => <GoalNodeRow key={g.id} node={g} depth={0} />)}
-        {goals && goals.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No goals yet — add the company’s top-level goal so every task traces to a “why”.</p>}
-        {!goals && <p style={{ color: '#555', fontSize: 12 }}>Loading…</p>}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={s.h2}>Budgets</h2>
-        <button style={s.ghostBtn} onClick={() => setBudgetDlg(true)}>＋ Budget</button>
-      </div>
-      <div style={s.panel}>
-        {budgets.map(b => {
-          const c = b.state === 'breach' ? '#ff6b6b' : b.state === 'warn' ? '#FFB800' : '#22c55e'
-          return (
-            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
-              <div style={{ minWidth: 130, fontSize: 12.5 }}>{b.scope}{b.scopeId ? ` · ${b.scopeId.slice(0, 6)}` : ''}</div>
-              <div style={{ flex: 1, height: 8, background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}><div style={{ height: '100%', width: `${Math.min(b.pct * 100, 100)}%`, background: c }} /></div>
-              <div style={{ minWidth: 120, textAlign: 'right', fontSize: 12, color: c }}>${b.spend.toFixed(2)} / ${b.limitUsd.toFixed(0)}</div>
-              <button style={s.iconBtn} onClick={() => delBudget(b.id)}>✕</button>
-            </div>
-          )
-        })}
-        {budgets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No budgets — add a hard-stop to cap spend by company, agent, project, or goal.</p>}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={s.h2}>Secrets</h2>
-        <button style={s.ghostBtn} onClick={() => setSecretDlg(true)}>＋ Secret</button>
-      </div>
-      <div style={s.panel}>
-        {secrets.map(sec => (
-          <div key={sec.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
-            <span style={s.badge}>🔒 {sec.scope}{sec.scopeId ? ` · ${sec.scopeId.slice(0, 6)}` : ''}</span>
-            <div style={{ flex: 1, fontSize: 13, fontWeight: 560 }}>{sec.key}</div>
-            <code style={{ fontSize: 12, color: '#888' }}>{sec.masked}</code>
-            <button style={s.iconBtn} onClick={() => delSecret(sec.id)}>✕</button>
-          </div>
-        ))}
-        {secrets.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No secrets — store API keys here; runtimes fetch them scoped, never via prompts.</p>}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={s.h2}>Workspaces</h2>
-        <button style={s.ghostBtn} onClick={() => setWsDlg(true)}>＋ Workspace</button>
-      </div>
-      <div style={s.panel}>
-        {workspaces.map(w => (
-          <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
-            <span>🗂️</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 560 }}>{w.name} <span style={s.badge}>{w.baseBranch || 'main'}</span></div>
-              {w.repoUrl && <div style={{ fontSize: 11, color: '#888' }}>{w.repoUrl}</div>}
-            </div>
-            {w.previewUrl && <a href={w.previewUrl} target="_blank" rel="noreferrer" style={{ ...s.badge, color: '#4aa8ff' }}>preview ↗</a>}
-            <button style={s.iconBtn} onClick={() => delWorkspace(w.id)}>✕</button>
-          </div>
-        ))}
-        {workspaces.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No workspaces — define a repo; runtimes get an operator branch + worktree per task.</p>}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={s.h2}>Plugins</h2>
-        <button style={s.ghostBtn} onClick={() => setPluginDlg(true)}>＋ Install plugin</button>
-      </div>
-      <div style={s.panel}>
-        {plugins.map(p => (
-          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #1a1a1a' }}>
-            <span>🧩</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 560 }}>{p.name} <span style={{ color: '#555', fontSize: 11 }}>v{p.version}</span></div>
-              <div style={{ fontSize: 11, color: '#888' }}>{p.capabilities.join(', ') || 'no capabilities'}{p.tools.length ? ` · tools: ${p.tools.join(', ')}` : ''}</div>
-            </div>
-            <button style={{ ...s.iconBtn, color: p.enabled ? '#22c55e' : '#888' }} onClick={() => togglePlugin(p.id, !p.enabled)}>{p.enabled ? 'On' : 'Off'}</button>
-            <button style={s.iconBtn} onClick={() => delPlugin(p.id)}>✕</button>
-          </div>
-        ))}
-        {plugins.length === 0 && <p style={{ color: '#888', fontSize: 12.5 }}>No plugins — install a manifest to extend Mission Control (capability-gated).</p>}
-      </div>
-
-      <h2 style={s.h2}>Task board</h2>
-      <div style={s.board}>
-        {COLS.map(col => {
-          const items = (data?.tasks ?? []).filter(t => (t.kanbanColumn ?? 'todo') === col.key)
-          return (
-            <div key={col.key} style={s.col}>
-              <div style={s.colHead}>{col.label}<span style={s.colCount}>{items.length}</span></div>
-              {items.map(t => (
-                <div key={t.id} style={{ ...s.task, borderLeftColor: PRI_C[t.priority] ?? '#555' }}>
-                  <div style={{ fontSize: 12.5 }}>{t.title}</div>
-                  <div style={{ fontSize: 10.5, color: '#888', marginTop: 6 }}>{agentName(t.agentId)}</div>
-                </div>
-              ))}
-              {items.length === 0 && <div style={{ color: '#444', fontSize: 12, padding: 4 }}>—</div>}
-            </div>
-          )
-        })}
-      </div>
+      <StatsRow sum={data?.summary ?? {}} />
+      <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} />
+      <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
+      <OrgChart chart={chart} />
+      <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
+      <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />
+      <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
+      <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
+      <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
+      <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} />
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
-      {goalDlg && <GoalDialog orgId={orgId} getToken={getToken} goals={goals ?? []} onClose={() => setGoalDlg(false)} onDone={() => { setGoalDlg(false); load() }} />}
-      {budgetDlg && <BudgetDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setBudgetDlg(false)} onDone={() => { setBudgetDlg(false); load() }} />}
-      {secretDlg && <SecretDialog orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onClose={() => setSecretDlg(false)} onDone={() => { setSecretDlg(false); load() }} />}
-      {wsDlg && <WorkspaceDialog orgId={orgId} getToken={getToken} onClose={() => setWsDlg(false)} onDone={() => { setWsDlg(false); load() }} />}
-      {pluginDlg && <PluginDialog orgId={orgId} getToken={getToken} onClose={() => setPluginDlg(false)} onDone={() => { setPluginDlg(false); load() }} />}
     </div>
   )
-}
-
-// ─── Plugin install dialog ───────────────────────────────────────────────────
-
-const SAMPLE_MANIFEST = `{
-  "name": "weekly-report",
-  "version": "1.0.0",
-  "description": "Posts a weekly summary",
-  "capabilities": ["read:tasks", "notify"],
-  "tools": [{ "name": "generate", "description": "Build the report" }]
-}`
-
-function PluginDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
-  const [text, setText] = useState(SAMPLE_MANIFEST)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const install = async () => {
-    setBusy(true); setErr(null)
-    let manifest: any
-    try { manifest = JSON.parse(text) } catch { setErr('Manifest is not valid JSON'); setBusy(false); return }
-    try {
-      const res = await fetch(`${API}/api/orgs/${orgId}/plugins`, { method: 'POST', headers: { Authorization: `Bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ manifest }) })
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error((j.errors?.join('; ')) || j.error || 'Install failed') }
-      onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={{ ...s.modal, maxWidth: 520 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={s.h2}>Install plugin</h2><button onClick={onClose} style={s.x}>✕</button>
-        </div>
-        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Paste a manifest. Capabilities are gated to an allow-list; unknown ones are rejected.</p>
-        <textarea style={{ ...s.inp, minHeight: 200, marginTop: 12, fontFamily: 'monospace', fontSize: 12 }} value={text} onChange={e => setText(e.target.value)} />
-        {err && <div style={s.errBox}>⚠ {err}</div>}
-        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={install}>{busy ? 'Installing…' : 'Install'}</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Workspace dialog ────────────────────────────────────────────────────────
-
-function WorkspaceDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
-  const [f, setF] = useState({ name: '', repoUrl: '', baseBranch: 'main', previewUrl: '' })
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = async () => {
-    if (!f.name.trim()) return
-    setBusy(true); setErr(null)
-    try {
-      await call(`/api/orgs/${orgId}/workspaces`, await getToken(), { method: 'POST', body: JSON.stringify({ name: f.name, repoUrl: f.repoUrl || undefined, baseBranch: f.baseBranch || 'main', previewUrl: f.previewUrl || undefined }) })
-      onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={s.h2}>New workspace</h2><button onClick={onClose} style={s.x}>✕</button>
-        </div>
-        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Runtimes create a git worktree + operator branch per task in this workspace.</p>
-        <div style={s.form}>
-          <label style={s.lab}>Name<input style={s.inp} autoFocus value={f.name} placeholder="mission-control-app" onChange={e => setF({ ...f, name: e.target.value })} /></label>
-          <label style={s.lab}>Repo URL<input style={s.inp} value={f.repoUrl} placeholder="git@github.com:Arturito7ei/…" onChange={e => setF({ ...f, repoUrl: e.target.value })} /></label>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <label style={{ ...s.lab, flex: 1 }}>Base branch<input style={s.inp} value={f.baseBranch} onChange={e => setF({ ...f, baseBranch: e.target.value })} /></label>
-            <label style={{ ...s.lab, flex: 1 }}>Preview URL<input style={s.inp} value={f.previewUrl} placeholder="https://…" onChange={e => setF({ ...f, previewUrl: e.target.value })} /></label>
-          </div>
-        </div>
-        {err && <div style={s.errBox}>⚠ {err}</div>}
-        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create workspace'}</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Secret dialog ───────────────────────────────────────────────────────────
-
-function SecretDialog({ orgId, getToken, agents, onClose, onDone }: { orgId: string; getToken: Getter; agents: CAgent[]; onClose: () => void; onDone: () => void }) {
-  const [f, setF] = useState({ scope: 'company', scopeId: '', key: '', value: '' })
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = async () => {
-    if (!f.key.trim() || !f.value) return
-    setBusy(true); setErr(null)
-    try {
-      await call(`/api/orgs/${orgId}/secrets`, await getToken(), { method: 'POST', body: JSON.stringify({ scope: f.scope, scopeId: f.scope === 'agent' ? (f.scopeId || null) : null, key: f.key.trim(), value: f.value }) })
-      onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={s.h2}>New secret</h2><button onClick={onClose} style={s.x}>✕</button>
-        </div>
-        <p style={{ color: '#888', fontSize: 12, margin: '4px 0 0' }}>Stored AES-256-GCM encrypted. Runtimes fetch scoped secrets via the agent API — never injected into prompts.</p>
-        <div style={s.form}>
-          <label style={s.lab}>Scope
-            <select style={s.inp} value={f.scope} onChange={e => setF({ ...f, scope: e.target.value, scopeId: '' })}>
-              <option value="company">Company (all agents)</option>
-              <option value="agent">Agent</option>
-            </select>
-          </label>
-          {f.scope === 'agent' && (
-            <label style={s.lab}>Agent
-              <select style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })}>
-                <option value="">— pick —</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </label>
-          )}
-          <label style={s.lab}>Key<input style={s.inp} value={f.key} placeholder="OPENAI_API_KEY" onChange={e => setF({ ...f, key: e.target.value })} /></label>
-          <label style={s.lab}>Value<input style={s.inp} type="password" value={f.value} placeholder="sk-…" onChange={e => setF({ ...f, value: e.target.value })} /></label>
-        </div>
-        {err && <div style={s.errBox}>⚠ {err}</div>}
-        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Store secret'}</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Budget policy dialog ────────────────────────────────────────────────────
-
-function BudgetDialog({ orgId, getToken, agents, onClose, onDone }: { orgId: string; getToken: Getter; agents: CAgent[]; onClose: () => void; onDone: () => void }) {
-  const [f, setF] = useState({ scope: 'company', scopeId: '', limitUsd: '', warnPct: '0.8', hardStop: true })
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const save = async () => {
-    if (!f.limitUsd) return
-    setBusy(true); setErr(null)
-    try {
-      await call(`/api/orgs/${orgId}/budgets`, await getToken(), { method: 'POST', body: JSON.stringify({ scope: f.scope, scopeId: f.scope === 'company' ? null : (f.scopeId || null), limitUsd: Number(f.limitUsd), warnPct: Number(f.warnPct), hardStop: f.hardStop }) })
-      onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={s.h2}>New budget</h2><button onClick={onClose} style={s.x}>✕</button>
-        </div>
-        <div style={s.form}>
-          <label style={s.lab}>Scope
-            <select style={s.inp} value={f.scope} onChange={e => setF({ ...f, scope: e.target.value, scopeId: '' })}>
-              <option value="company">Company (all spend)</option>
-              <option value="agent">Agent</option>
-              <option value="project">Project</option>
-              <option value="goal">Goal</option>
-            </select>
-          </label>
-          {f.scope === 'agent' && (
-            <label style={s.lab}>Agent
-              <select style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })}>
-                <option value="">— pick —</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </label>
-          )}
-          {(f.scope === 'project' || f.scope === 'goal') && (
-            <label style={s.lab}>{f.scope === 'project' ? 'Project' : 'Goal'} id<input style={s.inp} value={f.scopeId} onChange={e => setF({ ...f, scopeId: e.target.value })} /></label>
-          )}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <label style={{ ...s.lab, flex: 1 }}>Limit (USD)<input style={s.inp} type="number" value={f.limitUsd} placeholder="100" onChange={e => setF({ ...f, limitUsd: e.target.value })} /></label>
-            <label style={{ ...s.lab, width: 110 }}>Warn at<input style={s.inp} type="number" step="0.05" value={f.warnPct} onChange={e => setF({ ...f, warnPct: e.target.value })} /></label>
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#aaa' }}>
-            <input type="checkbox" checked={f.hardStop} onChange={e => setF({ ...f, hardStop: e.target.checked })} /> Hard-stop (pause agents on breach)
-          </label>
-        </div>
-        {err && <div style={s.errBox}>⚠ {err}</div>}
-        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create budget'}</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Goals (tree + new-goal dialog) ──────────────────────────────────────────
-
-function GoalNodeRow({ node, depth }: { node: GoalNode; depth: number }) {
-  return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', paddingLeft: depth * 22 }}>
-        {depth > 0 && <span style={{ color: '#444' }}>└─</span>}
-        <span>🎯</span>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{node.title}</span>
-        {node.metric && <span style={s.badge}>{node.metric}</span>}
-        {node.status && node.status !== 'active' && <span style={{ fontSize: 10, color: '#888' }}>{node.status}</span>}
-      </div>
-      {node.children.map(c => <GoalNodeRow key={c.id} node={c} depth={depth + 1} />)}
-    </>
-  )
-}
-
-function flattenGoals(nodes: GoalNode[], depth = 0, acc: { id: string; label: string }[] = []) {
-  for (const n of nodes) { acc.push({ id: n.id, label: `${'— '.repeat(depth)}${n.title}` }); flattenGoals(n.children, depth + 1, acc) }
-  return acc
-}
-
-function GoalDialog({ orgId, getToken, goals, onClose, onDone }: { orgId: string; getToken: Getter; goals: GoalNode[]; onClose: () => void; onDone: () => void }) {
-  const [f, setF] = useState({ title: '', metric: '', description: '', parentGoalId: '' })
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const opts = flattenGoals(goals)
-  const save = async () => {
-    if (!f.title.trim()) return
-    setBusy(true); setErr(null)
-    try {
-      await call(`/api/orgs/${orgId}/goals`, await getToken(), { method: 'POST', body: JSON.stringify({ title: f.title, metric: f.metric || undefined, description: f.description || undefined, parentGoalId: f.parentGoalId || undefined }) })
-      onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={s.h2}>New goal</h2><button onClick={onClose} style={s.x}>✕</button>
-        </div>
-        <div style={s.form}>
-          <label style={s.lab}>Goal<input style={s.inp} autoFocus value={f.title} placeholder="Build the #1 AI note-taking app" onChange={e => setF({ ...f, title: e.target.value })} /></label>
-          <label style={s.lab}>Success metric<input style={s.inp} value={f.metric} placeholder="$1M MRR" onChange={e => setF({ ...f, metric: e.target.value })} /></label>
-          <label style={s.lab}>Parent goal
-            <select style={s.inp} value={f.parentGoalId} onChange={e => setF({ ...f, parentGoalId: e.target.value })}>
-              <option value="">— top level —</option>
-              {opts.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
-          </label>
-          <label style={s.lab}>Description<textarea style={{ ...s.inp, minHeight: 56 }} value={f.description} onChange={e => setF({ ...f, description: e.target.value })} /></label>
-        </div>
-        {err && <div style={s.errBox}>⚠ {err}</div>}
-        <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create goal'}</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Hire with a prompt (goal-driven hiring) ─────────────────────────────────
-
-function HireDialog({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
-  const [prompt, setPrompt] = useState('')
-  const [proposal, setProposal] = useState<any>(null)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-
-  const propose = async () => {
-    if (!prompt.trim()) return
-    setBusy(true); setErr(null)
-    try {
-      const r = await call<{ proposal: any }>(`/api/orgs/${orgId}/agents/hire`, await getToken(), { method: 'POST', body: JSON.stringify({ prompt }) })
-      setProposal(r.proposal)
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  const confirmHire = async () => {
-    setBusy(true); setErr(null)
-    try {
-      const r = await call<{ agentToken?: string }>(`/api/orgs/${orgId}/agents/hire`, await getToken(), { method: 'POST', body: JSON.stringify({ confirm: true, profile: proposal }) })
-      if (r.agentToken) setToken(r.agentToken); else onDone()
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-  const set = (k: string, v: string) => setProposal((p: any) => ({ ...p, [k]: v }))
-
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        {token ? (() => {
-          const rt = proposal?.runtime || 'openclaw'
-          const adapter = rt === 'cursor' ? 'adapters/cursor/cursor_adapter.py' : 'adapters/openclaw/mc_adapter.py'
-          const env = rt === 'cursor'
-            ? `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_INBOX=$PWD/coordination/inbox`
-            : `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_EXECUTOR=auto\nMC_ALLOW_SHELL=1\nMC_WORKDIR=/Users/artutito/7Ei-MC_TARCO`
-          const block = `# mc.env\n${env}\n\n# run on the ${rt} host:\nset -a; source mc.env; set +a\npython3 ${adapter}`
-          return (
-            <>
-              <h2 style={s.h2}>✓ {proposal?.name} imported</h2>
-              <p style={{ color: '#888', fontSize: 12.5, margin: '6px 0 0' }}>One-time token (shown once). Copy the block, drop it on the {rt} host, and the agent is live.</p>
-              <button style={{ ...s.ghostBtn, marginTop: 10 }} onClick={() => { navigator.clipboard?.writeText(block); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? '✓ Copied' : '📋 Copy env + run command'}</button>
-              <pre style={s.pre}>{block}</pre>
-              <button style={{ ...s.primaryBtn, marginTop: 8 }} onClick={onDone}>Done</button>
-            </>
-          )
-        })() : !proposal ? (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={s.h2}>Hire with a prompt</h2><button onClick={onClose} style={s.x}>✕</button>
-            </div>
-            <p style={{ color: '#888', fontSize: 12.5, margin: '4px 0 0' }}>Describe the agent you need — Arturito proposes a profile, title, and manager from your org chart.</p>
-            <textarea style={{ ...s.inp, minHeight: 90, marginTop: 12 }} autoFocus value={prompt}
-              placeholder="e.g. A growth marketer who owns SEO and the weekly newsletter, reporting to the CMO."
-              onChange={e => setPrompt(e.target.value)} />
-            {err && <div style={s.errBox}>⚠ {err}</div>}
-            <button style={{ ...s.primaryBtn, marginTop: 14, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={propose}>{busy ? 'Designing…' : '✨ Propose'}</button>
-          </>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={s.h2}>Review &amp; hire</h2><button onClick={onClose} style={s.x}>✕</button>
-            </div>
-            <div style={s.form}>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <label style={{ ...s.lab, flex: 1 }}>Name<input style={s.inp} value={proposal.name} onChange={e => set('name', e.target.value)} /></label>
-                <label style={{ ...s.lab, width: 80 }}>Emoji<input style={s.inp} value={proposal.avatarEmoji} onChange={e => set('avatarEmoji', e.target.value)} /></label>
-              </div>
-              <label style={s.lab}>Title<input style={s.inp} value={proposal.title} onChange={e => set('title', e.target.value)} /></label>
-              <label style={s.lab}>Role<input style={s.inp} value={proposal.role} onChange={e => set('role', e.target.value)} /></label>
-              <div style={{ fontSize: 12, color: '#aaa', lineHeight: 1.7 }}>
-                <div>Runtime: <b style={{ color: '#fff' }}>{RUNTIME_BADGE[proposal.runtime] ?? '⚙️'} {proposal.runtime}</b> · Model: <b style={{ color: '#fff' }}>{proposal.llmProvider}·{proposal.llmModel}</b></div>
-                <div>Reports to: <b style={{ color: '#fff' }}>{proposal.reportsTo ?? '— (top level)'}</b></div>
-                {proposal.skills?.length ? <div>Skills: {proposal.skills.join(', ')}</div> : null}
-                {proposal.jobDescription ? <div style={{ color: '#888', marginTop: 4 }}>{proposal.jobDescription}</div> : null}
-              </div>
-            </div>
-            {err && <div style={s.errBox}>⚠ {err}</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button style={s.ghostBtn} onClick={() => setProposal(null)}>← Re-prompt</button>
-              <button style={{ ...s.primaryBtn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={confirmHire}>{busy ? 'Hiring…' : 'Hire'}</button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Org chart (recursive reporting tree) ────────────────────────────────────
-
-function OrgNodeRow({ node, depth }: { node: OrgNode; depth: number }) {
-  return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', paddingLeft: depth * 22 }}>
-        {depth > 0 && <span style={{ color: '#444' }}>└─</span>}
-        <span style={{ fontSize: 18 }}>{node.avatarEmoji || '🤖'}</span>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{node.name}</span>
-        <span style={{ fontSize: 11.5, color: '#888' }}>{node.title || node.role}</span>
-        {node.runtime && <span style={s.badge}>{RUNTIME_BADGE[node.runtime] ?? '⚙️'} {node.runtime}</span>}
-      </div>
-      {node.children.map(c => <OrgNodeRow key={c.id} node={c} depth={depth + 1} />)}
-    </>
-  )
-}
-
-// ─── Add-agent wizard (external runtime onboarding) ──────────────────────────
-
-const RUNTIMES = [
-  { id: 'openclaw', label: 'OpenClaw', emoji: '📎', defModel: 'MiniMax-Text-01', defProvider: 'minimax' },
-  { id: 'cursor', label: 'Cursor', emoji: '⌨️', defModel: 'claude-sonnet-4-20250514', defProvider: 'anthropic' },
-  { id: 'claude_code', label: 'Claude Code', emoji: '🤖', defModel: 'claude-sonnet-4-20250514', defProvider: 'anthropic' },
-  { id: 'custom', label: 'Custom', emoji: '⚙️', defModel: 'minimax', defProvider: 'custom' },
-]
-
-function AddAgentWizard({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
-  const [step, setStep] = useState(0)
-  const [f, setF] = useState({ name: 'Arturito · Open Claw', role: 'Ops', runtime: 'openclaw', llmProvider: 'minimax', llmModel: 'MiniMax-Text-01', termsOfReference: '', avatarEmoji: '📎' })
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-
-  const pickRuntime = (r: typeof RUNTIMES[number]) =>
-    setF({ ...f, runtime: r.id, llmProvider: r.defProvider, llmModel: r.defModel, avatarEmoji: r.emoji })
-
-  const submit = async () => {
-    setBusy(true); setErr(null)
-    try {
-      const res = await call<{ agentToken: string }>(`/api/orgs/${orgId}/agents/external`, await getToken(),
-        { method: 'POST', body: JSON.stringify(f) })
-      setToken(res.agentToken)
-    } catch (e: any) { setErr(e?.message ?? 'Failed') }
-    setBusy(false)
-  }
-
-  const envSnippet = token ? `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_EXECUTOR=auto\nMC_ALLOW_SHELL=1\nMC_WORKDIR=/Users/artutito/7Ei-MC_TARCO` : ''
-
-  return (
-    <div style={s.modalWrap} onClick={onClose}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        {token ? (
-          <>
-            <h2 style={s.h2}>✓ {f.name} onboarded</h2>
-            <p style={{ color: '#888', fontSize: 13, margin: '6px 0 0' }}>Copy this agent token now — it is shown only once. Paste it into the runtime's <code style={s.code}>mc.env</code>.</p>
-            <div style={s.tokenBox}>{token}</div>
-            <button style={s.ghostBtn} onClick={() => { navigator.clipboard?.writeText(envSnippet); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>
-              {copied ? '✓ Copied env' : '📋 Copy mc.env block'}
-            </button>
-            <pre style={s.pre}>{envSnippet}</pre>
-            <button style={{ ...s.primaryBtn, marginTop: 8 }} onClick={onDone}>Done</button>
-          </>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={s.h2}>Add an agent</h2>
-              <button onClick={onClose} style={s.x}>✕</button>
-            </div>
-            <div style={s.stepRow}>{['Identity', 'Runtime', 'Model', 'Review'].map((label, i) => (
-              <span key={label} style={{ ...s.stepChip, ...(i === step ? s.stepOn : {}) }}>{i + 1}. {label}</span>
-            ))}</div>
-
-            {step === 0 && (
-              <div style={s.form}>
-                <label style={s.lab}>Name<input style={s.inp} value={f.name} onChange={e => setF({ ...f, name: e.target.value })} /></label>
-                <label style={s.lab}>Role<input style={s.inp} value={f.role} onChange={e => setF({ ...f, role: e.target.value })} /></label>
-                <label style={s.lab}>Terms of reference (optional)<textarea style={{ ...s.inp, minHeight: 60 }} value={f.termsOfReference} onChange={e => setF({ ...f, termsOfReference: e.target.value })} /></label>
-              </div>
-            )}
-            {step === 1 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                {RUNTIMES.map(r => (
-                  <button key={r.id} onClick={() => pickRuntime(r)} style={{ ...s.opt, ...(f.runtime === r.id ? s.optOn : {}) }}>{r.emoji} {r.label}</button>
-                ))}
-              </div>
-            )}
-            {step === 2 && (
-              <div style={s.form}>
-                <label style={s.lab}>LLM provider<input style={s.inp} value={f.llmProvider} onChange={e => setF({ ...f, llmProvider: e.target.value })} /></label>
-                <label style={s.lab}>Model<input style={s.inp} value={f.llmModel} onChange={e => setF({ ...f, llmModel: e.target.value })} /></label>
-                <p style={{ fontSize: 11.5, color: '#555', margin: 0 }}>External runtimes run their own brain; this is metadata + the model the adapter calls.</p>
-              </div>
-            )}
-            {step === 3 && (
-              <div style={{ ...s.form, fontSize: 13, color: '#aaa' }}>
-                <div>Name: <b style={{ color: '#fff' }}>{f.name}</b></div>
-                <div>Role: <b style={{ color: '#fff' }}>{f.role}</b></div>
-                <div>Runtime: <b style={{ color: '#fff' }}>{RUNTIME_BADGE[f.runtime]} {f.runtime}</b></div>
-                <div>Model: <b style={{ color: '#fff' }}>{f.llmProvider} · {f.llmModel}</b></div>
-                <p style={{ fontSize: 11.5, color: '#555', margin: '6px 0 0' }}>On create you'll get a one-time agent token for the adapter.</p>
-              </div>
-            )}
-            {err && <div style={s.errBox}>⚠ {err}</div>}
-
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              {step > 0 && <button style={s.ghostBtn} onClick={() => setStep(step - 1)}>← Back</button>}
-              {step < 3
-                ? <button style={s.primaryBtn} onClick={() => setStep(step + 1)}>Next →</button>
-                : <button style={{ ...s.primaryBtn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={submit}>{busy ? 'Creating…' : 'Create agent'}</button>}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-const s: Record<string, React.CSSProperties> = {
-  page: { padding: 28, maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 },
-  h1: { fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: -0.5 },
-  h2: { fontSize: 18, fontWeight: 700, margin: 0 },
-  grid4: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 },
-  statCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 4 },
-  statVal: { fontSize: 28, fontWeight: 800, lineHeight: 1 }, statLabel: { fontSize: 12, color: '#888' },
-  agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
-  panel: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 16 },
-  inboxRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #1a1a1a' },
-  iconBtn: { background: 'transparent', border: '1px solid #333', color: '#888', borderRadius: 6, padding: '1px 6px', fontSize: 11, cursor: 'pointer', lineHeight: 1.4 },
-  agentCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
-  badge: { fontSize: 10, color: '#aaa', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, padding: '1px 6px', fontWeight: 600 },
-  board: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 },
-  col: { background: '#0d0d0d', border: '1px solid #222', borderRadius: 10, padding: 10, minHeight: 80 },
-  colHead: { display: 'flex', justifyContent: 'space-between', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5, color: '#888', fontWeight: 700, marginBottom: 8 },
-  colCount: { background: '#1a1a1a', border: '1px solid #333', borderRadius: 10, padding: '0 7px', fontSize: 11 },
-  task: { background: '#111', border: '1px solid #222', borderLeft: '3px solid #555', borderRadius: 8, padding: '8px 10px', marginBottom: 8 },
-  primaryBtn: { background: '#FFB800', color: '#000', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
-  ghostBtn: { background: '#1a1a1a', border: '1px solid #333', color: '#FFB800', padding: '9px 14px', borderRadius: 9, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-  errBox: { background: '#2a1414', border: '1px solid #5a2a2a', color: '#ff8080', borderRadius: 8, padding: '10px 12px', fontSize: 13 },
-  modalWrap: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 },
-  modal: { background: '#111', border: '1px solid #2a2a2a', borderRadius: 16, padding: 24, width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 8 },
-  x: { background: 'transparent', border: 'none', color: '#888', fontSize: 16, cursor: 'pointer' },
-  stepRow: { display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0 4px' },
-  stepChip: { fontSize: 11, color: '#888', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 999, padding: '3px 9px' },
-  stepOn: { color: '#000', background: '#FFB800', borderColor: '#FFB800', fontWeight: 700 },
-  form: { display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 },
-  lab: { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, fontWeight: 600, color: '#aaa' },
-  inp: { background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '9px 11px', color: '#fff', fontSize: 13, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' },
-  opt: { fontSize: 13, border: '1px solid #333', background: '#0a0a0a', color: '#aaa', borderRadius: 8, padding: '9px 13px', cursor: 'pointer' },
-  optOn: { borderColor: '#FFB800', background: '#211c08', color: '#fff' },
-  tokenBox: { background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: 10, fontFamily: 'monospace', fontSize: 12, color: '#FFB800', wordBreak: 'break-all', margin: '10px 0' },
-  pre: { background: '#000', border: '1px solid #222', borderRadius: 8, padding: 12, fontSize: 11.5, color: '#cdd3de', whiteSpace: 'pre-wrap', margin: '8px 0 0' },
-  code: { background: '#000', border: '1px solid #222', borderRadius: 4, padding: '1px 5px', fontSize: 11, color: '#FFB800' },
 }

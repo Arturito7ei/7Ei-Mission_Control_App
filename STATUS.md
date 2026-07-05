@@ -39,6 +39,7 @@ Remaining **user-only** console actions (assistant can't create accounts / enter
 - **MCA-75** (2026-07-02): `POST /api/agent/memory/session-summary` (namespaced append to `Memory/agents/<slug>/recent.md`, same capability/policy gates as memory writes); `buildSystemPrompt()` now injects org + agent long-term vault memory (TTL-cached, truncated, non-critical on failure); nightly scheduler job exports each agent's DB memory KVs to `Memory/agents/<slug>/kv.md`. New `services/agent-memory.ts` + 19 tests (434 total).
 
 ## UI
+- **MCA-80** (2026-07-03, epic MCA-78 story 2): CockpitPanel 808→129-line composition root + 13 section components under `dashboard/cockpit/`; Cockpit + TaskDrawer + page.tsx migrated to the shared api client, primitives, and 28px density; a11y additions (aria on icon actions/toggles, progressbar semantics); fixed the undefined `s.tag` style bug.
 - **MCA-79** (2026-07-03, epic MCA-78 story 1): UI foundation — tokens gain density/text/space scales (28px rows/controls), shared primitives `dashboard/ui.tsx` (Button/Card/Pill/TextInput/DenseTable/SectionLabel), shared API client `web/lib/api.ts` (Clerk-token aware + MCA-77 error mapping); Connectors/Governance/Memory panels migrated. Cockpit split = story 2.
 - **MCA-77** (2026-07-03): Connectors UX from design critique — inline Replace-token (GitHub/HF/vault; no disconnect needed for rotation), honest error mapping (network vs HTTP status + 401/403 hint), status pills (Connected/Failing/Untested) + last-tested time, truthful header count, design-token adoption in the panel.
 

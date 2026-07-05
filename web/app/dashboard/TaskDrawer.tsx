@@ -1,20 +1,16 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { STATUS_COLOR as STATUS_C } from './tokens'
+import { api } from '@/lib/api'
+import { STATUS_COLOR as STATUS_C, tk, text, space } from './tokens'
+import { Button, TextInput } from './ui'
 
 // MCA-UI U2 — Task detail drawer. Surfaces the shipped-but-invisible backend:
 // unified timeline, comments, attachments/work-products, run history, subtasks.
+// MCA-80: shared api() client + ui.tsx primitives + tokens (dense rows,
+// identical palette). Behavior unchanged: ESC closes, Enter posts a comment,
+// vault: attachment URLs deep-link into the TARCO repo.
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
 type Getter = () => Promise<string | null>
-
-async function call<T>(path: string, token: string | null, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, { ...opts, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts?.headers ?? {}) } })
-  if (res.status === 204) return {} as T
-  const j = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error((j as any)?.error ?? 'Request failed')
-  return j as T
-}
 
 type Task = { id: string; title: string; status: string; input?: string | null; output?: string | null; labels?: string | null; costUsd?: number | null; tokensUsed?: number | null }
 type TL = { kind: string; at: number; by?: string | null; text?: string; ref?: string }
@@ -39,15 +35,15 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const load = useCallback(async () => {
     const t = await getToken()
     try {
-      const [tk, tl, cm, at, rn, st] = await Promise.all([
-        call<{ task: Task }>(`/api/tasks/${taskId}`, t).catch(() => ({ task: null as any })),
-        call<{ timeline: TL[] }>(`/api/tasks/${taskId}/timeline`, t).catch(() => ({ timeline: [] })),
-        call<{ comments: Comment[] }>(`/api/tasks/${taskId}/comments`, t).catch(() => ({ comments: [] })),
-        call<{ attachments: Attach[] }>(`/api/tasks/${taskId}/attachments`, t).catch(() => ({ attachments: [] })),
-        call<{ runs: Run[] }>(`/api/tasks/${taskId}/runs`, t).catch(() => ({ runs: [] })),
-        call<{ subtasks: Task[] }>(`/api/tasks/${taskId}/subtasks`, t).catch(() => ({ subtasks: [] })),
+      const [tk_, tl, cm, at, rn, st] = await Promise.all([
+        api<{ task: Task }>(`/api/tasks/${taskId}`, { token: t }).catch(() => ({ task: null as any })),
+        api<{ timeline: TL[] }>(`/api/tasks/${taskId}/timeline`, { token: t }).catch(() => ({ timeline: [] })),
+        api<{ comments: Comment[] }>(`/api/tasks/${taskId}/comments`, { token: t }).catch(() => ({ comments: [] })),
+        api<{ attachments: Attach[] }>(`/api/tasks/${taskId}/attachments`, { token: t }).catch(() => ({ attachments: [] })),
+        api<{ runs: Run[] }>(`/api/tasks/${taskId}/runs`, { token: t }).catch(() => ({ runs: [] })),
+        api<{ subtasks: Task[] }>(`/api/tasks/${taskId}/subtasks`, { token: t }).catch(() => ({ subtasks: [] })),
       ])
-      setTask(tk.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks)
+      setTask(tk_.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [taskId, getToken])
 
@@ -60,7 +56,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const addComment = async () => {
     if (!draft.trim()) return
     setBusy(true); setErr(null)
-    try { await call(`/api/tasks/${taskId}/comments`, await getToken(), { method: 'POST', body: JSON.stringify({ body: draft.trim() }) }); setDraft(''); await load() }
+    try { await api(`/api/tasks/${taskId}/comments`, { token: await getToken(), method: 'POST', body: JSON.stringify({ body: draft.trim() }) }); setDraft(''); await load() }
     catch (e: any) { setErr(e?.message ?? 'Failed') }
     setBusy(false)
   }
@@ -73,9 +69,9 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
       <aside style={s.drawer} onClick={e => e.stopPropagation()} role="dialog" aria-label="Task detail">
         <div style={s.head}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{task?.title ?? 'Task'}</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
-              <span style={{ ...s.pill, color: STATUS_C[task?.status ?? ''] ?? '#9aa0a6' }}>{task?.status ?? '—'}</span>
+            <div style={{ fontSize: text.lg.fontSize, lineHeight: text.lg.lineHeight, fontWeight: 700 }}>{task?.title ?? 'Task'}</div>
+            <div style={{ display: 'flex', gap: space.md, alignItems: 'center', marginTop: space.xs, flexWrap: 'wrap' }}>
+              <span style={{ ...s.pill, color: STATUS_C[task?.status ?? ''] ?? tk.muted }}>{task?.status ?? '—'}</span>
               {labels.map(l => <span key={l} style={s.label}>{l}</span>)}
               {task?.costUsd != null && <span style={s.muted}>${task.costUsd.toFixed(5)}</span>}
             </div>
@@ -91,7 +87,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
             {timeline.length === 0 ? <Empty /> : timeline.map((e, i) => (
               <div key={i} style={s.tlRow}>
                 <span aria-hidden>{KIND_ICON[e.kind] ?? '•'}</span>
-                <span style={{ flex: 1 }}><b style={{ color: '#c9cdd3' }}>{e.kind.replace(/_/g, ' ')}</b>{e.text ? ` — ${e.text.slice(0, 120)}` : ''}{e.by ? <span style={s.muted}> · {e.by.slice(0, 8)}</span> : null}</span>
+                <span style={{ flex: 1 }}><b style={{ color: tk.textDim }}>{e.kind.replace(/_/g, ' ')}</b>{e.text ? ` — ${e.text.slice(0, 120)}` : ''}{e.by ? <span style={s.muted}> · {e.by.slice(0, 8)}</span> : null}</span>
                 <span style={s.muted}>{fmt(e.at)}</span>
               </div>
             ))}
@@ -110,7 +106,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
           <Section title={`Runs (${runs.length})`}>
             {runs.length === 0 ? <Empty /> : runs.map(r => (
               <div key={r.id} style={s.tlRow}>
-                <span style={{ color: r.status === 'done' ? '#22c55e' : r.status === 'failed' ? '#ff8080' : '#e0b000' }}>●</span>
+                <span aria-hidden style={{ color: r.status === 'done' ? tk.green : r.status === 'failed' ? tk.red : tk.amber }}>●</span>
                 <span style={{ flex: 1 }}>{r.status} <span style={s.muted}>{fmt(r.startedAt)}</span></span>
                 <span style={s.muted}>{r.tokensUsed ? `${r.tokensUsed} tok` : ''}{r.costUsd != null ? ` · $${r.costUsd.toFixed(4)}` : ''}</span>
               </div>
@@ -119,7 +115,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
 
           {subtasks.length > 0 && (
             <Section title={`Subtasks (${subtasks.length})`}>
-              {subtasks.map(st => <div key={st.id} style={s.tlRow}><span aria-hidden>↳</span><span style={{ flex: 1 }}>{st.title}</span><span style={{ ...s.pill, color: STATUS_C[st.status] ?? '#9aa0a6' }}>{st.status}</span></div>)}
+              {subtasks.map(st => <div key={st.id} style={s.tlRow}><span aria-hidden>↳</span><span style={{ flex: 1 }}>{st.title}</span><span style={{ ...s.pill, color: STATUS_C[st.status] ?? tk.muted }}>{st.status}</span></div>)}
             </Section>
           )}
 
@@ -127,12 +123,12 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
             {comments.map(c => (
               <div key={c.id} style={s.comment}>
                 <div style={s.muted}>{c.authorAgentId ? `agent ${c.authorAgentId.slice(0, 8)}` : (c.authorUser ?? 'user')} · {fmt(c.createdAt)}</div>
-                <div style={{ fontSize: 13, marginTop: 2 }}>{c.body}</div>
+                <div style={{ fontSize: text.md.fontSize, marginTop: 2 }}>{c.body}</div>
               </div>
             ))}
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <input style={s.input} placeholder="Add a comment…" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addComment() }} />
-              <button style={s.btnPrimary} disabled={busy} onClick={addComment}>{busy ? '…' : 'Comment'}</button>
+            <div style={{ display: 'flex', gap: space.md, marginTop: space.md }}>
+              <TextInput style={{ flex: 1 }} placeholder="Add a comment…" aria-label="Add a comment" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addComment() }} />
+              <Button variant="primary" disabled={busy} onClick={addComment}>{busy ? '…' : 'Comment'}</Button>
             </div>
           </Section>
         </div>
@@ -142,25 +138,23 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div style={{ marginBottom: 18 }}><div style={s.secTitle}>{title}</div>{children}</div>
+  return <div style={{ marginBottom: space.xl }}><div style={s.secTitle}>{title}</div>{children}</div>
 }
-function Empty() { return <div style={{ ...s.muted, fontSize: 12, padding: '4px 0' }}>Nothing yet.</div> }
+function Empty() { return <div style={{ ...s.muted, padding: `${space.xs}px 0` }}>Nothing yet.</div> }
 
 const s: Record<string, React.CSSProperties> = {
   scrim: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' },
-  drawer: { width: 'min(560px, 94vw)', height: '100%', background: '#0d0d0d', borderLeft: '1px solid #262626', display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)' },
-  head: { display: 'flex', gap: 12, alignItems: 'flex-start', padding: 18, borderBottom: '1px solid #1f1f1f' },
-  close: { background: '#1a1a1a', border: '1px solid #333', color: '#c9cdd3', width: 34, height: 34, borderRadius: 8, cursor: 'pointer', fontSize: 14 },
-  body: { padding: 18, overflow: 'auto', flex: 1 },
-  secTitle: { fontSize: 11, fontWeight: 700, color: '#9aa0a6', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 },
-  tlRow: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '5px 0', borderBottom: '1px solid #161616' },
-  comment: { padding: '7px 0', borderBottom: '1px solid #161616' },
-  pill: { fontSize: 11, fontWeight: 700, textTransform: 'capitalize', border: '1px solid #2a2a2a', borderRadius: 999, padding: '2px 9px' },
-  label: { fontSize: 11, color: '#c9cdd3', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, padding: '1px 7px' },
-  muted: { color: '#9aa0a6', fontSize: 11.5 },
-  mono: { fontFamily: 'monospace', fontSize: 12, color: '#c9cdd3', background: '#0a0a0a', border: '1px solid #1f1f1f', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-  link: { color: '#4aa8ff', fontSize: 12.5, textDecoration: 'none', flex: 1 },
-  err: { background: '#2a1414', border: '1px solid #5a2a2a', color: '#ff8080', borderRadius: 8, padding: '8px 12px', margin: '0 18px', fontSize: 12.5 },
-  input: { flex: 1, background: '#000', border: '1px solid #333', borderRadius: 8, padding: '9px 11px', color: '#eee', fontSize: 13 },
-  btnPrimary: { background: '#FFB800', border: '1px solid #FFB800', color: '#000', padding: '8px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 },
+  drawer: { width: 'min(560px, 94vw)', height: '100%', background: tk.surface, borderLeft: `1px solid ${tk.line}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)' },
+  head: { display: 'flex', gap: space.lg, alignItems: 'flex-start', padding: space.xl, borderBottom: `1px solid ${tk.line}` },
+  close: { background: '#1a1a1a', border: '1px solid #333', color: tk.textDim, width: 28, height: 28, borderRadius: tk.r.sm, cursor: 'pointer', fontSize: text.sm.fontSize, flexShrink: 0 },
+  body: { padding: space.xl, overflow: 'auto', flex: 1 },
+  secTitle: { fontSize: text.xs.fontSize, lineHeight: text.xs.lineHeight, fontWeight: 700, color: tk.muted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: space.sm },
+  tlRow: { display: 'flex', gap: space.md, alignItems: 'center', fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight, padding: `${space.xs}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
+  comment: { padding: `${space.sm}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
+  pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid #2a2a2a', borderRadius: tk.r.pill, padding: '1px 8px' },
+  label: { fontSize: text.xs.fontSize, color: tk.textDim, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, padding: '1px 7px' },
+  muted: { color: tk.muted, fontSize: text.xs.fontSize },
+  mono: { fontFamily: 'monospace', fontSize: text.sm.fontSize, color: tk.textDim, background: tk.bg, border: `1px solid ${tk.lineSoft}`, borderRadius: tk.r.sm, padding: space.md, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  link: { color: tk.blue, fontSize: text.sm.fontSize, textDecoration: 'none', flex: 1 },
+  err: { background: '#2a1414', border: '1px solid #5a2a2a', color: tk.red, borderRadius: tk.r.md, padding: `${space.sm}px ${space.lg}px`, margin: `0 ${space.xl}px`, fontSize: text.sm.fontSize },
 }
