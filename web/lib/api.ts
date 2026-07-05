@@ -26,7 +26,10 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   if (res.status === 204) return {} as T
   const j = await res.json().catch(() => ({}))
   if (!res.ok) {
-    let msg = `HTTP ${res.status}: ${(j as any)?.error ?? (res.statusText || 'Request failed')}`
+    // Some endpoints (plugin manifest validation) return an `errors` array.
+    const errs = (j as any)?.errors
+    const detail = (Array.isArray(errs) && errs.length ? errs.join('; ') : undefined) ?? (j as any)?.error
+    let msg = `HTTP ${res.status}: ${detail ?? (res.statusText || 'Request failed')}`
     if (res.status === 401 || res.status === 403) msg += ' — token invalid or revoked. Use Replace token.'
     throw new Error(msg)
   }

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { api, API } from '@/lib/api'
 import CockpitPanel from './CockpitPanel'
 import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
@@ -13,16 +14,9 @@ try {
   useAuth = () => ({ getToken: async () => null, isLoaded: true, isSignedIn: false })
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
-
-async function apiFetch<T>(path: string, token: string | null, opts?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    ...opts,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
-  })
-  if (!res.ok) throw new Error('Request failed')
-  return res.json()
-}
+// MCA-80 — thin wrapper over the shared api() client (same call sites as the
+// old local helper; base URL, auth header, and error mapping live in lib/api).
+const apiFetch = <T,>(path: string, token: string | null, opts?: RequestInit): Promise<T> => api<T>(path, { token, ...opts })
 
 type Org = { id: string; name: string; description?: string; mission?: string; culture?: string }
 type Agent = { id: string; name: string; role: string; status: string; avatarEmoji: string; agentType: string; llmModel: string; skills: string[] }
