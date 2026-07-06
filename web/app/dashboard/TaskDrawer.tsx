@@ -19,6 +19,7 @@ type TL = { kind: string; at: number; by?: string | null; text?: string; ref?: s
 type Comment = { id: string; body: string; kind?: string | null; authorAgentId?: string | null; authorUser?: string | null; createdAt: number }
 type Attach = { id: string; kind: string; name: string; url?: string | null }
 type Run = { id: string; status: string; startedAt: number; endedAt?: number | null; tokensUsed?: number | null; costUsd?: number | null }
+type Rollup = { ownCost: number; subtaskCost: number; totalCost: number; ownTokens: number; subtaskTokens: number; totalTokens: number; subtaskCount: number }
 
 const KIND_ICON: Record<string, string> = { created: '🆕', comment: '💬', run_started: '▶️', run_done: '✓', run_failed: '✗', attach_work_product: '📎', attach_link: '🔗', attach_file: '📄', completed: '✅', closed: '⛔' }
 const fmt = (t: number) => { try { return new Date(t).toLocaleString() } catch { return '' } }
@@ -30,6 +31,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const [attachments, setAttachments] = useState<Attach[]>([])
   const [runs, setRuns] = useState<Run[]>([])
   const [subtasks, setSubtasks] = useState<Task[]>([])
+  const [rollup, setRollup] = useState<Rollup | null>(null)
   const [recovery, setRecovery] = useState<Recovery | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [draft, setDraft] = useState('')
@@ -46,10 +48,10 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
         api<{ comments: Comment[] }>(`/api/tasks/${taskId}/comments`, { token: t }).catch(() => ({ comments: [] })),
         api<{ attachments: Attach[] }>(`/api/tasks/${taskId}/attachments`, { token: t }).catch(() => ({ attachments: [] })),
         api<{ runs: Run[] }>(`/api/tasks/${taskId}/runs`, { token: t }).catch(() => ({ runs: [] })),
-        api<{ subtasks: Task[] }>(`/api/tasks/${taskId}/subtasks`, { token: t }).catch(() => ({ subtasks: [] })),
+        api<{ subtasks: Task[]; rollup: Rollup | null }>(`/api/tasks/${taskId}/subtasks`, { token: t }).catch(() => ({ subtasks: [], rollup: null })),
         api<{ recovery: Recovery | null }>(`/api/tasks/${taskId}/recovery`, { token: t }).catch(() => ({ recovery: null })),
       ])
-      setTask(tk_.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks); setRecovery(rc.recovery)
+      setTask(tk_.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks); setRollup(st.rollup ?? null); setRecovery(rc.recovery)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [taskId, getToken])
 
@@ -78,6 +80,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   }
   const focusComment = () => { commentRef.current?.focus(); commentRef.current?.scrollIntoView({ block: 'center' }) }
 
+  const hasRollup = !!rollup && rollup.subtaskCount > 0 && rollup.totalCost > 0
   const labels: string[] = (() => { try { return task?.labels ? JSON.parse(task.labels) : [] } catch { return [] } })()
   const vaultHref = (url?: string | null) => url?.startsWith('vault:') ? `https://github.com/Arturito7ei/7Ei-MC_TARCO/blob/main/${url.slice(6)}` : (url ?? undefined)
 
@@ -90,7 +93,10 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
             <div style={{ display: 'flex', gap: space.md, alignItems: 'center', marginTop: space.xs, flexWrap: 'wrap' }}>
               <span style={{ ...s.pill, color: task?.status ? statusColor(task.status) : tk.muted }}>{task?.status ? `${statusIcon(task.status)} ${task.status}` : '—'}</span>
               {labels.map(l => <span key={l} style={s.label}>{l}</span>)}
-              {task?.costUsd != null && <span style={s.muted}>${task.costUsd.toFixed(5)}</span>}
+              {hasRollup
+                // W2: parent shows the whole subtree's spend, not just its own slice.
+                ? <span style={s.muted} title={`own $${rollup!.ownCost.toFixed(5)} + ${rollup!.subtaskCount} subtask${rollup!.subtaskCount === 1 ? '' : 's'} $${rollup!.subtaskCost.toFixed(5)}`}>${rollup!.totalCost.toFixed(5)} <span style={{ opacity: 0.7 }}>incl. subtasks</span></span>
+                : task?.costUsd != null && <span style={s.muted}>${task.costUsd.toFixed(5)}</span>}
             </div>
           </div>
           <button style={s.close} onClick={onClose} aria-label="Close">✕</button>
@@ -133,7 +139,22 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
 
           {subtasks.length > 0 && (
             <Section title={`Subtasks (${subtasks.length})`}>
-              {subtasks.map(st => <div key={st.id} style={s.tlRow}><span aria-hidden>↳</span><span style={{ flex: 1 }}>{st.title}</span><span style={{ ...s.pill, color: statusColor(st.status) }}>{statusIcon(st.status)} {st.status}</span></div>)}
+              {subtasks.map(st => (
+                <div key={st.id} style={s.tlRow}>
+                  <span aria-hidden>↳</span>
+                  <span style={{ flex: 1 }}>{st.title}</span>
+                  {st.costUsd != null && <span style={s.muted}>${st.costUsd.toFixed(4)}</span>}
+                  <span style={{ ...s.pill, color: statusColor(st.status) }}>{statusIcon(st.status)} {st.status}</span>
+                </div>
+              ))}
+              {rollup && rollup.totalCost > 0 && (
+                // W2 cost roll-up: own + subtasks = true spend on this piece of work.
+                <div style={{ ...s.tlRow, borderBottom: 'none', fontWeight: 700 }}>
+                  <span aria-hidden>Σ</span>
+                  <span style={{ flex: 1 }}>Total (this task + {rollup.subtaskCount} subtask{rollup.subtaskCount === 1 ? '' : 's'})</span>
+                  <span style={s.muted} title={`${rollup.totalTokens} tok · own $${rollup.ownCost.toFixed(4)} + subtasks $${rollup.subtaskCost.toFixed(4)}`}>${rollup.totalCost.toFixed(4)}</span>
+                </div>
+              )}
             </Section>
           )}
 

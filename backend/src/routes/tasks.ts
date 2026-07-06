@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
-import { eq, and, desc } from 'drizzle-orm'
+import { eq, and, desc, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
 import { buildInbox } from '../services/inbox'
@@ -12,6 +12,7 @@ import { encrypt, decrypt, maskValue } from '../services/secrets'
 import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
+import { rollupCost } from '../services/worksurface'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -381,8 +382,13 @@ export async function taskRoutes(app: FastifyInstance) {
   })
   app.get('/api/tasks/:taskId/subtasks', async (req) => {
     const { taskId } = req.params as any
-    const subtasks = await db.select().from(schema.tasks).where(eq(schema.tasks.parentTaskId, taskId)).orderBy(schema.tasks.createdAt)
-    return { subtasks }
+    const [subtasks, parent] = await Promise.all([
+      db.select().from(schema.tasks).where(eq(schema.tasks.parentTaskId, taskId)).orderBy(schema.tasks.createdAt),
+      db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) }),
+    ])
+    // W2: roll the sub-tasks' spend up into the parent so a decomposed task shows
+    // its true cost, not just the coordinator's slice.
+    return { subtasks, rollup: rollupCost(parent, subtasks) }
   })
   app.get('/api/tasks/:taskId/timeline', async (req, reply) => {
     const { taskId } = req.params as any
@@ -407,7 +413,14 @@ export async function taskRoutes(app: FastifyInstance) {
       db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId)),
       db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId)),
     ])
-    const card = buildRecovery({ task, runs, comments })
+    // W2: resolve upstream blocker ids to task rows for the reasoned chips.
+    let blockerIds: string[] = []
+    try { const a = JSON.parse(task.blockedBy ?? '[]'); if (Array.isArray(a)) blockerIds = a.filter((x) => typeof x === 'string') } catch {}
+    const blockerTasks = blockerIds.length
+      ? await db.select({ id: schema.tasks.id, title: schema.tasks.title, status: schema.tasks.status })
+          .from(schema.tasks).where(inArray(schema.tasks.id, blockerIds))
+      : []
+    const card = buildRecovery({ task, runs, comments, blockerTasks })
     if (!card) return { recovery: null }
     const owner = card.ownerAgentId
       ? await db.query.agents.findFirst({ where: eq(schema.agents.id, card.ownerAgentId) })

@@ -11,6 +11,16 @@
 
 export type RecoveryReason = 'failed' | 'orphaned' | 'blocked'
 
+// MCA-83 W2 — a reasoned blocker chip: the upstream task that's holding this one
+// up, carrying its title + status so the operator sees *why* it's blocked (a
+// blocker still running is a wait; a blocker that failed is the real problem).
+export interface BlockerChip {
+  id: string
+  title: string
+  status: string
+  done: boolean
+}
+
 export interface RecoveryCard {
   reason: RecoveryReason
   ownerAgentId: string | null   // agent responsible for the task
@@ -20,6 +30,7 @@ export interface RecoveryCard {
   nextAction: string            // the operator's recommended next step
   since: number | null          // when the failure began (open-until-decision)
   blockerCount: number          // upstream blockers, for reason === 'blocked'
+  blockers: BlockerChip[]       // W2: the reasoned chips (resolved from blockedBy)
 }
 
 interface RTask {
@@ -42,6 +53,11 @@ interface RComment {
   body: string
   kind?: string | null
   createdAt?: unknown
+}
+interface RBlocker {
+  id: string
+  title?: string | null
+  status?: string | null
 }
 
 const ms = (d: unknown): number =>
@@ -79,6 +95,7 @@ export function buildRecovery(input: {
   task?: RTask | null
   runs?: RRun[]
   comments?: RComment[]
+  blockerTasks?: RBlocker[]           // W2: upstream task rows for reasoned chips
 }): RecoveryCard | null {
   const task = input.task
   if (!task) return null
@@ -110,6 +127,17 @@ export function buildRecovery(input: {
 
   const since = ms(failedRun?.endedAt) || ms(latestNotice?.createdAt) || ms(task.completedAt) || null
 
+  // W2: turn blocker ids into reasoned chips (title + status). Resolved rows only;
+  // open (not-done) blockers sort first — those are the reason work can't proceed.
+  const byId = new Map((input.blockerTasks ?? []).map((b) => [b.id, b]))
+  const chips: BlockerChip[] = blockers
+    .map((id) => {
+      const b = byId.get(id)
+      const status = b?.status ?? 'unknown'
+      return { id, title: b?.title?.trim() || id.slice(0, 8), status, done: status === 'done' }
+    })
+    .sort((a, b) => Number(a.done) - Number(b.done))
+
   return {
     reason,
     ownerAgentId: task.assignedTo || task.agentId || failedRun?.agentId || null,
@@ -119,5 +147,6 @@ export function buildRecovery(input: {
     nextAction: NEXT_ACTION[reason],
     since,
     blockerCount: blockers.length,
+    blockers: chips,
   }
 }

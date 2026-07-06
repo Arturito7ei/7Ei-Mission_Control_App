@@ -8,6 +8,8 @@ import { tk, text, space } from './tokens'
 import { statusColor, statusIcon } from './status'
 import { Button } from './ui'
 
+export type BlockerChip = { id: string; title: string; status: string; done: boolean }
+
 export type Recovery = {
   reason: 'failed' | 'orphaned' | 'blocked'
   ownerAgentId: string | null
@@ -19,6 +21,7 @@ export type Recovery = {
   nextAction: string
   since: number | null
   blockerCount: number
+  blockers: BlockerChip[]
 }
 
 const HEADING: Record<Recovery['reason'], string> = {
@@ -56,7 +59,21 @@ export default function RecoveryCard({ rec, retrying, onRetry, onAddNote }: {
       <dl style={s.grid}>
         <Field label="Owner"><span>{rec.ownerEmoji ? `${rec.ownerEmoji} ` : ''}{owner}</span></Field>
         {rec.reason === 'blocked'
-          ? <Field label="Blocked by"><span>{rec.blockerCount} upstream task{rec.blockerCount === 1 ? '' : 's'}</span></Field>
+          ? <Field label="Blocked by">
+              {rec.blockers.length > 0
+                ? <div style={s.chips}>
+                    {rec.blockers.map(b => (
+                      // Reasoned chip: title + status so the operator sees WHY (a
+                      // blocker still running is a wait; one that failed is the problem).
+                      <span key={b.id} style={s.chip} title={`${b.title} — ${b.status}`}>
+                        <span aria-hidden style={{ color: statusColor(b.status), fontWeight: 700 }}>{statusIcon(b.status)}</span>
+                        <span style={s.chipTitle}>{b.title}</span>
+                        <span style={{ ...s.chipStatus, color: statusColor(b.status) }}>{b.status}</span>
+                      </span>
+                    ))}
+                  </div>
+                : <span>{rec.blockerCount} upstream task{rec.blockerCount === 1 ? '' : 's'}</span>}
+            </Field>
           : rec.sourceRunStatus
             ? <Field label="Source run">
                 <span style={{ color: statusColor(rec.sourceRunStatus), fontWeight: 700 }}>{statusIcon(rec.sourceRunStatus)} {rec.sourceRunStatus}</span>
@@ -104,6 +121,10 @@ const s: Record<string, React.CSSProperties> = {
   dt: { color: tk.muted, fontSize: text.xs.fontSize, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700 },
   dd: { margin: 0, color: tk.text, fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight },
   muted: { color: tk.muted, fontSize: text.xs.fontSize },
+  chips: { display: 'flex', flexWrap: 'wrap', gap: space.xs },
+  chip: { display: 'inline-flex', alignItems: 'center', gap: 4, background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '1px 8px', fontSize: text.xs.fontSize, maxWidth: '100%' },
+  chipTitle: { color: tk.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 },
+  chipStatus: { fontWeight: 700, textTransform: 'capitalize' },
   evLabel: { color: tk.muted, fontSize: text.xs.fontSize, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 700, marginBottom: space.xs },
   evidence: { fontFamily: 'monospace', fontSize: text.sm.fontSize, color: tk.textDim, background: tk.bg, border: `1px solid var(--danger-line)`, borderRadius: tk.r.sm, padding: space.md, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflow: 'auto' },
   actions: { display: 'flex', gap: space.md, marginTop: space.xs },

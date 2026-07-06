@@ -14,7 +14,9 @@ export type CAgent = {
   status: string; agentType: string; avatarEmoji: string; heartbeat: string; lastHeartbeatAt: number | null
 }
 export type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string }
-export type Cockpit = { agents: CAgent[]; tasks: CTask[]; summary: Record<string, number>; generatedAt: string }
+// W2: the single next task the office should pick up (unblocked, highest priority).
+export type NextUp = { id: string; title: string; agentId: string | null; priority: string; blockedCleared: number }
+export type Cockpit = { agents: CAgent[]; tasks: CTask[]; nextUp: NextUp | null; summary: Record<string, number>; generatedAt: string }
 export type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
 export type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
 export type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
