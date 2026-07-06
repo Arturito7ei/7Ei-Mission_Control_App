@@ -1,4 +1,12 @@
 import './globals.css'
+import { themeCss } from './dashboard/tokens'
+import { ThemeProvider } from './theme'
+
+// Runs before first paint: resolves the stored mode ('7ei-theme') or the OS
+// preference and stamps data-theme, so there is no theme flash. Kept here (a
+// server module) because client-module exports can't be inlined server-side.
+// Must stay in sync with app/theme.tsx.
+const THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem('7ei-theme');var t=(m==='light'||m==='dark')?m:(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t)}catch(e){}})()`
 
 let ClerkProvider: any = null
 try {
@@ -17,28 +25,28 @@ export const metadata = {
 
 // MCA-DIST S5.2 — installable PWA + mobile viewport.
 export const viewport = {
-  themeColor: '#0a0a0a',
+  themeColor: '#070707',
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover' as const,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  if (ClerkProvider) {
-    return (
-      <html lang="en" data-theme="dark">
-        <body>
-          <ClerkProvider>
-            {children}
-          </ClerkProvider>
-        </body>
-      </html>
-    )
-  }
+  const inner = ClerkProvider
+    ? <ClerkProvider><ThemeProvider>{children}</ThemeProvider></ClerkProvider>
+    : <ThemeProvider>{children}</ThemeProvider>
 
+  // MCA-86 — SSR defaults to dark (current look); the inline script re-stamps
+  // data-theme from localStorage / prefers-color-scheme before first paint, so
+  // there is no theme flash. suppressHydrationWarning covers the attribute the
+  // script may change ahead of React.
   return (
-    <html lang="en" data-theme="dark">
-      <body>{children}</body>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <body>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <style id="theme-tokens" dangerouslySetInnerHTML={{ __html: themeCss() }} />
+        {inner}
+      </body>
     </html>
   )
 }

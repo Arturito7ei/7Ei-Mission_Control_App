@@ -1,17 +1,102 @@
-// MCA-UI U1 (MCA-70) — shared design tokens + primitives for the dashboard.
-// Replaces per-component inline hex with one source of truth. Muted greys are
-// bumped to WCAG-AA-safe values on the near-black surfaces (a11y, MCA-73).
+// MCA-86 (Epic T1) — tokens v2: light/dark theme map per docs/DESIGN_SYSTEM.md v2.
+// Raw color values live ONLY in `themes` below; everything else (the compat
+// `tk` object, panels, primitives) consumes `var(--*)` strings so the whole
+// dashboard follows `<html data-theme>`. Density/type/space scales (MCA-79)
+// are unchanged. Colorblind-safe status colors live in ./status.ts.
 import type { CSSProperties } from 'react'
 
+export type ThemeName = 'light' | 'dark'
+
+export const themes: Record<ThemeName, Record<string, string>> = {
+  light: {
+    // — DESIGN_SYSTEM v2 semantic token table —
+    '--s0': '#f5f5f3',                       // page
+    '--s1': '#ffffff',                       // card
+    '--s2': '#ebebeb',                       // raised
+    '--glass': 'rgba(255,255,255,.72)',
+    '--glass-line': 'rgba(0,0,0,.07)',
+    '--line': '#e5e5e3',
+    '--line-strong': '#d5d5d3',
+    '--text': '#070707',
+    '--text-2': '#555555',                   // silver tier
+    '--muted': '#8a8a88',
+    '--accent': '#700077',                   // Zeus — CTA/active on light
+    '--accent-2': '#893BFF',
+    '--brand-red': '#D4001A',
+    '--ok': '#1f7a1f', '--ok-bg': '#eef4e8',
+    '--warn': '#6b6100', '--warn-bg': '#fff9c2',
+    '--info': '#3500ff', '--info-bg': '#eceafd',
+    '--danger-text': '#D4001A',
+    '--purple-1': '#893BFF',                 // Aztec — agent identity, mode-stable
+    '--purple-2': '#700077',                 // Zeus
+    // — derived tints/support (kept here so no component carries raw hex) —
+    '--accent-contrast': '#ffffff',          // text on an accent fill
+    '--accent-hover': '#893BFF',
+    '--accent-dim': 'rgba(137,59,255,.07)',
+    '--accent-line': 'rgba(137,59,255,.2)',  // accent border
+    '--accent-glow': 'rgba(137,59,255,.10)',
+    '--danger-bg': 'rgba(212,0,26,.06)',
+    '--danger-line': 'rgba(212,0,26,.24)',   // error border
+    '--skeleton': '#e7e7e4',
+    '--text-3': '#cccccc',                   // disabled
+    '--scrim': 'rgba(7,7,7,.35)',
+  },
+  dark: {
+    '--s0': '#070707',
+    '--s1': '#0f0f0f',
+    '--s2': '#161616',
+    '--glass': 'rgba(15,15,15,.72)',
+    '--glass-line': 'rgba(199,199,199,.08)',
+    '--line': '#1e1e1e',
+    '--line-strong': '#2a2a2a',
+    '--text': '#ffffff',
+    '--text-2': '#c7c7c7',
+    '--muted': '#555555',
+    '--accent': '#893BFF',                   // Aztec — CTA/active on dark
+    '--accent-2': '#700077',
+    '--brand-red': '#D4001A',
+    '--ok': '#33c333', '--ok-bg': '#0e2a0e',
+    '--warn': '#c9b800', '--warn-bg': '#33300a',
+    '--info': '#7b6dff', '--info-bg': '#14104a',
+    '--danger-text': '#ff3b52',              // red text lifted for dark
+    '--purple-1': '#893BFF',
+    '--purple-2': '#700077',
+    '--accent-contrast': '#ffffff',
+    '--accent-hover': '#9d5aff',
+    '--accent-dim': 'rgba(137,59,255,.10)',
+    '--accent-line': 'rgba(137,59,255,.3)',
+    '--accent-glow': 'rgba(137,59,255,.18)',
+    '--danger-bg': 'rgba(212,0,26,.09)',
+    '--danger-line': 'rgba(212,0,26,.35)',
+    '--skeleton': '#1d1d1d',
+    '--text-3': '#333333',
+    '--scrim': 'rgba(0,0,0,.6)',
+  },
+}
+
+// CSS emitted into an inline <style> by app/layout.tsx. Dark doubles as the
+// `:root` default so SSR / no-JS paints the current dark look before hydration.
+export function themeCss(): string {
+  const block = (t: Record<string, string>) => Object.entries(t).map(([k, v]) => `${k}:${v}`).join(';')
+  return `:root,[data-theme="dark"]{${block(themes.dark)}}\n[data-theme="light"]{${block(themes.light)}}`
+}
+
+// Compatibility layer — same keys as tk v1 (MCA-70), values are now var()
+// strings so every existing `tk.*` consumer themes automatically.
+// Intentional visual change: `accent` was orange #FFB800, is now purple
+// (Zeus on light / Aztec on dark) per DESIGN_SYSTEM v2. `red` maps to
+// --danger-text (error/destructive only — never a primary CTA fill).
 export const tk = {
   // surfaces
-  bg: '#0a0a0a', surface: '#0e0e0e', surfaceHigh: '#111', line: '#222', lineSoft: '#1a1a1a',
-  skeleton: '#1d1d1d', // MCA-81 — loading placeholder blocks
-  // text (contrast-checked on bg)
-  text: '#e6e8eb', textDim: '#c9cdd3', muted: '#9aa0a6', mutedSoft: '#8b9096',
+  bg: 'var(--s0)', surface: 'var(--s1)', surfaceHigh: 'var(--s2)',
+  line: 'var(--line)', lineSoft: 'var(--line)',
+  skeleton: 'var(--skeleton)', // MCA-81 — loading placeholder blocks
+  // text
+  text: 'var(--text)', textDim: 'var(--text-2)', muted: 'var(--muted)', mutedSoft: 'var(--muted)',
   // accent + status
-  accent: '#FFB800', blue: '#4aa8ff', green: '#22c55e', amber: '#e0b000', red: '#ff8080',
-  // scale
+  accent: 'var(--accent)', blue: 'var(--info)', green: 'var(--ok)', amber: 'var(--warn)', red: 'var(--danger-text)',
+  accentContrast: 'var(--accent-contrast)', // v2 — text on accent fills (purple needs white, not black)
+  // scale (unchanged)
   r: { sm: 8, md: 10, lg: 12, pill: 999 },
   sp: { xs: 6, sm: 8, md: 12, lg: 16, xl: 20 },
 } as const
@@ -24,7 +109,7 @@ export const density = {
   ctrl: 28,            // button/input height
 } as const
 
-// Type ramp — small but legible on the near-black surfaces (pairs with tk.text*).
+// Type ramp — small but legible on both surfaces (pairs with tk.text*).
 export const text = {
   xs: { fontSize: 11, lineHeight: '14px' },
   sm: { fontSize: 12, lineHeight: '16px' },
@@ -35,9 +120,13 @@ export const text = {
 // Spacing steps (px) — prefer these over ad-hoc margins in dense layouts.
 export const space = { xxs: 2, xs: 4, sm: 6, md: 8, lg: 12, xl: 16, xxl: 24 } as const
 
+// Legacy status map — re-pointed at the v2 status table (active = purple, not
+// green; red only for failure states). Prefer statusColor()/statusIcon() from
+// ./status.ts for new code — and always pair color with an icon or label.
 export const STATUS_COLOR: Record<string, string> = {
-  done: tk.green, failed: tk.red, in_progress: tk.blue, assigned: tk.amber, blocked: tk.red, pending: tk.muted,
-  idle: tk.muted, active: tk.green, paused: tk.amber, terminated: tk.red,
+  done: 'var(--ok)', failed: 'var(--danger-text)', in_progress: 'var(--accent)', assigned: 'var(--muted)',
+  blocked: 'var(--danger-text)', pending: 'var(--muted)',
+  idle: 'var(--muted)', active: 'var(--accent)', paused: 'var(--warn)', terminated: 'var(--danger-text)',
 }
 
 // Shared primitives — import these instead of re-declaring per component.
@@ -50,12 +139,13 @@ export const ui: Record<string, CSSProperties> = {
   card: { background: tk.surface, border: `1px solid ${tk.line}`, borderRadius: tk.r.lg, padding: tk.sp.lg },
   row: { display: 'flex', gap: 10, alignItems: 'center' },
   muted: { color: tk.muted, fontSize: 12.5 },
-  pill: { fontSize: 11, fontWeight: 700, border: `1px solid #2a2a2a`, borderRadius: tk.r.pill, padding: '2px 9px' },
-  input: { background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: '9px 11px', color: tk.text, fontSize: 13 },
-  ghost: { background: '#1a1a1a', border: '1px solid #333', color: tk.accent, padding: '9px 14px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-  btn: { background: '#1a1a1a', border: '1px solid #333', color: tk.textDim, padding: '7px 12px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 },
-  btnPrimary: { background: tk.accent, border: `1px solid ${tk.accent}`, color: '#000', padding: '8px 14px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 },
-  btnDanger: { background: '#1a1010', border: '1px solid #5a2a2a', color: tk.red, padding: '7px 12px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 },
-  err: { background: '#2a1414', border: '1px solid #5a2a2a', color: tk.red, borderRadius: tk.r.md, padding: '9px 12px', fontSize: 13 },
-  ok: { background: '#12210f', border: '1px solid #2a5a2a', color: '#8fe08f', borderRadius: tk.r.md, padding: '9px 12px', fontSize: 13 },
+  pill: { fontSize: 11, fontWeight: 700, border: `1px solid var(--line-strong)`, borderRadius: tk.r.pill, padding: '2px 9px' },
+  input: { background: tk.bg, border: '1px solid var(--line-strong)', borderRadius: tk.r.md, padding: '9px 11px', color: tk.text, fontSize: 13 },
+  ghost: { background: tk.surfaceHigh, border: '1px solid var(--line-strong)', color: tk.accent, padding: '9px 14px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 13, fontWeight: 600 },
+  btn: { background: tk.surfaceHigh, border: '1px solid var(--line-strong)', color: tk.textDim, padding: '7px 12px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 },
+  // Primary CTA = accent (purple) fill; destructive = red OUTLINE, never a fill (colorblind rule 4).
+  btnPrimary: { background: tk.accent, border: `1px solid ${tk.accent}`, color: tk.accentContrast, padding: '8px 14px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 },
+  btnDanger: { background: 'transparent', border: '1px solid var(--danger-line)', color: tk.red, padding: '7px 12px', borderRadius: tk.r.md, cursor: 'pointer', fontSize: 12.5, fontWeight: 600 },
+  err: { background: 'var(--danger-bg)', border: '1px solid var(--danger-line)', color: tk.red, borderRadius: tk.r.md, padding: '9px 12px', fontSize: 13 },
+  ok: { background: 'var(--ok-bg)', border: '1px solid var(--ok)', color: tk.green, borderRadius: tk.r.md, padding: '9px 12px', fontSize: 13 },
 }

@@ -11,7 +11,7 @@ function NodeRow({ node, depth }: { node: GoalNode; depth: number }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.xs}px 0`, paddingLeft: depth * 20 }}>
-        {depth > 0 && <span aria-hidden style={{ color: '#444' }}>└─</span>}
+        {depth > 0 && <span aria-hidden style={{ color: tk.muted }}>└─</span>}
         <span aria-hidden>🎯</span>
         <span style={{ fontWeight: 600, fontSize: text.md.fontSize }}>{node.title}</span>
         {node.metric && <span style={sx.badge}>{node.metric}</span>}

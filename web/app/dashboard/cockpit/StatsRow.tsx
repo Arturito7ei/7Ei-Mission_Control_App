@@ -6,7 +6,8 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { tk, text, space } from '../tokens'
 import { Skeleton } from '../ui'
-import { HB, type Budget, type CAgent } from './shared'
+import { statusColor, statusIcon, HEARTBEAT_STATUS } from '../status'
+import { type Budget, type CAgent } from './shared'
 
 const grid: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: space.md }
 // 8px/10px cell padding per the approved mockup (10 has no token step).
@@ -54,16 +55,18 @@ export default function StatsRow({ sum, agents, budgets, approvalsPending, loadi
     <div style={grid}>
       <Cell l="Agents">
         {sum.agents ?? live.length}
-        <span style={{ ...sub, color: HB.green }}>{hb('green')}</span>
-        <span style={{ ...sub, color: HB.amber }}>{hb('amber')}</span>
-        <span style={{ ...sub, color: HB.stale }}>{hb('stale')}</span>
+        {/* MCA-86: heartbeat counts on the status table — ⬡ active (purple),
+            ⏸ paused (amber), ✕ failed (red). Icon carries the signal. */}
+        <span title="active" style={{ ...sub, color: statusColor(HEARTBEAT_STATUS.green) }}>{statusIcon(HEARTBEAT_STATUS.green)} {hb('green')}</span>
+        <span title="paused" style={{ ...sub, color: statusColor(HEARTBEAT_STATUS.amber) }}>{statusIcon(HEARTBEAT_STATUS.amber)} {hb('amber')}</span>
+        <span title="stale" style={{ ...sub, color: statusColor(HEARTBEAT_STATUS.stale) }}>{statusIcon(HEARTBEAT_STATUS.stale)} {hb('stale')}</span>
       </Cell>
       <Cell l="Tasks">
         <span style={{ ...sub, color: tk.textDim }}>{sum.todo ?? 0} todo</span>
         <span style={{ color: tk.mutedSoft }}>·</span>
-        <span style={{ ...sub, color: tk.blue }}>{sum.in_progress ?? 0} running</span>
+        <span style={{ ...sub, color: statusColor('active') }}>{sum.in_progress ?? 0} running</span>
         <span style={{ color: tk.mutedSoft }}>·</span>
-        <span style={{ ...sub, color: tk.green }}>{sum.done ?? 0} done</span>
+        <span style={{ ...sub, color: statusColor('done') }}>{sum.done ?? 0} done</span>
       </Cell>
       <Cell l="Spend today">
         <span style={{ color: tk.accent }}>${spend.toFixed(2)}</span>

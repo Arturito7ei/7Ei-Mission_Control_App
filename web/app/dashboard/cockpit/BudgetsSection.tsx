@@ -74,7 +74,7 @@ export default function BudgetsSection({ orgId, getToken, agents, budgets, onDel
           return (
             <div key={b.id} style={sx.row}>
               <div style={{ minWidth: 130 }}>{b.scope}{b.scopeId ? ` · ${b.scopeId.slice(0, 6)}` : ''}</div>
-              <div style={{ flex: 1, height: 6, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' }} role="progressbar" aria-valuenow={Math.round(b.pct * 100)} aria-valuemin={0} aria-valuemax={100}>
+              <div style={{ flex: 1, height: 6, background: 'var(--s2)', borderRadius: 3, overflow: 'hidden' }} role="progressbar" aria-valuenow={Math.round(b.pct * 100)} aria-valuemin={0} aria-valuemax={100}>
                 <div style={{ height: '100%', width: `${Math.min(b.pct * 100, 100)}%`, background: c }} />
               </div>
               <div style={{ minWidth: 120, textAlign: 'right', color: c }}>${b.spend.toFixed(2)} / ${b.limitUsd.toFixed(0)}</div>

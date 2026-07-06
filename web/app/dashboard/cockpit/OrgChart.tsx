@@ -8,7 +8,7 @@ function NodeRow({ node, depth }: { node: OrgNode; depth: number }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.xs}px 0`, paddingLeft: depth * 20 }}>
-        {depth > 0 && <span aria-hidden style={{ color: '#444' }}>└─</span>}
+        {depth > 0 && <span aria-hidden style={{ color: tk.muted }}>└─</span>}
         <span style={{ fontSize: 16 }}>{node.avatarEmoji || '🤖'}</span>
         <span style={{ fontWeight: 600, fontSize: text.md.fontSize }}>{node.name}</span>
         <span style={{ fontSize: text.xs.fontSize, color: tk.muted }}>{node.title || node.role}</span>
