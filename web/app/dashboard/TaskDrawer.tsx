@@ -67,7 +67,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
 
   return (
     <div style={s.scrim} onClick={onClose}>
-      <aside style={s.drawer} onClick={e => e.stopPropagation()} role="dialog" aria-label="Task detail">
+      <aside className="mc-glass" style={s.drawer} onClick={e => e.stopPropagation()} role="dialog" aria-label="Task detail">
         <div style={s.head}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: text.lg.fontSize, lineHeight: text.lg.lineHeight, fontWeight: 700 }}>{task?.title ?? 'Task'}</div>
@@ -145,7 +145,9 @@ function Empty() { return <div style={{ ...s.muted, padding: `${space.xs}px 0` }
 
 const s: Record<string, React.CSSProperties> = {
   scrim: { position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' },
-  drawer: { width: 'min(560px, 94vw)', height: '100%', background: tk.surface, borderLeft: `1px solid ${tk.line}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)' },
+  // Glass chrome (T2): fill/blur from `.mc-glass`; border + shadow tokenized so
+  // the drawer reads right in both themes (no baked-in dark shadow).
+  drawer: { width: 'min(560px, 94vw)', height: '100%', borderLeft: '1px solid var(--glass-line)', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-drawer)' },
   head: { display: 'flex', gap: space.lg, alignItems: 'flex-start', padding: space.xl, borderBottom: `1px solid ${tk.line}` },
   close: { background: tk.surfaceHigh, border: '1px solid var(--line-strong)', color: tk.textDim, width: 28, height: 28, borderRadius: tk.r.sm, cursor: 'pointer', fontSize: text.sm.fontSize, flexShrink: 0 },
   body: { padding: space.xl, overflow: 'auto', flex: 1 },
