@@ -19,7 +19,7 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--line-strong': '#d5d5d3',
     '--text': '#070707',
     '--text-2': '#555555',                   // silver tier
-    '--muted': '#8a8a88',
+    '--muted': '#6b6b6b',                    // T3 a11y: was #8a8a88 (3.5:1) → 5.3:1 on card
     '--accent': '#700077',                   // Zeus — CTA/active on light
     '--accent-2': '#893BFF',
     '--brand-red': '#D4001A',
@@ -54,7 +54,7 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--line-strong': '#2a2a2a',
     '--text': '#ffffff',
     '--text-2': '#c7c7c7',
-    '--muted': '#555555',
+    '--muted': '#7e7e7e',                    // T3 a11y: was #555555 (2.6:1) → 4.7:1 on card
     '--accent': '#893BFF',                   // Aztec — CTA/active on dark
     '--accent-2': '#700077',
     '--brand-red': '#D4001A',
@@ -78,6 +78,11 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--shadow-drawer': '-12px 0 40px rgba(0,0,0,.5)',
   },
 }
+
+// Page-surface hex for a theme — the PWA/browser `theme-color` (address bar,
+// standalone title bar) tracks --s0 so the chrome matches the app background in
+// both modes. Single source of truth: the theme map above (no new raw hex).
+export const themeSurface = (t: ThemeName): string => themes[t]['--s0']
 
 // CSS emitted into an inline <style> by app/layout.tsx. Dark doubles as the
 // `:root` default so SSR / no-JS paints the current dark look before hydration.
