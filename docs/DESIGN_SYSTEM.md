@@ -1,169 +1,89 @@
 # 7Ei Design System
 
-**Version:** 1.0.0 · Sprint 10  
-**Philosophy:** Sober and minimalist (Notion-inspired) + controlled Glassmorphism  
-**Modes:** Dark (primary) + Light
+**Version:** 2.0.0 · 2026-07-06 (v1 constraints preserved; adds web token map, density integration, delivery plan)
+**Philosophy:** Sober and minimalist (Notion-inspired) + controlled glassmorphism · light AND dark
+**Applies to:** `web/` (primary). v1 component inventory referenced the legacy Expo `app/`; the concepts carry over, the file paths don't.
 
 ---
 
 ## Brand identity
 
-- **Logo:** 7 hexagons arranged in a honeycomb cluster — 7 entities, modular, interconnected
-- **Primary surfaces:** Deep black (#070707) in dark, off-white (#f5f5f3) in light
-- **Accent:** Aztec Purple (#893BFF) in dark, Zeus Purple (#700077) in light
-- **Red (#D4001A) — use sparingly.** Borders, error states, destructive actions only. Never for primary CTA. User is red-green colorblind.
+- **Logo:** 7 hexagons, honeycomb cluster. White on dark, black on light, Aztec Purple for app icons. 8px clear space.
+- **Palette:** 7Ei Black `#070707` · White `#ffffff` · Silver `#c7c7c7` · Swiss Cross Red `#D4001A` · Aztec Purple `#893BFF` · Zeus Purple `#700077` · semantic green `#33c333`, yellow `#ffff00` (adapted per mode), blue `#3500ff` (adapted per mode).
+
+## ⚠ Accessibility constraint (unchanged from v1 — overrides everything)
+
+**The user is red-green colorblind.**
+1. Never red vs green as the only differentiator.
+2. **Active = Purple**, not green.
+3. Color always paired with an icon or text label (`statusIcon()` / pill labels).
+4. **Red `#D4001A` = brand + error/destructive/recovery ONLY, always with ✕ / ⛔ / ⚠ icon. Never a primary CTA fill.** Primary CTAs are purple (Zeus on light, Aztec on dark).
+
+Red stays visually prominent (brand mark, recovery cards' left border + heading, error states) — prominence through *placement*, not through being the action colour.
+
+## Semantic tokens (web: CSS variables on `:root[data-theme]`, emitted from `tokens.ts` v2)
+
+| Token | Light | Dark |
+|---|---|---|
+| `--s0` page | `#f5f5f3` | `#070707` |
+| `--s1` card | `#ffffff` | `#0f0f0f` |
+| `--s2` raised | `#ebebeb` | `#161616` |
+| `--glass` | `rgba(255,255,255,.72)` blur(16px) | `rgba(15,15,15,.72)` blur(16px) |
+| `--glass-line` | `rgba(0,0,0,.07)` | `rgba(199,199,199,.08)` |
+| `--line` / `--line-strong` | `#e5e5e3` / `#d5d5d3` | `#1e1e1e` / `#2a2a2a` |
+| `--text` | `#070707` | `#ffffff` |
+| `--text-2` (silver tier) | `#555555` | `#c7c7c7` |
+| `--muted` | `#8a8a88` | `#555555` |
+| `--accent` (CTA/active) | `#700077` Zeus | `#893BFF` Aztec |
+| `--accent-2` | `#893BFF` | `#700077` |
+| `--brand-red` | `#D4001A` | `#D4001A` (text on dark: `#ff3b52`) |
+| `--ok` / `--ok-bg` | `#1f7a1f` / `#eef4e8` | `#33c333` / `#0e2a0e` |
+| `--warn` / `--warn-bg` | `#6b6100` / `#fff9c2` | `#c9b800` / `#33300a` |
+| `--info` / `--info-bg` | `#3500ff` / `#eceafd` | `#7b6dff` / `#14104a` |
+
+Yellow `#ffff00` is never a foreground; blue `#3500ff` lifts to `#7b6dff` on dark. Raw hex lives only in the `tokens.ts` theme map; components consume variables. **Density/type/space scales from MCA-79 unchanged** (28px rows stay; v1's 800-weight headings are superseded by the web's 400/500-only rule).
+
+## Status colors (v1 table, canonical)
+
+| Status | Dark | Icon |
+|---|---|---|
+| active | `#893BFF` | ⬡ |
+| idle / pending | `#555555` | ○ |
+| done | `#33c333` | ✓ (always) |
+| paused | `#c9b800` | ⏸ |
+| blocked | `#D4001A` | ⛔ (always) |
+| failed | `#D4001A` | ✕ (always) |
+| info | `#7b6dff` | ℹ |
+
+Heartbeats map to this: green→done-style ✓ purple-active when running, amber→paused yellow, stale→failed red ✕.
+
+## Glassmorphism (v1 rules)
+
+Chrome only: sidebar, modals, drawers, command palette, floating panels. NOT list items or content cards. Values in the token table; `@supports (backdrop-filter)` fallback to solid `--s1`.
+
+## Borders & radius (v1)
+
+0.5px default everywhere; accent border `rgba(137,59,255,.3)`; error border `rgba(212,0,26,.35)`; radius xs4/sm6/md8/lg12/xl16/pill999.
 
 ---
 
-## Color tokens
+## Delivery plan (with the Paperclip gap-bridge — vault `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`)
 
-### Dark mode
-| Token | Value | Use |
-|-------|-------|-----|
-| bg | #070707 | App background |
-| surface | #0f0f0f | Cards, panels |
-| surfaceHigh | #161616 | Elevated surfaces |
-| surfaceGlass | rgba(15,15,15,0.72) | Glassmorphism |
-| border | #1e1e1e | Default borders |
-| borderLight | #2a2a2a | Subtle borders |
-| text | #ffffff | Primary text |
-| textSecondary | #c7c7c7 | Silver — secondary |
-| textMuted | #555555 | Hints, placeholders |
-| accent | #893BFF | Aztec Purple |
-| accentSecondary | #700077 | Zeus Purple |
+### Epic T — theme (first; all later UI ships themed once)
+- **T1**: `tokens.ts` v2 theme map → CSS variables, `data-theme` + ThemeProvider (system/light/dark, persisted), primitives + panels consume variables. Colorblind-safe status helper (`statusColor/statusIcon`) ported to web; KPI strip + heartbeat colors migrate to the status table (purple active — fixes current red/green dots).
+- **T2**: glass chrome — sidebar/nav shell (glass + hexagon mark), TaskDrawer/modals, command palette shell (⌘K, feeds Epic V).
+- **T3**: hex sweep (cockpit `shared.tsx` domain colors → semantic/purple), contrast audit both modes, PWA `theme-color`.
 
-### Light mode
-| Token | Value | Use |
-|-------|-------|-----|
-| bg | #f5f5f3 | App background |
-| surface | #ffffff | Cards |
-| surfaceHigh | #ebebeb | Elevated |
-| text | #070707 | Primary |
-| textSecondary | #555555 | Secondary |
-| accent | #700077 | Zeus Purple (better contrast on white) |
-| accentSecondary | #893BFF | Aztec Purple |
+### Epic W — work surface + failure UX
+W1 recovery cards (red border + ⚠, structured: owner/source-run/evidence/next-action, open-until-decision) + system-notice comments → W2 reasoned blocker chips + next-up + sub-task cost rollups → W3 thread w/ wake-on-comment → W4 task watchdogs → W5 ask-mode.
 
----
+### Epic V — visibility
+V1 heartbeat 24h timeline; V2 tri-state approvals + inbox retry rows + read receipts; V3 preflight budget caps + cheap-model config validation.
 
-## Status colors — color-blind safe design
+### Epic D — DX/openness
+D1 `/api/openapi.json` + CLI; D2 llms.txt + `/llms/*.txt` + `npx 7ei-mc onboard`.
 
-User is **red-green colorblind**. Rules:
-1. Never use red vs green as the only differentiator
-2. **Active = Purple** (not green) — distinguishable from red for everyone
-3. Always pair color with an icon (the `statusIcon()` helper provides this)
-4. Red (#D4001A) is only for errors — always accompanied by ✕, ⛔, or ⚠ icon
+**Order: T1 → T2 → W1 → W2 → T3 → V1 → W3 → D1 → rest.** R4 vault RAG parallel (backend-only).
 
-| Status | Color (dark) | Icon | Notes |
-|--------|-------------|------|-------|
-| active | #893BFF | ⬡ | Purple — unambiguous |
-| idle | #555555 | ○ | Silver/gray |
-| done | #33c333 | ✓ | Green — always with checkmark |
-| paused | #c9b800 | ⏸ | Yellow (adapted for dark bg) |
-| blocked | #D4001A | ⛔ | Red — minimal, with icon |
-| failed | #D4001A | ✕ | Red — minimal, with icon |
-| pending | #555555 | ○ | Same as idle |
-| info | #7b6dff | ℹ | Blue-purple |
-
----
-
-## Glassmorphism rules
-
-Used for modals, floating panels, tab bars, and overlay cards. NOT used for standard list items (too heavy).
-
-**Dark:**
-```
-background: rgba(15, 15, 15, 0.72)
-backdrop-filter: blur(16px)
-border: 0.5px solid rgba(199, 199, 199, 0.08)
-```
-
-**Light:**
-```
-background: rgba(255, 255, 255, 0.72)
-backdrop-filter: blur(16px)
-border: 0.5px solid rgba(0, 0, 0, 0.07)
-```
-
----
-
-## Borders
-
-- Default card border: 0.5px — not 1px. Thinner = more refined.
-- Accent border (active/focused): 0.5px rgba(137,59,255,0.3)
-- Error border (destructive / error state): 0.5px rgba(212,0,26,0.35)
-- Never use a solid 1px+ red border on non-error elements
-
----
-
-## Typography
-
-| Level | Size | Weight | Color |
-|-------|------|--------|-------|
-| Heading | 20-26px | 800 | text |
-| Title | 15-17px | 600 | text |
-| Body | 14px | 400 | text |
-| Secondary | 13px | 400 | textSecondary (silver) |
-| Muted | 12px | 400 | textMuted |
-| Label | 11px | 600 | textMuted — UPPERCASE, 0.6 spacing |
-| Mono | 12px | 400 | accent — for keys, IDs, code |
-
----
-
-## Radius
-
-| Token | Value | Use |
-|-------|-------|-----|
-| xs | 4px | Tags, small pills |
-| sm | 6px | Inline badges |
-| md | 8px | Buttons, inputs |
-| lg | 12px | Cards (standard) |
-| xl | 16px | Modal sheets |
-| xxl | 24px | Onboarding cards |
-| pill | 999px | Status badges |
-
----
-
-## Component inventory
-
-| Component | File | Notes |
-|-----------|------|-------|
-| Card | components/Card.tsx | variants: default, high, glass, accent, error |
-| GlassCard | components/GlassCard.tsx | Glassmorphism wrapper |
-| StatusBadge | components/StatusBadge.tsx | Color + icon always |
-| PriorityBadge | components/PriorityBadge.tsx | Color + arrow icon |
-| AgentAvatar | components/AgentAvatar.tsx | Ring color = status |
-| Button | components/Button.tsx | primary, secondary, ghost, danger, glass |
-| EmptyState | components/EmptyState.tsx | Centered emoji + text |
-| ThemedText | components/ThemedText.tsx | heading, title, body, secondary, muted, accent, label, mono |
-| Divider | components/Divider.tsx | 0.5px themed line |
-| SectionHeader | components/SectionHeader.tsx | Title + optional action link |
-| StatCard | components/StatCard.tsx | Metric display card |
-
----
-
-## Usage examples
-
-```tsx
-import { useTheme } from '../constants/theme'
-import { Dark, Light, Space, Radius } from '../constants/colors'
-
-// In a component:
-const { theme, mode } = useTheme()
-// theme is Dark or Light depending on system setting
-
-// Color-blind safe status:
-import { statusColor, statusIcon } from '../constants/theme'
-const color = statusColor('active', theme)  // → '#893BFF'
-const icon  = statusIcon('active')           // → '⬡'
-```
-
----
-
-## Logo usage
-
-The 7Ei hexagon mark works on:
-- **Dark bg:** white hexagons on #070707 — original (attached to repo)
-- **Light bg:** invert to black hexagons on #f5f5f3
-- **Accent version:** Aztec Purple hexagons for app icons
-
-Minimum clear space: 8px around the mark at any size.
+## Non-goals
+No IA rebrand (density direction stands); no glass on content; no sandbox providers (BYO-host stance); animations capped at 150ms ease on hover/expand.
