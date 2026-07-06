@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, text, space, density } from './tokens'
-import { Button, Card, Pill, SectionLabel, TextInput } from './ui'
+import { Button, Card, Pill, SectionLabel, Skeleton, TextInput } from './ui'
 
 // MCA-UI U3 (MCA-72) — Governance panel. Surfaces the MCA-GOV2 backend:
 // execution policies (action→approval), per-agent permissions, and config
@@ -26,6 +26,7 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
   const [capEdits, setCapEdits] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false) // MCA-81 — skeletons on initial load
 
   const load = useCallback(async () => {
     const t = await getToken()
@@ -40,8 +41,18 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
       for (const ag of a.agents) edits[ag.id] = parseCaps(ag.permissions).join(', ')
       setCapEdits(edits)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
+    setLoaded(true)
   }, [orgId, getToken])
   useEffect(() => { load() }, [load])
+
+  // MCA-81 — skeleton rows while the initial load is in flight.
+  const skelRows = (
+    <>
+      {['74%', '88%', '56%'].map((w, i) => (
+        <div key={i} style={s.row}><Skeleton h={14} w={w} /></div>
+      ))}
+    </>
+  )
 
   const note = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 2500) }
 
@@ -71,8 +82,9 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
         <SectionLabel style={{ margin: '0 0 4px' }}>Execution policies</SectionLabel>
         <p style={s.hint}>Actions listed here require human approval before an agent may perform them (e.g. <code>memory.write</code>). Empty = nothing gated.</p>
         <Card style={s.card}>
-          {policies.length === 0 && <div style={s.muted}>No policies — agents act freely.</div>}
-          {policies.map(p => (
+          {!loaded && skelRows}
+          {loaded && policies.length === 0 && <div style={s.muted}>No policies — agents act freely.</div>}
+          {loaded && policies.map(p => (
             <div key={p.id} style={s.row}>
               <span style={{ flex: 1, fontFamily: 'monospace', fontSize: text.md.fontSize }}>{p.action}</span>
               <Pill tone={p.requiresApproval ? 'warn' : 'muted'}>{p.requiresApproval ? 'requires approval' : 'allowed'}</Pill>
@@ -90,14 +102,15 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
         <SectionLabel style={{ margin: '0 0 4px' }}>Per-agent permissions</SectionLabel>
         <p style={s.hint}>Capabilities each agent may use. Empty = allow all. Wildcards: <code>{CAP_HINTS.join('  ·  ')}</code></p>
         <Card style={s.card}>
-          {agents.map(ag => (
+          {!loaded && skelRows}
+          {loaded && agents.map(ag => (
             <div key={ag.id} style={s.row}>
               <span style={{ width: 150, fontSize: text.md.fontSize }}>{ag.avatarEmoji} {ag.name}</span>
               <TextInput style={{ flex: 1 }} placeholder="allow all (empty)" value={capEdits[ag.id] ?? ''} onChange={e => setCapEdits(c => ({ ...c, [ag.id]: e.target.value }))} />
               <Button onClick={() => saveCaps(ag.id)}>Save</Button>
             </div>
           ))}
-          {agents.length === 0 && <div style={s.muted}>No agents.</div>}
+          {loaded && agents.length === 0 && <div style={s.muted}>No agents.</div>}
         </Card>
       </section>
 
@@ -105,8 +118,9 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
         <SectionLabel style={{ margin: '0 0 4px' }}>Config revisions</SectionLabel>
         <p style={s.hint}>Every agent change is snapshotted. Roll back to restore the prior state.</p>
         <Card style={s.card}>
-          {revisions.length === 0 && <div style={s.muted}>No revisions yet.</div>}
-          {revisions.slice(0, 30).map(r => (
+          {!loaded && skelRows}
+          {loaded && revisions.length === 0 && <div style={s.muted}>No revisions yet.</div>}
+          {loaded && revisions.slice(0, 30).map(r => (
             <div key={r.id} style={s.row}>
               <span style={{ flex: 1, fontSize: text.sm.fontSize }}>{r.entity} <span style={s.muted}>{r.entityId.slice(0, 8)}</span></span>
               <span style={s.muted}>{r.actor ?? '—'} · {(() => { try { return new Date(r.createdAt).toLocaleString() } catch { return '' } })()}</span>

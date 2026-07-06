@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, text, space } from './tokens'
-import { Button } from './ui'
+import { Button, Skeleton } from './ui'
 
 // Memory tab — browses the shared Obsidian vault (the 7Ei-MC_TARCO repo) through
 // the backend vault connector. Left: folder tree. Right: rendered markdown.
@@ -80,6 +80,10 @@ export default function MemoryPanel({ orgId, getToken }: { orgId: string; getTok
             {crumbs.map((c, i) => <span key={i}><a style={s.crumb} onClick={() => { setFile(null); loadDir(crumbs.slice(0, i + 1).join('/')) }}>{c}</a>{i < crumbs.length - 1 ? ' / ' : ''}</span>)}
           </div>
           {parent && <div style={s.row} onClick={() => { setFile(null); loadDir(parent) }}>↩ ..</div>}
+          {loading && !entries.length && ['82%', '64%', '74%', '58%', '70%'].map((w, i) => (
+            // MCA-81 — skeleton rows while the tree loads
+            <div key={i} style={s.row}><Skeleton h={13} w={w} style={{ marginTop: 3 }} /></div>
+          ))}
           {entries.map(e => (
             <div key={e.path} style={{ ...s.row, ...(file?.path === e.path ? s.rowSel : {}) }}
               onClick={() => e.type === 'dir' ? (setFile(null), loadDir(e.path)) : openFile(e.path)}>
@@ -89,7 +93,15 @@ export default function MemoryPanel({ orgId, getToken }: { orgId: string; getTok
           {!entries.length && !loading && <div style={{ color: tk.mutedSoft, fontSize: text.sm.fontSize, padding: space.sm }}>empty</div>}
         </div>
         <div style={s.viewer}>
-          {loading && <div style={{ color: tk.mutedSoft, fontSize: text.sm.fontSize }}>Loading…</div>}
+          {loading && (
+            // MCA-81 — skeleton lines while the note (or tree) loads
+            <div style={{ display: 'flex', flexDirection: 'column', gap: space.md }}>
+              <Skeleton h={16} w="42%" />
+              <Skeleton h={13} />
+              <Skeleton h={13} w="86%" />
+              <Skeleton h={13} w="64%" />
+            </div>
+          )}
           {!file && !loading && <div style={{ color: tk.muted, fontSize: text.md.fontSize }}>Pick a note on the left to read it. Protocols, memory, agent registry, and company docs all live in the shared vault.</div>}
           {file && <div style={s.md} dangerouslySetInnerHTML={{ __html: file.html }} />}
         </div>

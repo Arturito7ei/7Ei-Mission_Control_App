@@ -1,11 +1,16 @@
 import { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { encrypt, decrypt } from '../services/secrets'
 import { buildAuthUrl } from '../services/google-auth'
 import { getJiraCfg, clearJiraCfg } from './jira'
-import { CONNECTORS, getConnector, tokenTestRequest, parseAccount, buildStatus } from '../services/connectors'
+import {
+  CONNECTORS, getConnector, tokenTestRequest, parseAccount, buildStatus,
+  GOOGLE_CONNECTOR_CONFIG_KEY, GOOGLE_SERVICE_BY_ID,
+  parseGoogleConnectorConfig, mergeGoogleConnectorConfig, type GoogleConnectorConfig,
+} from '../services/connectors'
 import { parseVaultConfig, vaultList } from '../services/vault-connector'
 
 // ─── Connectors tab (unified connection manager) ────────────────────────────
@@ -33,6 +38,32 @@ async function googleConnected(orgId: string): Promise<boolean> {
   const t = await db.query.oauthTokens.findFirst({ where: and(eq(schema.oauthTokens.orgId, orgId), eq(schema.oauthTokens.provider, 'google')) })
   return !!t
 }
+
+/** Resolved Google connector config for an org (MCA-81) — defaults when unset.
+ *  Exported for other route modules (comms/knowledge) that call Google APIs. */
+export async function getGoogleConnectorCfg(orgId: string): Promise<GoogleConnectorConfig> {
+  return parseGoogleConnectorConfig(await getSecret(orgId, GOOGLE_CONNECTOR_CONFIG_KEY))
+}
+
+// PUT /config bodies (MCA-81). Google config is a partial patch merged over the
+// stored config; the vault PUT updates repo/root/branch only — the token stays
+// in GITHUB_VAULT_TOKEN untouched.
+const GoogleConfigPutSchema = z.object({
+  services: z.object({
+    gmail: z.boolean().optional(),
+    calendar: z.boolean().optional(),
+    drive: z.boolean().optional(),
+  }).optional(),
+  calendarId: z.string().trim().min(1).max(256).optional(),
+  driveScope: z.enum(['all', 'folder']).optional(),
+  driveFolderId: z.string().trim().max(256).optional(),
+}).strict()
+
+const VaultConfigPutSchema = z.object({
+  repo: z.string().trim().regex(/^[^\s/]+\/[^\s/]+$/, 'repo must be owner/name').optional(),
+  root: z.string().trim().min(1).max(256).optional(),
+  branch: z.string().trim().min(1).max(256).optional(),
+}).strict()
 
 export async function connectorRoutes(app: FastifyInstance) {
   // Status for all six connectors.
@@ -106,6 +137,34 @@ export async function connectorRoutes(app: FastifyInstance) {
     return { connected: true, detail: `${user.displayName} · ${domain}` }
   })
 
+  // Per-connector config (MCA-81) — config-as-secret, no schema change.
+  // 'google' → GOOGLE_CONNECTOR_CONFIG (service toggles, calendarId, drive scope);
+  // 'obsidian' → VAULT_CONFIG (repo/root/branch; token preserved).
+  app.get('/api/orgs/:orgId/connectors/:id/config', async (req, reply) => {
+    const { orgId, id } = req.params as any
+    if (id === 'google') return { config: await getGoogleConnectorCfg(orgId) }
+    if (id === 'obsidian') return { config: parseVaultConfig(await getSecret(orgId, 'VAULT_CONFIG')) }
+    return reply.code(404).send({ error: 'No config for this connector' })
+  })
+
+  app.put('/api/orgs/:orgId/connectors/:id/config', async (req, reply) => {
+    const { orgId, id } = req.params as any
+    if (id === 'google') {
+      const body = GoogleConfigPutSchema.parse(req.body ?? {})
+      const next = mergeGoogleConnectorConfig(await getGoogleConnectorCfg(orgId), body)
+      await setSecret(orgId, GOOGLE_CONNECTOR_CONFIG_KEY, JSON.stringify(next))
+      return { config: next }
+    }
+    if (id === 'obsidian') {
+      const body = VaultConfigPutSchema.parse(req.body ?? {})
+      const cur = parseVaultConfig(await getSecret(orgId, 'VAULT_CONFIG'))
+      const next = { repo: body.repo ?? cur.repo, root: body.root ?? cur.root, branch: body.branch ?? cur.branch }
+      await setSecret(orgId, 'VAULT_CONFIG', JSON.stringify(next)) // GITHUB_VAULT_TOKEN untouched
+      return { config: next }
+    }
+    return reply.code(404).send({ error: 'No config for this connector' })
+  })
+
   // Live re-test of a stored connection.
   app.post('/api/orgs/:orgId/connectors/:id/test', async (req, reply) => {
     const { orgId, id } = req.params as any
@@ -137,8 +196,16 @@ export async function connectorRoutes(app: FastifyInstance) {
       const u = await res.json() as any
       return { ok: true, detail: `${u.displayName} · ${cfg.domain}` }
     }
+    // Google trio: connection check + per-service toggle (MCA-81). A disabled
+    // service reports itself clearly instead of pretending to reach Google.
     const conn = await googleConnected(orgId)
-    return { ok: conn, detail: conn ? 'Google connected' : 'not connected' }
+    if (!conn) return { ok: false, detail: 'not connected' }
+    const svc = GOOGLE_SERVICE_BY_ID[id]
+    if (svc) {
+      const cfg = await getGoogleConnectorCfg(orgId)
+      if (!cfg.services[svc]) return { ok: false, detail: 'disabled in connector settings' }
+    }
+    return { ok: true, detail: 'Google connected' }
   })
 
   // Disconnect.

@@ -114,6 +114,14 @@ export function DenseRow({ style, ...rest }: HTMLAttributes<HTMLDivElement>) {
   )
 }
 
+// ——— Skeleton ——————————————————————————————————————————————————————————————
+// MCA-81 — static muted block shown while a panel's initial load is in flight.
+// Deliberately no shimmer/animation: max-density utilitarian.
+
+export function Skeleton({ w = '100%', h = 14, style }: { w?: number | string; h?: number | string; style?: CSSProperties }) {
+  return <div aria-hidden="true" style={{ width: w, height: h, background: tk.skeleton, borderRadius: 4, flexShrink: 0, ...style }} />
+}
+
 // ——— SectionLabel —————————————————————————————————————————————————————————
 
 export function SectionLabel({ style, ...rest }: HTMLAttributes<HTMLHeadingElement>) {

@@ -6,6 +6,7 @@ import type { CSSProperties } from 'react'
 export const tk = {
   // surfaces
   bg: '#0a0a0a', surface: '#0e0e0e', surfaceHigh: '#111', line: '#222', lineSoft: '#1a1a1a',
+  skeleton: '#1d1d1d', // MCA-81 — loading placeholder blocks
   // text (contrast-checked on bg)
   text: '#e6e8eb', textDim: '#c9cdd3', muted: '#9aa0a6', mutedSoft: '#8b9096',
   // accent + status
