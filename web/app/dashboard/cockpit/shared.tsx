@@ -58,8 +58,8 @@ export const sx: Record<string, CSSProperties> = {
 export function Modal({ onClose, maxWidth = 480, children }: { onClose: () => void; maxWidth?: number; children: ReactNode }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: space.xl }} onClick={onClose}>
-      <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}
-        style={{ background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: tk.r.lg, padding: space.xl, width: '100%', maxWidth, display: 'flex', flexDirection: 'column', gap: space.md }}>
+      <div role="dialog" aria-modal="true" onClick={e => e.stopPropagation()} className="mc-glass"
+        style={{ border: '1px solid var(--glass-line)', borderRadius: tk.r.lg, boxShadow: 'var(--shadow-modal)', padding: space.xl, width: '100%', maxWidth, display: 'flex', flexDirection: 'column', gap: space.md }}>
         {children}
       </div>
     </div>

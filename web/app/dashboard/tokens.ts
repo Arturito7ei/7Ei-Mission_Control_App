@@ -40,6 +40,9 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--skeleton': '#e7e7e4',
     '--text-3': '#cccccc',                   // disabled
     '--scrim': 'rgba(7,7,7,.35)',
+    // T2 glass chrome — elevation for floating chrome (drawer/modal/palette).
+    '--shadow-modal': '0 16px 48px rgba(7,7,7,.16)',
+    '--shadow-drawer': '-12px 0 40px rgba(7,7,7,.14)',
   },
   dark: {
     '--s0': '#070707',
@@ -71,6 +74,8 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--skeleton': '#1d1d1d',
     '--text-3': '#333333',
     '--scrim': 'rgba(0,0,0,.6)',
+    '--shadow-modal': '0 16px 48px rgba(0,0,0,.6)',
+    '--shadow-drawer': '-12px 0 40px rgba(0,0,0,.5)',
   },
 }
 

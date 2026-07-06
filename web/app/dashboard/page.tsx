@@ -8,7 +8,8 @@ import ConnectorsPanel from './ConnectorsPanel'
 import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
 import Mark from './Mark'
-import { ThemeToggle } from '../theme'
+import { ThemeToggle, useTheme } from '../theme'
+import { CommandPalette, type Command } from './CommandPalette'
 import { statusColor, statusIcon } from './status'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
@@ -39,7 +40,9 @@ type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' |
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
+  const { setMode } = useTheme()
   const router = useRouter()
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [org, setOrg] = useState<Org | null>(null)
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
@@ -297,9 +300,19 @@ export default function DashboardPage() {
     { id: 'settings', icon: '⚙️', label: 'Settings' },
   ]
 
+  // T2 command-palette shell — navigation + theme. Epic V extends this list
+  // (jump to task/agent/approval) by concatenating more Commands.
+  const commands: Command[] = [
+    ...NAV.map(n => ({ id: `nav-${n.id}`, label: n.label, icon: n.icon, group: 'Navigate', keywords: 'go to open view tab', run: () => setTab(n.id) })),
+    { id: 'theme-light', label: 'Light theme', icon: '☀', group: 'Theme', keywords: 'appearance mode', run: () => setMode('light') },
+    { id: 'theme-dark', label: 'Dark theme', icon: '☾', group: 'Theme', keywords: 'appearance mode', run: () => setMode('dark') },
+    { id: 'theme-system', label: 'System theme', icon: '🖥', group: 'Theme', keywords: 'appearance mode auto', run: () => setMode('system') },
+  ]
+
   return (
     <div className="mc-layout" style={s.layout}>
-      <aside className="mc-sidebar" style={s.sidebar}>
+      <CommandPalette commands={commands} open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <aside className="mc-sidebar mc-glass" style={s.sidebar}>
         {/* MCA-86 — brand mark (7 hexagons, currentColor → --text) + theme toggle. */}
         <div style={s.brand}>
           <Mark size={22} />
@@ -308,6 +321,12 @@ export default function DashboardPage() {
           <ThemeToggle />
         </div>
         <div style={s.orgLabel}>{org.name}</div>
+        {/* T2 — command palette launcher (⌘K also opens it from anywhere). */}
+        <button className="mc-search" style={s.searchBtn} onClick={() => setPaletteOpen(true)} aria-label="Open command palette" aria-keyshortcuts="Meta+K Control+K">
+          <span aria-hidden>🔍</span>
+          <span style={{ flex: 1, textAlign: 'left' }}>Search…</span>
+          <kbd style={s.kbdHint} aria-hidden>⌘K</kbd>
+        </button>
         <nav className="mc-nav" style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
           {NAV.map(n => (
             <button key={n.id} onClick={() => setTab(n.id)} style={{ ...s.navBtn, ...(tab === n.id ? s.navActive : {}) }}>
@@ -554,11 +573,15 @@ export default function DashboardPage() {
 const s: Record<string, React.CSSProperties> = {
   center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: 'var(--s0)' },
   layout: { display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--s0)' },
-  sidebar: { width: 220, background: 'var(--s1)', borderRight: '1px solid var(--line)', display: 'flex', flexDirection: 'column', padding: '16px 12px', gap: 4, overflow: 'auto' },
+  // Glass chrome (T2): fill + blur come from the `.mc-glass` class (with a
+  // solid --s1 @supports fallback); border uses the glass line.
+  sidebar: { width: 220, borderRight: '1px solid var(--glass-line)', display: 'flex', flexDirection: 'column', padding: '16px 12px', gap: 4, overflow: 'auto' },
   // Brand row: mark follows --text via currentColor; 8px padding = clear space.
   brand: { display: 'flex', alignItems: 'center', gap: 8, padding: 8, color: 'var(--text)', marginBottom: 4, flexShrink: 0 },
   brandName: { fontSize: 15, fontWeight: 700, letterSpacing: 0.2 },
   orgLabel: { fontSize: 14, fontWeight: 700, color: 'var(--text)', padding: '8px 4px', borderBottom: '1px solid var(--line)', marginBottom: 8 },
+  searchBtn: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'var(--s2)', border: '1px solid var(--line-strong)', color: 'var(--muted)', borderRadius: 8, padding: '7px 10px', fontSize: 13, cursor: 'pointer', marginBottom: 8, flexShrink: 0 },
+  kbdHint: { fontSize: 10, fontWeight: 600, color: 'var(--text-2)', background: 'var(--s1)', border: '1px solid var(--line-strong)', borderRadius: 4, padding: '1px 5px', fontFamily: 'inherit' },
   navBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', color: 'var(--muted)', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, width: '100%', textAlign: 'left' as const },
   navActive: { background: 'var(--s2)', color: 'var(--accent)', fontWeight: 700 },
   notifBanner: { display: 'flex', alignItems: 'center', gap: 8, background: 'var(--s2)', borderRadius: 8, padding: '10px 12px', marginTop: 'auto', fontSize: 13, color: 'var(--text)', border: '1px solid var(--line-strong)' },

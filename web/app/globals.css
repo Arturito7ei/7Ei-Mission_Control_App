@@ -83,6 +83,22 @@
   --status-info-bd:   var(--info);
 }
 
+/* ─── MCA-86 T2: glass chrome ───────────────────────────────────────────
+   Frosted translucency reserved for CHROME ONLY — sidebar, drawers, modals,
+   command palette (DESIGN_SYSTEM v2: never on content cards or list rows).
+   `.mc-glass` sets only the fill so callers keep their own layout/border
+   inline; borders should use var(--glass-line). Solid --s1 is the fallback
+   where backdrop-filter is unsupported; the translucent fill + blur only
+   apply inside the @supports guard. */
+.mc-glass { background: var(--s1); }
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .mc-glass {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+  }
+}
+
 /* ─── Base reset */
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -279,6 +295,7 @@ p  { margin: 0; color: var(--text); }
   .mc-nav > button { white-space: nowrap; }
   .mc-sidebar > div { flex: 0 0 auto; }        /* logo + org label stay inline */
   .mc-main { width: 100% !important; }
+  .mc-search { display: none !important; }      /* ⌘K launcher is desktop-only */
 }
 /* Touch targets: nav buttons comfortably tappable */
 .mc-nav > button { min-height: 40px; }
