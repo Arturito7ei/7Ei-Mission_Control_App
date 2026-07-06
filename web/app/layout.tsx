@@ -1,12 +1,14 @@
 import './globals.css'
-import { themeCss } from './dashboard/tokens'
+import { themeCss, themeSurface } from './dashboard/tokens'
 import { ThemeProvider } from './theme'
 
 // Runs before first paint: resolves the stored mode ('7ei-theme') or the OS
-// preference and stamps data-theme, so there is no theme flash. Kept here (a
-// server module) because client-module exports can't be inlined server-side.
-// Must stay in sync with app/theme.tsx.
-const THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem('7ei-theme');var t=(m==='light'||m==='dark')?m:(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t)}catch(e){}})()`
+// preference, stamps data-theme, and points the browser theme-color meta at the
+// resolved page surface (--s0) — so there is no theme flash and the address /
+// title bar matches the app in both modes, including an explicit toggle that
+// overrides the OS scheme. Kept here (a server module) because client-module
+// exports can't be inlined server-side. Must stay in sync with app/theme.tsx.
+const THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem('7ei-theme');var t=(m==='light'||m==='dark')?m:(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);var c=t==='light'?'${themeSurface('light')}':'${themeSurface('dark')}';var el=document.querySelector('meta[name="theme-color"]');if(!el){el=document.createElement('meta');el.setAttribute('name','theme-color');document.head.appendChild(el)}el.setAttribute('content',c)}catch(e){}})()`
 
 let ClerkProvider: any = null
 try {
@@ -24,8 +26,11 @@ export const metadata = {
 }
 
 // MCA-DIST S5.2 — installable PWA + mobile viewport.
+// themeColor is the SSR default (matches data-theme="dark" below); the pre-paint
+// THEME_INIT_SCRIPT re-points this same meta to the resolved surface (T3), so
+// light-mode users get the light surface in the address bar with no flash.
 export const viewport = {
-  themeColor: '#070707',
+  themeColor: themeSurface('dark'),
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover' as const,

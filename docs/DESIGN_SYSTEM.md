@@ -33,7 +33,7 @@ Red stays visually prominent (brand mark, recovery cards' left border + heading,
 | `--line` / `--line-strong` | `#e5e5e3` / `#d5d5d3` | `#1e1e1e` / `#2a2a2a` |
 | `--text` | `#070707` | `#ffffff` |
 | `--text-2` (silver tier) | `#555555` | `#c7c7c7` |
-| `--muted` | `#8a8a88` | `#555555` |
+| `--muted` | `#6b6b6b` | `#7e7e7e` |
 | `--accent` (CTA/active) | `#700077` Zeus | `#893BFF` Aztec |
 | `--accent-2` | `#893BFF` | `#700077` |
 | `--brand-red` | `#D4001A` | `#D4001A` (text on dark: `#ff3b52`) |
@@ -42,6 +42,8 @@ Red stays visually prominent (brand mark, recovery cards' left border + heading,
 | `--info` / `--info-bg` | `#3500ff` / `#eceafd` | `#7b6dff` / `#14104a` |
 
 Yellow `#ffff00` is never a foreground; blue `#3500ff` lifts to `#7b6dff` on dark. Raw hex lives only in the `tokens.ts` theme map; components consume variables. **Density/type/space scales from MCA-79 unchanged** (28px rows stay; v1's 800-weight headings are superseded by the web's 400/500-only rule).
+
+**T3 contrast audit (WCAG AA, both modes).** All text/surface token pairs meet AA (≥4.5:1) on page `--s0` and card `--s1`. `--muted` was darkened light `#8a8a88`→`#6b6b6b` and lightened dark `#555555`→`#7e7e7e` (it was 2.4–3.5:1 — failing for hints/labels/placeholders/idle status); it now clears 4.5:1 on `--s0`/`--s1` and is AA-large (≈4.46:1) on the rarely-texted raised `--s2`. Known AA-large item: `--accent` on dark (Aztec `#893BFF`, ≈3.8:1) — kept as the brand active/CTA identity colour; it satisfies the 3:1 non-text/UI-component rule and only ever renders as short code tokens, links, or the semibold active nav label, never body copy. Red/purple button fills use white text (`--accent-contrast`, ≥5:1). PWA/browser `theme-color` now tracks `--s0` per resolved theme (light `#f5f5f3` / dark `#070707`) via the pre-paint script.
 
 ## Status colors (v1 table, canonical)
 

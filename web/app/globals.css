@@ -3,16 +3,10 @@
 /* Red (#D4001A) reserved for errors/warnings ONLY */
 
 :root {
-  /* ─── Brand */
-  --7ei-black:        #070707;
-  --7ei-white:        #ffffff;
-  --7ei-silver:       #c7c7c7;
-  --7ei-purple:       #893BFF;
-  --7ei-purple-dark:  #700077;
-  --7ei-red:          #D4001A;
-  --7ei-yellow:       #ffff00;
-  --7ei-blue:         #3500ff;
-  --7ei-green:        #33c333;
+  /* ─── Brand palette lives ONLY in app/dashboard/tokens.ts (the light/dark
+     theme map). The former --7ei-* raw-hex aliases here were unused and are
+     dropped in T3 to hold the "raw hex only in tokens.ts" invariant. Consume
+     the semantic vars (--accent, --brand-red, --ok, …) instead. */
 
   /* ─── Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;

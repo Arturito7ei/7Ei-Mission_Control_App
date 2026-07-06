@@ -5,6 +5,7 @@
 // (localStorage '7ei-theme') and, in system mode, with prefers-color-scheme.
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { themeSurface } from './dashboard/tokens'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 // NOTE: the pre-paint init script lives in app/layout.tsx (server module) and
@@ -32,7 +33,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const apply = () => document.documentElement.setAttribute('data-theme', resolve(mode))
+    // Keep data-theme and the browser theme-color meta in sync with the resolved
+    // theme — mirrors the pre-paint script in layout.tsx (T3).
+    const apply = () => {
+      const t = resolve(mode)
+      document.documentElement.setAttribute('data-theme', t)
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeSurface(t))
+    }
     apply()
     if (mode !== 'system') return
     const mq = window.matchMedia('(prefers-color-scheme: light)')
