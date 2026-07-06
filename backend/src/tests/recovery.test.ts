@@ -54,6 +54,33 @@ test('[MCA-83] blocked-by dependencies → blocked card with blockerCount', () =
   assert.equal(card!.sourceRunId, null)
 })
 
+test('[MCA-83] W2 reasoned blocker chips carry title + status, open first', () => {
+  const card = buildRecovery({
+    task: { status: 'blocked', agentId: 'a1', blockedBy: JSON.stringify(['x', 'y']) },
+    blockerTasks: [
+      { id: 'x', title: 'Ship API', status: 'done' },
+      { id: 'y', title: 'Write schema', status: 'in_progress' },
+    ],
+  })
+  assert.equal(card!.blockers.length, 2)
+  // Open (not-done) blocker sorts first — it's the reason work can't proceed.
+  assert.equal(card!.blockers[0].id, 'y')
+  assert.equal(card!.blockers[0].title, 'Write schema')
+  assert.equal(card!.blockers[0].done, false)
+  assert.equal(card!.blockers[1].done, true)
+})
+
+test('[MCA-83] W2 unresolved blocker id falls back to a short id, status unknown', () => {
+  const card = buildRecovery({
+    task: { status: 'blocked', agentId: 'a1', blockedBy: JSON.stringify(['deadbeef-1234']) },
+    blockerTasks: [],
+  })
+  assert.equal(card!.blockers.length, 1)
+  assert.equal(card!.blockers[0].title, 'deadbeef')
+  assert.equal(card!.blockers[0].status, 'unknown')
+  assert.equal(card!.blockers[0].done, false)
+})
+
 test('[MCA-83] a failed run takes precedence over dependency blockers', () => {
   const card = buildRecovery({
     task: { status: 'failed', agentId: 'a1', blockedBy: JSON.stringify(['x']) },

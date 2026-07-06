@@ -9,6 +9,7 @@ import { generateAgentToken } from '../middleware/agent-token'
 import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
+import { nextUp } from '../services/worksurface'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -354,6 +355,9 @@ export async function agentRoutes(app: FastifyInstance) {
     const inCol = (c: string) => tasks.filter(t => (t.kanbanColumn ?? 'todo') === c).length
     return {
       orgId, generatedAt: new Date().toISOString(), agents: roster, tasks,
+      // W2: the single next task the office should pick up (unblocked, highest
+      // priority, oldest first) — makes the board a queue, not just four buckets.
+      nextUp: nextUp(tasks),
       summary: {
         agents: roster.length,
         external: roster.filter(r => r.agentType === 'external').length,

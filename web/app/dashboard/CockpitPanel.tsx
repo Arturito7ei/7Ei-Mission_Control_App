@@ -135,7 +135,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
           <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
           <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
           <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
-          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} />
+          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} />
         </>
       )}
 
