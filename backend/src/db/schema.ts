@@ -187,6 +187,7 @@ export const taskComments = sqliteTable('task_comments', {
   taskId: text('task_id').notNull(),
   authorAgentId: text('author_agent_id'),
   authorUser: text('author_user'),
+  kind: text('kind').notNull().default('user'),       // MCA-83 W1: user | agent | system_notice
   body: text('body').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })

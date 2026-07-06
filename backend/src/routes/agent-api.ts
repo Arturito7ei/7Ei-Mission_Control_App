@@ -367,6 +367,14 @@ export async function agentApiRoutes(app: FastifyInstance) {
     await db.insert(schema.messages).values({
       id: randomUUID(), agentId: agent.id, taskId, role: 'assistant', content: output, createdAt: new Date(),
     })
+    // MCA-83 W1: post a system-notice to the ticket thread on failure → recovery card.
+    if (status !== 'done') {
+      await db.insert(schema.taskComments).values({
+        id: randomUUID(), orgId: task.orgId, taskId, authorAgentId: null, authorUser: null,
+        kind: 'system_notice', body: `Agent reported failure${output ? `: ${String(output).slice(0, 1000)}` : '.'}`,
+        createdAt: new Date(),
+      }).catch(() => {})
+    }
     await db.update(schema.agents)
       .set({ status: 'idle', lastHeartbeatAt: new Date(), heartbeatStatus: 'green' })
       .where(eq(schema.agents.id, agent.id))

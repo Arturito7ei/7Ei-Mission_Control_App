@@ -11,6 +11,7 @@ import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
 import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
+import { buildRecovery } from '../services/recovery'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -393,6 +394,25 @@ export async function taskRoutes(app: FastifyInstance) {
       db.select().from(schema.taskAttachments).where(eq(schema.taskAttachments.taskId, taskId)),
     ])
     return { timeline: buildTimeline({ task, comments, runs, attachments }) }
+  })
+
+  // MCA-83 W1 — recovery card: structured owner/source-run/evidence/next-action
+  // for a task that needs a decision (failed run, stalled agent, or blocked on
+  // upstream work). Returns { recovery: null } when nothing is open.
+  app.get('/api/tasks/:taskId/recovery', async (req, reply) => {
+    const { taskId } = req.params as any
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    const [runs, comments] = await Promise.all([
+      db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId)),
+      db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId)),
+    ])
+    const card = buildRecovery({ task, runs, comments })
+    if (!card) return { recovery: null }
+    const owner = card.ownerAgentId
+      ? await db.query.agents.findFirst({ where: eq(schema.agents.id, card.ownerAgentId) })
+      : null
+    return { recovery: { ...card, ownerName: owner?.name ?? null, ownerEmoji: owner?.avatarEmoji ?? null } }
   })
 
   app.patch('/api/tasks/:taskId', async (req) => {

@@ -1,5 +1,6 @@
 import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
+import { randomUUID } from 'crypto'
 import { getMemory, formatMemoryForPrompt, extractMemoryInstructions, bulkSetMemory, compressMemoryIfNeeded } from './memory'
 import { checkDailyBudget, recordUsage, acquireTaskSlot, releaseTaskSlot, checkMonthlyBudget } from '../middleware/ratelimit'
 import { streamLLM, calcCost } from './llm-router'
@@ -248,6 +249,11 @@ export async function executeAgentTask(opts: {
   } catch (err: any) {
     await db.update(schema.tasks).set({ status: 'failed' } as any).where(eq(schema.tasks.id, taskId))
     await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agentId))
+    // MCA-83 W1: durable failure record on the ticket thread → feeds the recovery card.
+    await db.insert(schema.taskComments).values({
+      id: randomUUID(), orgId: agent.orgId, taskId, authorAgentId: null, authorUser: null,
+      kind: 'system_notice', body: `Run failed: ${String(err?.message ?? err).slice(0, 1000)}`, createdAt: new Date(),
+    }).catch(() => {})
     await fireWebhook('task.failed', agent.orgId, { taskId, agentId, error: err.message })
     throw err
   } finally {

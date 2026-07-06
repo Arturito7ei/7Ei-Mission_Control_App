@@ -2,7 +2,7 @@
 // MCA-79 — tiny shared primitives for the dashboard panels. Style-object based,
 // token-fed, max-density utilitarian. Not a component library: same dark
 // aesthetic as before, just consistent and tighter. Keep additions minimal.
-import { createContext, useContext } from 'react'
+import { createContext, forwardRef, useContext } from 'react'
 import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
 import { tk, density, text, space } from './tokens'
 
@@ -51,12 +51,12 @@ export function Pill({ tone = 'muted', style, ...rest }: HTMLAttributes<HTMLSpan
 
 // ——— TextInput ————————————————————————————————————————————————————————————
 
-export function TextInput({ style, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function TextInput({ style, ...rest }, ref) {
   return (
-    <input {...rest}
+    <input ref={ref} {...rest}
       style={{ height: density.ctrl, boxSizing: 'border-box', background: tk.bg, border: '1px solid var(--line-strong)', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, ...style }} />
   )
-}
+})
 
 // ——— Select ———————————————————————————————————————————————————————————————
 // Same box as TextInput; native element, no custom dropdown.
