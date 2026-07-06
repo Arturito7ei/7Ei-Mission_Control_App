@@ -100,7 +100,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.md }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: space.md }}>
           <h1 style={ui.h1}>Mission Control</h1>
-          {inboxCount > 0 && <span style={{ ...sx.tag, background: '#211c08', color: tk.accent }}>📥 {inboxCount}</span>}
+          {inboxCount > 0 && <span style={{ ...sx.tag, background: 'var(--accent-dim)', color: tk.accent }}>📥 {inboxCount}</span>}
         </div>
         <div style={{ display: 'flex', gap: space.md, flexWrap: 'wrap' }}>
           <Button style={{ color: tk.accent }} onClick={load}>↻ Refresh</Button>

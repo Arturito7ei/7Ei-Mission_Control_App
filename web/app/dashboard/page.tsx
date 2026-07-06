@@ -7,6 +7,9 @@ import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
 import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
+import Mark from './Mark'
+import { ThemeToggle } from '../theme'
+import { statusColor, statusIcon } from './status'
 let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; isSignedIn: boolean }
 try {
   useAuth = require('@clerk/nextjs').useAuth
@@ -27,8 +30,9 @@ type Notification = { id: string; type: string; title: string; body: string; age
 type JiraIssue = { id: string; key: string; summary: string; status?: string; priority?: string; issueType?: string; assignee?: string }
 type UsageStats = { requestsThisMinute: number; tokensToday: number; costToday: number; concurrentTasks: number; limits: Record<string, number> }
 
-const STATUS_C: Record<string, string> = { idle: '#555', active: '#22c55e', paused: '#f59e0b', stopped: '#ef4444', pending: '#555', in_progress: '#3b82f6', done: '#22c55e', blocked: '#ef4444' }
-const JIRA_STATUS_C: Record<string, string> = { 'To Do': '#555', 'In Progress': '#3b82f6', 'Done': '#22c55e', 'Blocked': '#ef4444', 'In Review': '#f59e0b' }
+// MCA-86 — status colors/icons come from ./status.ts (design-system table:
+// active = purple ⬡, done = green ✓, failed/blocked = red ✕/⛔ — icon always
+// rendered next to the color).
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
 type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'governance' | 'usage' | 'settings'
@@ -180,14 +184,14 @@ export default function DashboardPage() {
     setCreating(false)
   }
 
-  if (loading) return <div style={s.center}><span style={{ fontSize: 48 }}>⚡</span><p style={{ color: '#888' }}>Loading...</p></div>
+  if (loading) return <div style={s.center}><span style={{ fontSize: 48 }}>⚡</span><p style={{ color: 'var(--muted)' }}>Loading...</p></div>
   if (!org) return (
     <div style={s.formWrap}>
       <form onSubmit={createOrg} style={s.orgForm}>
         <div style={{ textAlign: 'center' }}>
           <span style={{ fontSize: 48 }}>🏢</span>
           <h2 style={{ ...s.h2, marginTop: 8 }}>Create your organisation</h2>
-          <p style={{ color: '#888', fontSize: 14, margin: '6px 0 0' }}>Arturito, your Chief of Staff, is set up automatically.</p>
+          <p style={{ color: 'var(--muted)', fontSize: 14, margin: '6px 0 0' }}>Arturito, your Chief of Staff, is set up automatically.</p>
         </div>
         <label style={s.formLabel}>Name *
           <input style={s.formInput} value={form.name} autoFocus placeholder="7Ei"
@@ -260,12 +264,12 @@ export default function DashboardPage() {
           </div>
         )}
         {form.llmChoice.split('::')[0] !== 'anthropic' && form.llmChoice.split('::')[0] !== 'ollama' && (
-          <label style={s.formLabel}>API key <span style={{ color: '#555', fontWeight: 400 }}>· stored per-org{form.llmChoice === 'custom' ? '' : ' (blank = server default if set)'}</span>
+          <label style={s.formLabel}>API key <span style={{ color: 'var(--muted)', fontWeight: 400 }}>· stored per-org{form.llmChoice === 'custom' ? '' : ' (blank = server default if set)'}</span>
             <input style={s.formInput} type="password" value={form.llmApiKey} placeholder="sk-…"
               onChange={e => setForm({ ...form, llmApiKey: e.target.value })} />
           </label>
         )}
-        {formErr && <p style={{ color: '#ef4444', fontSize: 13, margin: 0 }}>{formErr}</p>}
+        {formErr && <p style={{ color: 'var(--danger-text)', fontSize: 13, margin: 0 }}>{formErr}</p>}
         <button type="submit" disabled={creating} style={{ ...s.primaryBtn, opacity: creating ? 0.6 : 1, cursor: creating ? 'default' : 'pointer' }}>
           {creating ? 'Creating…' : 'Create organisation →'}
         </button>
@@ -296,7 +300,13 @@ export default function DashboardPage() {
   return (
     <div className="mc-layout" style={s.layout}>
       <aside className="mc-sidebar" style={s.sidebar}>
-        <div style={s.logoBox}><span style={s.logoText}>7Ei</span></div>
+        {/* MCA-86 — brand mark (7 hexagons, currentColor → --text) + theme toggle. */}
+        <div style={s.brand}>
+          <Mark size={22} />
+          <span style={s.brandName}>7Ei</span>
+          <span style={{ flex: 1 }} />
+          <ThemeToggle />
+        </div>
         <div style={s.orgLabel}>{org.name}</div>
         <nav className="mc-nav" style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
           {NAV.map(n => (
@@ -318,7 +328,7 @@ export default function DashboardPage() {
           <div style={s.page}>
             <h1 style={s.h1}>Mission Control</h1>
             <div style={s.grid4}>
-              {[{ label: 'Agents', val: agents.length, color: '#fff' }, { label: 'Active', val: agents.filter(a => a.status === 'active').length, color: '#22c55e' }, { label: 'Tasks', val: tasks.length, color: '#fff' }, { label: 'Total Cost', val: `$${totalCost.toFixed(4)}`, color: '#FFB800' }]
+              {[{ label: 'Agents', val: agents.length, color: 'var(--text)' }, { label: 'Active', val: agents.filter(a => a.status === 'active').length, color: statusColor('active') }, { label: 'Tasks', val: tasks.length, color: 'var(--text)' }, { label: 'Total Cost', val: `$${totalCost.toFixed(4)}`, color: 'var(--accent)' }]
                 .map(st => <div key={st.label} style={s.statCard}><span style={{ ...s.statVal, color: st.color }}>{st.val}</span><span style={s.statLabel}>{st.label}</span></div>)}
             </div>
             <h2 style={s.h2}>Agent Squad</h2>
@@ -328,9 +338,9 @@ export default function DashboardPage() {
                   <span style={{ fontSize: 28 }}>{a.avatarEmoji}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{a.name}</div>
-                    <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>{a.role}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{a.role}</div>
                   </div>
-                  <span style={{ width: 10, height: 10, borderRadius: 5, background: STATUS_C[a.status] ?? '#555', flexShrink: 0 }} />
+                  <span title={a.status} aria-label={a.status} style={{ color: statusColor(a.status), fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{statusIcon(a.status)}</span>
                 </div>
               ))}
             </div>
@@ -340,8 +350,8 @@ export default function DashboardPage() {
                   {notifications.slice(0, 5).map(n => (
                     <div key={n.id} style={s.notifRow}>
                       <span>{n.agentEmoji}</span>
-                      <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{n.title}</div><div style={{ fontSize: 12, color: '#888' }}>{n.body}</div></div>
-                      {n.cost != null && <span style={{ fontSize: 12, color: '#FFB800' }}>${n.cost.toFixed(5)}</span>}
+                      <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{n.title}</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>{n.body}</div></div>
+                      {n.cost != null && <span style={{ fontSize: 12, color: 'var(--accent)' }}>${n.cost.toFixed(5)}</span>}
                     </div>
                   ))}
                 </div>
@@ -357,10 +367,10 @@ export default function DashboardPage() {
               <div style={{ ...s.thead, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}><span>Name</span><span>Role</span><span>Model</span><span>Skills</span><span>Status</span></div>
               {agents.map(a => (
                 <div key={a.id} style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}>
-                  <span>{a.avatarEmoji} {a.name}</span><span style={{ color: '#888', fontSize: 13 }}>{a.role}</span>
-                  <span style={{ color: '#555', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
-                  <span style={{ color: '#888', fontSize: 12 }}>{a.skills.length}</span>
-                  <span style={{ color: STATUS_C[a.status], fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{a.status}</span>
+                  <span>{a.avatarEmoji} {a.name}</span><span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.skills.length}</span>
+                  <span style={{ color: statusColor(a.status), fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{statusIcon(a.status)} {a.status}</span>
                 </div>
               ))}
             </div>
@@ -377,10 +387,10 @@ export default function DashboardPage() {
                 return (
                   <div key={t.id} role="button" tabIndex={0} onClick={() => setOpenTaskId(t.id)} onKeyDown={e => { if (e.key === 'Enter') setOpenTaskId(t.id) }} style={{ ...s.trow, gridTemplateColumns: '3fr 1.5fr 1fr 1fr 1fr', cursor: 'pointer' }}>
                     <span style={{ fontSize: 13 }}>{t.title.slice(0, 60)}{t.title.length > 60 ? '…' : ''}</span>
-                    <span style={{ fontSize: 12, color: '#888' }}>{a?.avatarEmoji} {a?.name ?? '—'}</span>
-                    <span style={{ color: STATUS_C[t.status], fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{t.status}</span>
-                    <span style={{ color: '#FFB800', fontSize: 12 }}>{t.costUsd != null ? `$${t.costUsd.toFixed(5)}` : '—'}</span>
-                    <span style={{ color: '#888', fontSize: 12 }}>{t.tokensUsed?.toLocaleString() ?? '—'}</span>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>{a?.avatarEmoji} {a?.name ?? '—'}</span>
+                    <span style={{ color: statusColor(t.status), fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{statusIcon(t.status)} {t.status}</span>
+                    <span style={{ color: 'var(--accent)', fontSize: 12 }}>{t.costUsd != null ? `$${t.costUsd.toFixed(5)}` : '—'}</span>
+                    <span style={{ color: 'var(--muted)', fontSize: 12 }}>{t.tokensUsed?.toLocaleString() ?? '—'}</span>
                   </div>
                 )
               })}
@@ -392,10 +402,10 @@ export default function DashboardPage() {
           <div style={s.page}>
             <h1 style={s.h1}>Projects ({projects.length})</h1>
             <div style={s.cardGrid}>
-              {projects.length === 0 && <p style={{ color: '#888' }}>No projects yet.</p>}
+              {projects.length === 0 && <p style={{ color: 'var(--muted)' }}>No projects yet.</p>}
               {projects.map(p => {
                 const pt = tasks.filter(t => t.projectId === p.id); const done = pt.filter(t => t.status === 'done').length
-                return (<div key={p.id} style={s.projCard}><div style={{ fontSize: 20, fontWeight: 700 }}>📁 {p.name}</div>{p.description && <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>{p.description}</div>}<div style={{ marginTop: 12, display: 'flex', gap: 16 }}><span style={{ fontSize: 13, color: '#888' }}>{pt.length} tasks</span><span style={{ fontSize: 13, color: '#22c55e' }}>{done} done</span></div></div>)
+                return (<div key={p.id} style={s.projCard}><div style={{ fontSize: 20, fontWeight: 700 }}>📁 {p.name}</div>{p.description && <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>{p.description}</div>}<div style={{ marginTop: 12, display: 'flex', gap: 16 }}><span style={{ fontSize: 13, color: 'var(--muted)' }}>{pt.length} tasks</span><span style={{ fontSize: 13, color: statusColor('done') }}>{statusIcon('done')} {done} done</span></div></div>)
               })}
             </div>
           </div>
@@ -412,9 +422,9 @@ export default function DashboardPage() {
               {skills.map(sk => (
                 <div key={sk.id} style={{ ...s.trow, gridTemplateColumns: '2fr 1.5fr 3fr 1fr' }}>
                   <span style={{ fontSize: 13, fontWeight: 600 }}>⚡ {sk.name}</span>
-                  <span style={{ color: '#888', fontSize: 12, textTransform: 'capitalize' }}>{sk.domain}</span>
-                  <span style={{ color: '#888', fontSize: 12 }}>{sk.description?.slice(0, 80) ?? '—'}</span>
-                  <span style={{ color: '#555', fontSize: 11 }}>{sk.source}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 12, textTransform: 'capitalize' }}>{sk.domain}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 12 }}>{sk.description?.slice(0, 80) ?? '—'}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: 11 }}>{sk.source}</span>
                 </div>
               ))}
             </div>
@@ -425,15 +435,15 @@ export default function DashboardPage() {
           <div style={s.page}>
             <h1 style={s.h1}>Cost Centre</h1>
             <div style={s.grid4}>
-              <div style={s.statCard}><span style={{ ...s.statVal, color: '#FFB800' }}>${totalCost.toFixed(4)}</span><span style={s.statLabel}>Total Spend</span></div>
+              <div style={s.statCard}><span style={{ ...s.statVal, color: 'var(--accent)' }}>${totalCost.toFixed(4)}</span><span style={s.statLabel}>Total Spend</span></div>
               <div style={s.statCard}><span style={s.statVal}>{(tasks.reduce((s, t) => s + (t.tokensUsed ?? 0), 0) / 1000).toFixed(1)}K</span><span style={s.statLabel}>Total Tokens</span></div>
               <div style={s.statCard}><span style={s.statVal}>{tasks.filter(t => t.status === 'done').length}</span><span style={s.statLabel}>Done</span></div>
-              <div style={s.statCard}><span style={{ ...s.statVal, color: '#3b82f6' }}>{agents.length}</span><span style={s.statLabel}>Agents</span></div>
+              <div style={s.statCard}><span style={{ ...s.statVal, color: 'var(--info)' }}>{agents.length}</span><span style={s.statLabel}>Agents</span></div>
             </div>
             <h2 style={s.h2}>By Agent</h2>
             {agents.map(a => {
               const ac = tasks.filter(t => t.agentId === a.id).reduce((sum, t) => sum + (t.costUsd ?? 0), 0)
-              return (<div key={a.id} style={s.costRow}><span style={{ minWidth: 120, fontSize: 14 }}>{a.avatarEmoji} {a.name}</span><div style={s.barTrack}><div style={{ ...s.barFill, width: `${Math.max(totalCost > 0 ? (ac / totalCost) * 100 : 0, 1)}%` }} /></div><span style={{ color: '#FFB800', fontSize: 13, minWidth: 70, textAlign: 'right' }}>${ac.toFixed(4)}</span></div>)
+              return (<div key={a.id} style={s.costRow}><span style={{ minWidth: 120, fontSize: 14 }}>{a.avatarEmoji} {a.name}</span><div style={s.barTrack}><div style={{ ...s.barFill, width: `${Math.max(totalCost > 0 ? (ac / totalCost) * 100 : 0, 1)}%` }} /></div><span style={{ color: 'var(--accent)', fontSize: 13, minWidth: 70, textAlign: 'right' }}>${ac.toFixed(4)}</span></div>)
             })}
           </div>
         )}
@@ -443,7 +453,7 @@ export default function DashboardPage() {
             <h1 style={s.h1}>Communications Hub</h1>
             <div style={s.commsGrid}>
               {[{ icon: '📬', title: 'Unified Inbox', desc: 'All agent messages in one place.' }, { icon: '📧', title: 'Gmail', desc: 'Connect via Google OAuth to read and send email.' }, { icon: '✈️', title: 'Telegram', desc: 'Register a bot token in Org Settings.' }, { icon: '📹', title: 'Google Meet', desc: 'Generate meeting links via the API.' }]
-                .map(ch => <div key={ch.title} style={s.commsCard}><span style={{ fontSize: 36 }}>{ch.icon}</span><div style={{ fontWeight: 700, fontSize: 16, marginTop: 8 }}>{ch.title}</div><div style={{ fontSize: 13, color: '#888', marginTop: 6, lineHeight: 1.6 }}>{ch.desc}</div></div>)}
+                .map(ch => <div key={ch.title} style={s.commsCard}><span style={{ fontSize: 36 }}>{ch.icon}</span><div style={{ fontWeight: 700, fontSize: 16, marginTop: 8 }}>{ch.title}</div><div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6, lineHeight: 1.6 }}>{ch.desc}</div></div>)}
             </div>
           </div>
         )}
@@ -457,7 +467,7 @@ export default function DashboardPage() {
         {tab === 'usage' && (
           <div style={s.page}>
             <h1 style={s.h1}>Usage & Limits</h1>
-            {!usage ? <p style={{ color: '#888' }}>Loading usage stats...</p> : (
+            {!usage ? <p style={{ color: 'var(--muted)' }}>Loading usage stats...</p> : (
               <>
                 <div style={s.grid4}>
                   {[
@@ -470,18 +480,18 @@ export default function DashboardPage() {
                     const pct = st.max > 0 ? Math.min((raw / st.max) * 100, 100) : 0
                     return (
                       <div key={st.label} style={s.statCard}>
-                        <span style={{ ...s.statVal, color: pct > 80 ? '#ef4444' : '#FFB800' }}>{st.val}</span>
+                        <span style={{ ...s.statVal, color: pct > 80 ? 'var(--danger-text)' : 'var(--accent)' }}>{st.val}</span>
                         <span style={s.statLabel}>{st.label}</span>
-                        <div style={{ ...s.barTrack, marginTop: 8 }}><div style={{ ...s.barFill, width: `${Math.max(pct, 1)}%`, background: pct > 80 ? '#ef4444' : '#FFB800' }} /></div>
-                        <span style={{ fontSize: 11, color: '#555', marginTop: 4 }}>/ {typeof st.max === 'number' && st.max >= 1000 ? `${(st.max / 1000).toFixed(0)}K` : st.max}</span>
+                        <div style={{ ...s.barTrack, marginTop: 8 }}><div style={{ ...s.barFill, width: `${Math.max(pct, 1)}%`, background: pct > 80 ? 'var(--danger-text)' : 'var(--accent)' }} /></div>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>/ {typeof st.max === 'number' && st.max >= 1000 ? `${(st.max / 1000).toFixed(0)}K` : st.max}</span>
                       </div>
                     )
                   })}
                 </div>
                 <div style={s.emptyCard}>
                   <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>ℹ️ Configuring limits</h3>
-                  <p style={{ color: '#888', fontSize: 13, margin: 0, lineHeight: 1.8 }}>Set these env vars on the backend:<br />
-                    <code style={{ color: '#FFB800' }}>RATE_LIMIT_RPM</code> · <code style={{ color: '#FFB800' }}>RATE_LIMIT_TOKENS_DAY</code> · <code style={{ color: '#FFB800' }}>RATE_LIMIT_COST_DAY</code> · <code style={{ color: '#FFB800' }}>RATE_LIMIT_CONCURRENT</code>
+                  <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0, lineHeight: 1.8 }}>Set these env vars on the backend:<br />
+                    <code style={{ color: 'var(--accent)' }}>RATE_LIMIT_RPM</code> · <code style={{ color: 'var(--accent)' }}>RATE_LIMIT_TOKENS_DAY</code> · <code style={{ color: 'var(--accent)' }}>RATE_LIMIT_COST_DAY</code> · <code style={{ color: 'var(--accent)' }}>RATE_LIMIT_CONCURRENT</code>
                   </p>
                 </div>
               </>
@@ -492,7 +502,7 @@ export default function DashboardPage() {
         {tab === 'settings' && (
           <div style={s.page}>
             <h1 style={s.h1}>Settings</h1>
-            <p style={{ color: '#888', fontSize: 14, marginTop: -8, maxWidth: 720 }}>
+            <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: -8, maxWidth: 720 }}>
               Edit your organisation’s description, mission, and culture — or upload a document
               (PDF, Word, PowerPoint, Excel, .txt, .md) to summarise into a field. Mission &amp;
               Culture are read by every agent; each upload is also saved to shared knowledge.
@@ -509,7 +519,7 @@ export default function DashboardPage() {
                 return (
                   <div key={field} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#aaa' }}>{label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>{label}</span>
                       <label style={{ ...s.uploadChip, ...(uploadingField ? { opacity: 0.6, cursor: 'default' } : {}) }}>
                         {uploadingField === field ? 'Summarising…' : '📎 Upload file'}
                         <input type="file" style={{ display: 'none' }} disabled={uploadingField !== null}
@@ -524,14 +534,14 @@ export default function DashboardPage() {
                 )
               })}
 
-              {settingsMsg && <p style={{ fontSize: 13, margin: 0, color: /could not|fail/i.test(settingsMsg) ? '#ef4444' : '#22c55e' }}>{settingsMsg}</p>}
+              {settingsMsg && <p style={{ fontSize: 13, margin: 0, color: /could not|fail/i.test(settingsMsg) ? 'var(--danger-text)' : 'var(--ok)' }}>{settingsMsg}</p>}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <button onClick={saveSettings} disabled={savingSettings}
                   style={{ ...s.primaryBtn, width: 'fit-content', opacity: savingSettings ? 0.6 : 1, cursor: savingSettings ? 'default' : 'pointer' }}>
                   {savingSettings ? 'Saving…' : 'Save changes'}
                 </button>
-                {settingsSaved && <span style={{ color: '#22c55e', fontSize: 13 }}>✓ Saved</span>}
+                {settingsSaved && <span style={{ color: 'var(--ok)', fontSize: 13 }}>✓ Saved</span>}
               </div>
             </div>
           </div>
@@ -542,42 +552,43 @@ export default function DashboardPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: '#0a0a0a' },
-  layout: { display: 'flex', height: '100vh', overflow: 'hidden', background: '#0a0a0a' },
-  sidebar: { width: 220, background: '#111', borderRight: '1px solid #222', display: 'flex', flexDirection: 'column', padding: '16px 12px', gap: 4, overflow: 'auto' },
-  logoBox: { width: 44, height: 44, background: '#FFB800', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8, flexShrink: 0 },
-  logoText: { fontSize: 18, fontWeight: 800, color: '#000' },
-  orgLabel: { fontSize: 14, fontWeight: 700, color: '#fff', padding: '8px 4px', borderBottom: '1px solid #222', marginBottom: 8 },
-  navBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', color: '#888', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, width: '100%', textAlign: 'left' as const },
-  navActive: { background: '#1a1a1a', color: '#FFB800', fontWeight: 700 },
-  notifBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', borderRadius: 8, padding: '10px 12px', marginTop: 'auto', fontSize: 13, color: '#fff', border: '1px solid #333' },
+  center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: 'var(--s0)' },
+  layout: { display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--s0)' },
+  sidebar: { width: 220, background: 'var(--s1)', borderRight: '1px solid var(--line)', display: 'flex', flexDirection: 'column', padding: '16px 12px', gap: 4, overflow: 'auto' },
+  // Brand row: mark follows --text via currentColor; 8px padding = clear space.
+  brand: { display: 'flex', alignItems: 'center', gap: 8, padding: 8, color: 'var(--text)', marginBottom: 4, flexShrink: 0 },
+  brandName: { fontSize: 15, fontWeight: 700, letterSpacing: 0.2 },
+  orgLabel: { fontSize: 14, fontWeight: 700, color: 'var(--text)', padding: '8px 4px', borderBottom: '1px solid var(--line)', marginBottom: 8 },
+  navBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', color: 'var(--muted)', padding: '10px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 500, width: '100%', textAlign: 'left' as const },
+  navActive: { background: 'var(--s2)', color: 'var(--accent)', fontWeight: 700 },
+  notifBanner: { display: 'flex', alignItems: 'center', gap: 8, background: 'var(--s2)', borderRadius: 8, padding: '10px 12px', marginTop: 'auto', fontSize: 13, color: 'var(--text)', border: '1px solid var(--line-strong)' },
   main: { flex: 1, overflow: 'auto' },
   page: { padding: 28, maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 },
   h1: { fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: -0.5 },
   h2: { fontSize: 18, fontWeight: 700, margin: 0 },
   grid4: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 },
-  statCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 4 },
+  statCard: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 4 },
   statVal: { fontSize: 28, fontWeight: 800, lineHeight: 1 },
-  statLabel: { fontSize: 12, color: '#888' },
+  statLabel: { fontSize: 12, color: 'var(--muted)' },
   agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 },
-  agentCard: { background: '#111', border: '1px solid #222', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
-  table: { background: '#111', border: '1px solid #222', borderRadius: 10, overflow: 'hidden' },
-  thead: { display: 'grid', padding: '10px 16px', background: '#1a1a1a', borderBottom: '1px solid #222', fontSize: 12, fontWeight: 700, color: '#888', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
-  trow: { display: 'grid', padding: '12px 16px', borderBottom: '1px solid #1a1a1a', alignItems: 'center', fontSize: 14 },
+  agentCard: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 10, padding: 16, display: 'flex', alignItems: 'center', gap: 12 },
+  table: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' },
+  thead: { display: 'grid', padding: '10px 16px', background: 'var(--s2)', borderBottom: '1px solid var(--line)', fontSize: 12, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
+  trow: { display: 'grid', padding: '12px 16px', borderBottom: '1px solid var(--line)', alignItems: 'center', fontSize: 14 },
   cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
-  projCard: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 20 },
-  syncBtn: { background: '#1a1a1a', border: '1px solid #333', color: '#FFB800', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 },
-  costRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid #1a1a1a' },
-  barTrack: { flex: 1, height: 8, background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' },
-  barFill: { height: '100%', background: '#FFB800', borderRadius: 4 },
-  notifRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: '#111', borderRadius: 10, border: '1px solid #222' },
+  projCard: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 12, padding: 20 },
+  syncBtn: { background: 'var(--s2)', border: '1px solid var(--line-strong)', color: 'var(--accent)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+  costRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--line)' },
+  barTrack: { flex: 1, height: 8, background: 'var(--s2)', borderRadius: 4, overflow: 'hidden' },
+  barFill: { height: '100%', background: 'var(--accent)', borderRadius: 4 },
+  notifRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'var(--s1)', borderRadius: 10, border: '1px solid var(--line)' },
   commsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 },
-  commsCard: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 20 },
-  emptyCard: { background: '#111', border: '1px solid #222', borderRadius: 12, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' as const },
-  formWrap: { minHeight: '100vh', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', background: '#0a0a0a', padding: '48px 20px', overflow: 'auto' },
-  orgForm: { display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 460, background: '#111', border: '1px solid #222', borderRadius: 16, padding: 28 },
-  formLabel: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, fontWeight: 600, color: '#aaa' },
-  formInput: { background: '#0a0a0a', border: '1px solid #333', borderRadius: 8, padding: '10px 12px', color: '#fff', fontSize: 14, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' as const },
-  primaryBtn: { background: '#FFB800', color: '#000', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
-  uploadChip: { fontSize: 12, fontWeight: 600, color: '#FFB800', background: '#1a1a1a', border: '1px solid #333', padding: '5px 12px', borderRadius: 8, cursor: 'pointer' },
+  commsCard: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 12, padding: 20 },
+  emptyCard: { background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' as const },
+  formWrap: { minHeight: '100vh', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', background: 'var(--s0)', padding: '48px 20px', overflow: 'auto' },
+  orgForm: { display: 'flex', flexDirection: 'column', gap: 14, width: '100%', maxWidth: 460, background: 'var(--s1)', border: '1px solid var(--line)', borderRadius: 16, padding: 28 },
+  formLabel: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--text-2)' },
+  formInput: { background: 'var(--s0)', border: '1px solid var(--line-strong)', borderRadius: 8, padding: '10px 12px', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' as const },
+  primaryBtn: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
+  uploadChip: { fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'var(--s2)', border: '1px solid var(--line-strong)', padding: '5px 12px', borderRadius: 8, cursor: 'pointer' },
 }

@@ -1,7 +1,8 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import { STATUS_COLOR as STATUS_C, tk, text, space } from './tokens'
+import { tk, text, space } from './tokens'
+import { statusColor, statusIcon } from './status'
 import { Button, TextInput } from './ui'
 
 // MCA-UI U2 — Task detail drawer. Surfaces the shipped-but-invisible backend:
@@ -71,7 +72,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: text.lg.fontSize, lineHeight: text.lg.lineHeight, fontWeight: 700 }}>{task?.title ?? 'Task'}</div>
             <div style={{ display: 'flex', gap: space.md, alignItems: 'center', marginTop: space.xs, flexWrap: 'wrap' }}>
-              <span style={{ ...s.pill, color: STATUS_C[task?.status ?? ''] ?? tk.muted }}>{task?.status ?? '—'}</span>
+              <span style={{ ...s.pill, color: task?.status ? statusColor(task.status) : tk.muted }}>{task?.status ? `${statusIcon(task.status)} ${task.status}` : '—'}</span>
               {labels.map(l => <span key={l} style={s.label}>{l}</span>)}
               {task?.costUsd != null && <span style={s.muted}>${task.costUsd.toFixed(5)}</span>}
             </div>
@@ -106,7 +107,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
           <Section title={`Runs (${runs.length})`}>
             {runs.length === 0 ? <Empty /> : runs.map(r => (
               <div key={r.id} style={s.tlRow}>
-                <span aria-hidden style={{ color: r.status === 'done' ? tk.green : r.status === 'failed' ? tk.red : tk.amber }}>●</span>
+                <span aria-hidden style={{ color: statusColor(r.status === 'done' ? 'done' : r.status === 'failed' ? 'failed' : 'paused'), fontWeight: 700 }}>{statusIcon(r.status === 'done' ? 'done' : r.status === 'failed' ? 'failed' : 'paused')}</span>
                 <span style={{ flex: 1 }}>{r.status} <span style={s.muted}>{fmt(r.startedAt)}</span></span>
                 <span style={s.muted}>{r.tokensUsed ? `${r.tokensUsed} tok` : ''}{r.costUsd != null ? ` · $${r.costUsd.toFixed(4)}` : ''}</span>
               </div>
@@ -115,7 +116,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
 
           {subtasks.length > 0 && (
             <Section title={`Subtasks (${subtasks.length})`}>
-              {subtasks.map(st => <div key={st.id} style={s.tlRow}><span aria-hidden>↳</span><span style={{ flex: 1 }}>{st.title}</span><span style={{ ...s.pill, color: STATUS_C[st.status] ?? tk.muted }}>{st.status}</span></div>)}
+              {subtasks.map(st => <div key={st.id} style={s.tlRow}><span aria-hidden>↳</span><span style={{ flex: 1 }}>{st.title}</span><span style={{ ...s.pill, color: statusColor(st.status) }}>{statusIcon(st.status)} {st.status}</span></div>)}
             </Section>
           )}
 
@@ -143,18 +144,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Empty() { return <div style={{ ...s.muted, padding: `${space.xs}px 0` }}>Nothing yet.</div> }
 
 const s: Record<string, React.CSSProperties> = {
-  scrim: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' },
+  scrim: { position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' },
   drawer: { width: 'min(560px, 94vw)', height: '100%', background: tk.surface, borderLeft: `1px solid ${tk.line}`, display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 30px rgba(0,0,0,0.5)' },
   head: { display: 'flex', gap: space.lg, alignItems: 'flex-start', padding: space.xl, borderBottom: `1px solid ${tk.line}` },
-  close: { background: '#1a1a1a', border: '1px solid #333', color: tk.textDim, width: 28, height: 28, borderRadius: tk.r.sm, cursor: 'pointer', fontSize: text.sm.fontSize, flexShrink: 0 },
+  close: { background: tk.surfaceHigh, border: '1px solid var(--line-strong)', color: tk.textDim, width: 28, height: 28, borderRadius: tk.r.sm, cursor: 'pointer', fontSize: text.sm.fontSize, flexShrink: 0 },
   body: { padding: space.xl, overflow: 'auto', flex: 1 },
   secTitle: { fontSize: text.xs.fontSize, lineHeight: text.xs.lineHeight, fontWeight: 700, color: tk.muted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: space.sm },
   tlRow: { display: 'flex', gap: space.md, alignItems: 'center', fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight, padding: `${space.xs}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
   comment: { padding: `${space.sm}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
-  pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid #2a2a2a', borderRadius: tk.r.pill, padding: '1px 8px' },
-  label: { fontSize: text.xs.fontSize, color: tk.textDim, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 6, padding: '1px 7px' },
+  pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '1px 8px' },
+  label: { fontSize: text.xs.fontSize, color: tk.textDim, background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: 6, padding: '1px 7px' },
   muted: { color: tk.muted, fontSize: text.xs.fontSize },
   mono: { fontFamily: 'monospace', fontSize: text.sm.fontSize, color: tk.textDim, background: tk.bg, border: `1px solid ${tk.lineSoft}`, borderRadius: tk.r.sm, padding: space.md, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   link: { color: tk.blue, fontSize: text.sm.fontSize, textDecoration: 'none', flex: 1 },
-  err: { background: '#2a1414', border: '1px solid #5a2a2a', color: tk.red, borderRadius: tk.r.md, padding: `${space.sm}px ${space.lg}px`, margin: `0 ${space.xl}px`, fontSize: text.sm.fontSize },
+  err: { background: 'var(--danger-bg)', border: '1px solid var(--danger-line)', color: tk.red, borderRadius: tk.r.md, padding: `${space.sm}px ${space.lg}px`, margin: `0 ${space.xl}px`, fontSize: text.sm.fontSize },
 }

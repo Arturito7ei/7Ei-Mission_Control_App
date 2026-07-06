@@ -307,7 +307,7 @@ export default function ConnectorsPanel({ orgId, getToken }: { orgId: string; ge
                     <IconButton disabled={busy === r.id || !enabled} aria-label={`Test ${SVC_LABEL[r.id]}`} onClick={() => test(r)}>Test</IconButton>
                     <IconButton role="switch" aria-checked={enabled} aria-label={`${SVC_LABEL[r.id]} ${enabled ? 'on' : 'off'}`}
                       disabled={busy === r.id}
-                      style={{ width: 34, color: enabled ? tk.green : tk.muted, borderColor: enabled ? tk.green : '#333' }}
+                      style={{ width: 34, color: enabled ? tk.green : tk.muted, borderColor: enabled ? tk.green : 'var(--line-strong)' }}
                       onClick={() => toggleService(r.id)}>{enabled ? 'On' : 'Off'}</IconButton>
                   </div>
                 )

@@ -20,15 +20,15 @@ export default function TaskBoard({ tasks, agentName }: { tasks: CTask[]; agentN
             <div key={col.key} style={{ background: tk.surface, border: `1px solid ${tk.line}`, borderRadius: tk.r.md, padding: space.md, minHeight: 80 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: text.xs.fontSize, textTransform: 'uppercase', letterSpacing: 0.5, color: tk.muted, fontWeight: 700, marginBottom: space.sm }}>
                 {col.label}
-                <span style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: tk.r.pill, padding: '0 7px', fontSize: text.xs.fontSize }}>{items.length}</span>
+                <span style={{ background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '0 7px', fontSize: text.xs.fontSize }}>{items.length}</span>
               </div>
               {items.map(t => (
-                <div key={t.id} style={{ background: tk.surfaceHigh, border: `1px solid ${tk.line}`, borderLeft: `3px solid ${PRI_C[t.priority] ?? '#555'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm }}>
+                <div key={t.id} style={{ background: tk.surfaceHigh, border: `1px solid ${tk.line}`, borderLeft: `3px solid ${PRI_C[t.priority] ?? 'var(--muted)'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm }}>
                   <div style={{ fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight }}>{t.title}</div>
                   <div style={{ fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2 }}>{agentName(t.agentId)}</div>
                 </div>
               ))}
-              {items.length === 0 && <div style={{ color: '#444', fontSize: text.sm.fontSize, padding: space.xs }}>—</div>}
+              {items.length === 0 && <div style={{ color: tk.muted, fontSize: text.sm.fontSize, padding: space.xs }}>—</div>}
             </div>
           )
         })}

@@ -31,95 +31,56 @@
   --t-base: 180ms ease;
 }
 
-/* ─── Dark mode (default) */
-[data-theme='dark'], .dark, :root {
-  --bg:               #070707;
-  --surface:          #0f0f0f;
-  --surface-high:     #161616;
-  --surface-glass:    rgba(15, 15, 15, 0.72);
+/* ─── Semantic tokens (MCA-86) ─────────────────────────────────────────
+   The light/dark values (--s0/--s1/--s2, --line, --text, --accent, --ok,
+   --warn, --info, --danger-*, …) are emitted from app/dashboard/tokens.ts
+   into an inline <style> in app/layout.tsx, keyed on [data-theme]. Raw hex
+   lives only there. The names below are legacy aliases kept for the utility
+   classes in this file and the landing page. */
+:root {
+  --bg:               var(--s0);
+  --surface:          var(--s1);
+  --surface-high:     var(--s2);
+  --surface-glass:    var(--glass);
 
-  --border:           #1e1e1e;
-  --border-light:     #2a2a2a;
-  --border-accent:    rgba(137, 59, 255, 0.30);
-  --border-error:     rgba(212, 0, 26, 0.38);
-  --border-glass:     rgba(199, 199, 199, 0.08);
+  --border:           var(--line);
+  --border-light:     var(--line-strong);
+  --border-accent:    var(--accent-line);
+  --border-error:     var(--danger-line);
+  --border-glass:     var(--glass-line);
 
-  --text:             #ffffff;
-  --text-secondary:   #c7c7c7;
-  --text-muted:       #555555;
-  --text-disabled:    #333333;
+  --text-secondary:   var(--text-2);
+  --text-muted:       var(--muted);
+  --text-disabled:    var(--text-3);
 
-  --accent:           #893BFF;
-  --accent-hover:     #9d5aff;
-  --accent-dim:       rgba(137, 59, 255, 0.10);
-  --accent-border:    rgba(137, 59, 255, 0.28);
-  --accent-glow:      rgba(137, 59, 255, 0.18);
+  --accent-border:    var(--accent-line);
+  --accent-2-dim:     var(--accent-dim);
 
-  --accent-2:         #700077;
-  --accent-2-dim:     rgba(112, 0, 119, 0.14);
+  /* Status — color-blind safe: active is purple, red is failure-only,
+     and every colored status is rendered with an icon or text label. */
+  --status-active:    var(--accent);
+  --status-active-bg: var(--accent-dim);
+  --status-active-bd: var(--accent-line);
 
-  /* Status — color-blind safe */
-  --status-active:    #893BFF;
-  --status-active-bg: rgba(137, 59, 255, 0.10);
-  --status-active-bd: rgba(137, 59, 255, 0.30);
+  --status-idle:      var(--muted);
+  --status-idle-bg:   var(--s2);
+  --status-idle-bd:   var(--line-strong);
 
-  --status-idle:      #555555;
-  --status-idle-bg:   rgba(199, 199, 199, 0.05);
-  --status-idle-bd:   rgba(199, 199, 199, 0.14);
+  --status-done:      var(--ok);
+  --status-done-bg:   var(--ok-bg);
+  --status-done-bd:   var(--ok);
 
-  --status-done:      #33c333;
-  --status-done-bg:   rgba(51, 195, 51, 0.09);
-  --status-done-bd:   rgba(51, 195, 51, 0.28);
+  --status-warn:      var(--warn);
+  --status-warn-bg:   var(--warn-bg);
+  --status-warn-bd:   var(--warn);
 
-  --status-warn:      #c9b800;
-  --status-warn-bg:   rgba(255, 255, 0, 0.07);
-  --status-warn-bd:   rgba(255, 255, 0, 0.22);
+  --status-error:     var(--danger-text);
+  --status-error-bg:  var(--danger-bg);
+  --status-error-bd:  var(--danger-line);
 
-  --status-error:     #D4001A;
-  --status-error-bg:  rgba(212, 0, 26, 0.09);
-  --status-error-bd:  rgba(212, 0, 26, 0.30);
-
-  --status-info:      #7b6dff;
-  --status-info-bg:   rgba(53, 0, 255, 0.10);
-  --status-info-bd:   rgba(53, 0, 255, 0.28);
-}
-
-/* ─── Light mode */
-[data-theme='light'], .light,
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg:             #f5f5f3;
-    --surface:        #ffffff;
-    --surface-high:   #ebebeb;
-    --surface-glass:  rgba(255, 255, 255, 0.72);
-
-    --border:         #e5e5e5;
-    --border-light:   #eeeeee;
-    --border-accent:  rgba(137, 59, 255, 0.20);
-    --border-error:   rgba(212, 0, 26, 0.24);
-    --border-glass:   rgba(0, 0, 0, 0.07);
-
-    --text:           #070707;
-    --text-secondary: #555555;
-    --text-muted:     #aaaaaa;
-    --text-disabled:  #cccccc;
-
-    --accent:         #700077;
-    --accent-hover:   #893BFF;
-    --accent-dim:     rgba(137, 59, 255, 0.07);
-    --accent-border:  rgba(137, 59, 255, 0.20);
-    --accent-glow:    rgba(137, 59, 255, 0.10);
-
-    --accent-2:       #893BFF;
-    --accent-2-dim:   rgba(137, 59, 255, 0.09);
-
-    --status-active:  #700077;
-    --status-idle:    #aaaaaa;
-    --status-done:    #219a21;
-    --status-warn:    #7a6a00;
-    --status-error:   #D4001A;
-    --status-info:    #3500ff;
-  }
+  --status-info:      var(--info);
+  --status-info-bg:   var(--info-bg);
+  --status-info-bd:   var(--info);
 }
 
 /* ─── Base reset */
@@ -191,13 +152,14 @@ body {
   transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
   text-decoration: none;
 }
-.btn-primary  { background: var(--accent); color: #fff; }
+.btn-primary  { background: var(--accent); color: var(--accent-contrast); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary { background: transparent; color: var(--text-secondary); border-color: var(--border-light); }
 .btn-secondary:hover { background: var(--surface-high); }
 .btn-ghost  { background: transparent; color: var(--accent); }
 .btn-ghost:hover { background: var(--accent-dim); }
-.btn-danger { background: var(--status-error-bg); color: var(--status-error); border-color: var(--status-error-bd); }
+/* Destructive = red outline + red text, never a red fill (colorblind rule 4). */
+.btn-danger { background: transparent; color: var(--status-error); border-color: var(--status-error-bd); }
 .btn-glass  { background: var(--surface-glass); backdrop-filter: blur(12px); border-color: var(--border-glass); color: var(--text); }
 
 /* Inputs */
@@ -309,7 +271,7 @@ p  { margin: 0; color: var(--text); }
     overflow-x: auto !important;
     overflow-y: hidden !important;
     border-right: none !important;
-    border-bottom: 1px solid #222 !important;
+    border-bottom: 1px solid var(--line) !important;
     padding: 8px 10px !important;
     position: sticky; top: 0; z-index: 20;
   }

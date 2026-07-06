@@ -15,10 +15,12 @@ const BTN_BASE: CSSProperties = {
   height: density.ctrl, padding: `0 ${space.lg}px`, borderRadius: tk.r.md, boxSizing: 'border-box',
   fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
 }
+// MCA-86: primary = accent (purple) fill; danger = red OUTLINE + red text —
+// destructive is never a red fill (DESIGN_SYSTEM v2 colorblind rule 4).
 const BTN_VARIANT: Record<ButtonVariant, CSSProperties> = {
-  default: { background: '#1a1a1a', border: '1px solid #333', color: tk.textDim },
-  primary: { background: tk.accent, border: `1px solid ${tk.accent}`, color: '#000', fontWeight: 700 },
-  danger: { background: '#1a1010', border: '1px solid #5a2a2a', color: tk.red },
+  default: { background: tk.surfaceHigh, border: '1px solid var(--line-strong)', color: tk.textDim },
+  primary: { background: tk.accent, border: `1px solid ${tk.accent}`, color: tk.accentContrast, fontWeight: 700 },
+  danger: { background: 'transparent', border: '1px solid var(--danger-line)', color: tk.red },
 }
 
 export function Button({ variant = 'default', disabled, style, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
@@ -52,7 +54,7 @@ export function Pill({ tone = 'muted', style, ...rest }: HTMLAttributes<HTMLSpan
 export function TextInput({ style, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input {...rest}
-      style={{ height: density.ctrl, boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, ...style }} />
+      style={{ height: density.ctrl, boxSizing: 'border-box', background: tk.bg, border: '1px solid var(--line-strong)', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, ...style }} />
   )
 }
 
@@ -62,7 +64,7 @@ export function TextInput({ style, ...rest }: InputHTMLAttributes<HTMLInputEleme
 export function Select({ style, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select {...rest}
-      style={{ height: density.ctrl, boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', ...style }} />
+      style={{ height: density.ctrl, boxSizing: 'border-box', background: tk.bg, border: '1px solid var(--line-strong)', borderRadius: tk.r.md, padding: `0 ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', ...style }} />
   )
 }
 
@@ -71,7 +73,7 @@ export function Select({ style, ...rest }: SelectHTMLAttributes<HTMLSelectElemen
 export function TextArea({ style, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea {...rest}
-      style={{ boxSizing: 'border-box', background: '#000', border: '1px solid #333', borderRadius: tk.r.md, padding: `${density.cellY}px ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', resize: 'vertical', ...style }} />
+      style={{ boxSizing: 'border-box', background: tk.bg, border: '1px solid var(--line-strong)', borderRadius: tk.r.md, padding: `${density.cellY}px ${density.cellX}px`, color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit', resize: 'vertical', ...style }} />
   )
 }
 
@@ -82,7 +84,7 @@ export function TextArea({ style, ...rest }: TextareaHTMLAttributes<HTMLTextArea
 export function IconButton({ style, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button {...rest}
-      style={{ background: 'transparent', border: '1px solid #333', color: tk.muted, borderRadius: 6, padding: '1px 6px', fontSize: text.xs.fontSize, lineHeight: 1.4, cursor: 'pointer', ...style }} />
+      style={{ background: 'transparent', border: '1px solid var(--line-strong)', color: tk.muted, borderRadius: 6, padding: '1px 6px', fontSize: text.xs.fontSize, lineHeight: 1.4, cursor: 'pointer', ...style }} />
   )
 }
 

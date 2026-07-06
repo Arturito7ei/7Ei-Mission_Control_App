@@ -58,8 +58,8 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
               <span key={label} role="listitem" style={{
                 fontSize: text.xs.fontSize, borderRadius: tk.r.pill, padding: '2px 9px',
                 ...(i === step
-                  ? { color: '#000', background: tk.accent, border: `1px solid ${tk.accent}`, fontWeight: 700 }
-                  : { color: tk.muted, background: '#1a1a1a', border: '1px solid #2a2a2a' }),
+                  ? { color: tk.accentContrast, background: tk.accent, border: `1px solid ${tk.accent}`, fontWeight: 700 }
+                  : { color: tk.muted, background: tk.surfaceHigh, border: '1px solid var(--line-strong)' }),
               }}>{i + 1}. {label}</span>
             ))}
           </div>
@@ -76,7 +76,7 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
               {RUNTIMES.map(r => (
                 <Button key={r.id} aria-pressed={f.runtime === r.id} onClick={() => pickRuntime(r)}
                   style={f.runtime === r.id
-                    ? { borderColor: tk.accent, background: '#211c08', color: tk.text }
+                    ? { borderColor: tk.accent, background: 'var(--accent-dim)', color: tk.text }
                     : { background: tk.bg, color: tk.textDim }}>
                   {r.emoji} {r.label}
                 </Button>

@@ -18,7 +18,7 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide }: 
       <Card style={{ paddingTop: 0, paddingBottom: 0 }}>
         {approvals.map(a => (
           <div key={a.id} style={sx.row}>
-            <span style={{ ...sx.tag, background: '#1a0f2a', color: EXT_PURPLE }}>Approval · {a.type}</span>
+            <span style={{ ...sx.tag, background: 'var(--accent-dim)', color: EXT_PURPLE }}>Approval · {a.type}</span>
             <div style={{ flex: 1, minWidth: 0, fontWeight: 600 }}>{a.summary}</div>
             <Button style={{ color: tk.green }} onClick={() => onDecide(a.id, 'approved')}>Approve</Button>
             <Button style={{ color: tk.red }} onClick={() => onDecide(a.id, 'rejected')}>Reject</Button>

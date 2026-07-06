@@ -1,10 +1,13 @@
 'use client'
-// MCA-80 — live agent roster: heartbeat dot (green/amber/stale, grey when
-// terminated) + pause/resume/terminate controls. `agents` is null while the
-// cockpit payload loads so the empty state only shows after data arrives.
+// MCA-80 — live agent roster + pause/resume/terminate controls. MCA-86: the
+// color-only heartbeat dot is now a status icon on the design-system table
+// (⬡ active purple / ⏸ paused / ✕ stale-failed) — shape + color, never color
+// alone. `agents` is null while the cockpit payload loads so the empty state
+// only shows after data arrives.
 import { tk, text, space } from '../tokens'
 import { Card, IconButton, SectionLabel } from '../ui'
-import { HB, RUNTIME_BADGE, sx, type CAgent } from './shared'
+import { statusColor, statusIcon, HEARTBEAT_STATUS } from '../status'
+import { RUNTIME_BADGE, sx, type CAgent } from './shared'
 
 export default function AgentFleet({ agents, onControl }: {
   agents: CAgent[] | null
@@ -26,7 +29,15 @@ export default function AgentFleet({ agents, onControl }: {
               <div style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft, marginTop: 2 }}>{a.llmProvider} · {a.llmModel}</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: space.sm, flexShrink: 0 }}>
-              <span title={`heartbeat: ${a.heartbeat}`} style={{ width: 10, height: 10, borderRadius: 5, background: a.status === 'terminated' ? '#444' : (HB[a.heartbeat] ?? '#555') }} />
+              {(() => {
+                const st = a.status === 'terminated' ? 'idle' : (HEARTBEAT_STATUS[a.heartbeat] ?? 'idle')
+                return (
+                  <span title={`heartbeat: ${a.heartbeat}`} aria-label={`heartbeat: ${a.heartbeat}`}
+                    style={{ color: statusColor(st), fontSize: text.sm.fontSize, fontWeight: 700, lineHeight: 1 }}>
+                    {statusIcon(st)}
+                  </span>
+                )
+              })()}
               <div style={{ display: 'flex', gap: space.xs }}>
                 {a.status === 'paused'
                   ? <IconButton title="Resume" aria-label={`Resume ${a.name}`} onClick={() => onControl(a.id, 'resume')}>▶</IconButton>
