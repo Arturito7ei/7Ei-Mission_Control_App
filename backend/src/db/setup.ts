@@ -97,6 +97,8 @@ export async function setupDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id, status)`,
     `CREATE TABLE IF NOT EXISTS task_comments (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, task_id TEXT NOT NULL, author_agent_id TEXT, author_user TEXT, body TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id)`,
+    // MCA-83 W1: recovery cards — system-notice comments (failures posted to the thread)
+    `ALTER TABLE task_comments ADD COLUMN kind TEXT NOT NULL DEFAULT 'user'`,
     // MCA-WORK (Phase 3): attachments/work-products, labels, workspace runtime
     `ALTER TABLE tasks ADD COLUMN labels TEXT`,
     `ALTER TABLE workspaces ADD COLUMN runtime_status TEXT`,

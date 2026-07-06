@@ -22,12 +22,18 @@ export default function TaskBoard({ tasks, agentName }: { tasks: CTask[]; agentN
                 {col.label}
                 <span style={{ background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '0 7px', fontSize: text.xs.fontSize }}>{items.length}</span>
               </div>
-              {items.map(t => (
-                <div key={t.id} style={{ background: tk.surfaceHigh, border: `1px solid ${tk.line}`, borderLeft: `3px solid ${PRI_C[t.priority] ?? 'var(--muted)'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm }}>
-                  <div style={{ fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight }}>{t.title}</div>
-                  <div style={{ fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2 }}>{agentName(t.agentId)}</div>
-                </div>
-              ))}
+              {items.map(t => {
+                // W1: flag cards that have an open recovery card in the drawer.
+                const needsRecovery = t.status === 'failed' || t.status === 'blocked' || col.key === 'blocked'
+                return (
+                  <div key={t.id} style={{ background: tk.surfaceHigh, border: `1px solid ${tk.line}`, borderLeft: `3px solid ${PRI_C[t.priority] ?? 'var(--muted)'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm }}>
+                    <div style={{ fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight }}>
+                      {needsRecovery ? <span aria-label="needs recovery" title="Needs recovery" style={{ color: tk.red, marginRight: 4 }}>⚠</span> : null}{t.title}
+                    </div>
+                    <div style={{ fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2 }}>{agentName(t.agentId)}</div>
+                  </div>
+                )
+              })}
               {items.length === 0 && <div style={{ color: tk.muted, fontSize: text.sm.fontSize, padding: space.xs }}>—</div>}
             </div>
           )
