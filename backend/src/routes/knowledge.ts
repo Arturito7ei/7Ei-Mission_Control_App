@@ -4,13 +4,18 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { upsertDocument, deleteDocument, searchKnowledge } from '../services/vector-search'
 import { extractText, summariseToMarkdown } from '../services/document-ingest'
+import { getGoogleConnectorCfg } from './connectors'
 
 export async function knowledgeRoutes(app: FastifyInstance) {
   // Browse Google Drive folder
   app.get('/api/orgs/:orgId/knowledge/browse', async (req, reply) => {
     const { orgId } = req.params as any
-    const { folderId = 'root', accessToken } = req.query as any
+    let { folderId = 'root', accessToken } = req.query as any
     if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81: toggle + drive scope
+    if (!gcfg.services.drive) return reply.code(403).send({ error: 'Drive is disabled in connector settings' })
+    // driveScope 'folder' pins the default browse root to the configured folder.
+    if (folderId === 'root' && gcfg.driveScope === 'folder' && gcfg.driveFolderId) folderId = gcfg.driveFolderId
     const q = `'${folderId}' in parents and trashed = false`
     const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,webViewLink,modifiedTime)`
     const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
@@ -28,9 +33,11 @@ export async function knowledgeRoutes(app: FastifyInstance) {
 
   // Read file content
   app.get('/api/orgs/:orgId/knowledge/file/:fileId', async (req, reply) => {
-    const { fileId } = req.params as any
+    const { orgId, fileId } = req.params as any
     const { accessToken, mimeType = 'text/plain' } = req.query as any
     if (!accessToken) return reply.code(401).send({ error: 'Access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81
+    if (!gcfg.services.drive) return reply.code(403).send({ error: 'Drive is disabled in connector settings' })
     const url = mimeType.includes('google-apps')
       ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`
       : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`

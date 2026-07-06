@@ -7,9 +7,11 @@ import { buildAuthUrl, exchangeCode, SCOPES as GOOGLE_SCOPES } from '../services
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 export async function authRoutes(app: FastifyInstance) {
+  // ?switch=1 (MCA-81) forces the Google account chooser (switch-account flow).
   app.get('/api/orgs/:orgId/auth/google', async (req) => {
     const { orgId } = req.params as any
-    return { url: buildAuthUrl(orgId) }
+    const switchAccount = String((req.query as any)?.switch ?? '') === '1'
+    return { url: buildAuthUrl(orgId, { switchAccount }) }
   })
 
   app.get('/api/auth/google/callback', async (req, reply) => {

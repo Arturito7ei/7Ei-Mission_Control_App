@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db, schema } from '../db/client'
 import { eq, desc, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { getGoogleConnectorCfg } from './connectors'
 
 // ─── Unified Inbox ────────────────────────────────────────────────────────────
 // Aggregates messages across channels into a single feed per org.
@@ -55,6 +56,8 @@ export async function commsRoutes(app: FastifyInstance) {
       // Gmail send via Google API
       const { accessToken, agentId } = req.body as any
       if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+      const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81: per-service toggle
+      if (!gcfg.services.gmail) return reply.code(403).send({ error: 'Gmail is disabled in connector settings' })
       const result = await sendGmail({ to: body.to, subject: body.subject ?? '(no subject)', body: body.body, accessToken, threadId: body.threadId })
       return { ok: true, messageId: result.id, channel: 'gmail' }
     }
@@ -74,8 +77,11 @@ export async function commsRoutes(app: FastifyInstance) {
 
   // ── Gmail: list threads ──────────────────────────────────────────────────
   app.get('/api/orgs/:orgId/gmail/threads', async (req, reply) => {
+    const { orgId } = req.params as any
     const { accessToken, maxResults = '20' } = req.query as any
     if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81
+    if (!gcfg.services.gmail) return reply.code(403).send({ error: 'Gmail is disabled in connector settings' })
     try {
       const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads?maxResults=${maxResults}&labelIds=INBOX`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -88,9 +94,11 @@ export async function commsRoutes(app: FastifyInstance) {
 
   // ── Gmail: get thread ────────────────────────────────────────────────────
   app.get('/api/orgs/:orgId/gmail/threads/:threadId', async (req, reply) => {
-    const { threadId } = req.params as any
+    const { orgId, threadId } = req.params as any
     const { accessToken } = req.query as any
     if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81
+    if (!gcfg.services.gmail) return reply.code(403).send({ error: 'Gmail is disabled in connector settings' })
     try {
       const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=full`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -105,8 +113,11 @@ export async function commsRoutes(app: FastifyInstance) {
 
   // ── Gmail: send ──────────────────────────────────────────────────────────
   app.post('/api/orgs/:orgId/gmail/send', async (req, reply) => {
+    const { orgId } = req.params as any
     const { accessToken, to, subject, body: emailBody, threadId } = req.body as any
     if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81
+    if (!gcfg.services.gmail) return reply.code(403).send({ error: 'Gmail is disabled in connector settings' })
     try {
       const result = await sendGmail({ to, subject, body: emailBody, accessToken, threadId })
       return { ok: true, messageId: result.id }
@@ -166,8 +177,11 @@ export async function commsRoutes(app: FastifyInstance) {
 
   // ── Google Meet: create meeting link ─────────────────────────────────────
   app.post('/api/orgs/:orgId/meet/create', async (req, reply) => {
+    const { orgId } = req.params as any
     const { accessToken, summary, startTime, endTime, attendees = [] } = req.body as any
     if (!accessToken) return reply.code(401).send({ error: 'Google access token required' })
+    const gcfg = await getGoogleConnectorCfg(orgId) // MCA-81: toggle + calendarId
+    if (!gcfg.services.calendar) return reply.code(403).send({ error: 'Calendar is disabled in connector settings' })
     try {
       const event = {
         summary: summary ?? '7Ei Mission Control Meeting',
@@ -176,7 +190,7 @@ export async function commsRoutes(app: FastifyInstance) {
         attendees: attendees.map((email: string) => ({ email })),
         conferenceData: { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
       }
-      const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1', {
+      const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(gcfg.calendarId)}/events?conferenceDataVersion=1`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(event),

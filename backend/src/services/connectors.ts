@@ -37,6 +37,74 @@ export const CONNECTORS: ConnectorMeta[] = [
 
 export const GOOGLE_MEMBERS = CONNECTORS.filter(c => c.provider === 'google').map(c => c.id)
 
+// ─── Google connector config (MCA-81) ───────────────────────────────────────
+// Per-connector config stored as a company-scope secret (config-as-secret,
+// same pattern as VAULT_CONFIG) — no schema change. Defaults: everything on,
+// primary calendar, whole Drive.
+
+export const GOOGLE_CONNECTOR_CONFIG_KEY = 'GOOGLE_CONNECTOR_CONFIG'
+
+export type GoogleService = 'gmail' | 'calendar' | 'drive'
+
+/** Connector id → config service key for the Google trio. */
+export const GOOGLE_SERVICE_BY_ID: Record<string, GoogleService> = {
+  gmail: 'gmail', gcal: 'calendar', gdrive: 'drive',
+}
+
+export interface GoogleConnectorConfig {
+  services: Record<GoogleService, boolean>
+  calendarId: string
+  driveScope: 'all' | 'folder'
+  driveFolderId?: string
+}
+
+export function defaultGoogleConnectorConfig(): GoogleConnectorConfig {
+  return { services: { gmail: true, calendar: true, drive: true }, calendarId: 'primary', driveScope: 'all' }
+}
+
+/** Merge a stored GOOGLE_CONNECTOR_CONFIG JSON blob with defaults (parseVaultConfig pattern). */
+export function parseGoogleConnectorConfig(json: string | null | undefined): GoogleConnectorConfig {
+  const d = defaultGoogleConnectorConfig()
+  if (!json) return d
+  try {
+    const o = JSON.parse(json)
+    const svc = (o?.services ?? {}) as Record<string, unknown>
+    const folderId = typeof o?.driveFolderId === 'string' ? o.driveFolderId.trim() : ''
+    return {
+      services: {
+        gmail: typeof svc.gmail === 'boolean' ? svc.gmail : d.services.gmail,
+        calendar: typeof svc.calendar === 'boolean' ? svc.calendar : d.services.calendar,
+        drive: typeof svc.drive === 'boolean' ? svc.drive : d.services.drive,
+      },
+      calendarId: (typeof o?.calendarId === 'string' && o.calendarId.trim()) || d.calendarId,
+      driveScope: o?.driveScope === 'folder' ? 'folder' : d.driveScope,
+      ...(folderId ? { driveFolderId: folderId } : {}),
+    }
+  } catch { return d }
+}
+
+export interface GoogleConnectorConfigPatch {
+  services?: Partial<Record<GoogleService, boolean>>
+  calendarId?: string
+  driveScope?: 'all' | 'folder'
+  driveFolderId?: string
+}
+
+/** Apply a validated PUT patch over the current config (pure — routes persist). */
+export function mergeGoogleConnectorConfig(
+  current: GoogleConnectorConfig, patch: GoogleConnectorConfigPatch,
+): GoogleConnectorConfig {
+  const folderId = patch.driveFolderId !== undefined
+    ? (patch.driveFolderId.trim() || undefined)
+    : current.driveFolderId
+  return {
+    services: { ...current.services, ...(patch.services ?? {}) },
+    calendarId: (patch.calendarId?.trim() || current.calendarId),
+    driveScope: patch.driveScope ?? current.driveScope,
+    ...(folderId ? { driveFolderId: folderId } : {}),
+  }
+}
+
 export function getConnector(id: string): ConnectorMeta | undefined {
   return CONNECTORS.find(c => c.id === id)
 }

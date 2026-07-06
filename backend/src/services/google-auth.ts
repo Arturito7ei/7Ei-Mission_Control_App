@@ -15,7 +15,9 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
 ].join(' ')
 
-export function buildAuthUrl(orgId: string): string {
+// MCA-81: `switchAccount` forces the Google account chooser (switch-account
+// flow from the Connectors tab). Default behaviour is unchanged.
+export function buildAuthUrl(orgId: string, opts?: { switchAccount?: boolean }): string {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: `${process.env.PUBLIC_URL}/api/auth/google/callback`,
@@ -23,7 +25,7 @@ export function buildAuthUrl(orgId: string): string {
     scope: SCOPES,
     access_type: 'offline',
     include_granted_scopes: 'true',
-    prompt: 'consent',
+    prompt: opts?.switchAccount ? 'select_account consent' : 'consent',
     state: orgId,
   })
   return `${GOOGLE_AUTH_URL}?${params}`

@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, space } from './tokens'
-import { Button } from './ui'
+import { Button, Card, SectionLabel, Skeleton } from './ui'
 import { sx, type Approval, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
@@ -93,6 +93,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
 
   const agentName = (id: string) => data?.agents.find(a => a.id === id)?.name ?? '—'
   const inboxCount = inbox.length + approvals.length
+  const initialLoading = !data && !err // MCA-81 — skeletons until the first payload lands
 
   return (
     <div style={{ ...ui.page, maxWidth: 1200, gap: space.xl }}>
@@ -111,16 +112,32 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
 
       {err && <div style={ui.err}>⚠ {err}</div>}
 
-      <StatsRow sum={data?.summary ?? {}} />
-      <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} />
-      <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
-      <OrgChart chart={chart} />
-      <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
-      <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />
-      <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
-      <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
-      <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
-      <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} />
+      <StatsRow sum={data?.summary ?? {}} agents={data?.agents ?? null} budgets={budgets} approvalsPending={approvals.length} loading={initialLoading} />
+      {initialLoading ? (
+        // MCA-81 — skeleton rows in place of the sections while the first load is in flight.
+        ['Inbox', 'Agent fleet', 'Goals', 'Budgets', 'Task board'].map(l => (
+          <div key={l}>
+            <SectionLabel>{l}</SectionLabel>
+            <Card style={{ display: 'flex', flexDirection: 'column', gap: space.md }}>
+              <Skeleton h={14} w="72%" />
+              <Skeleton h={14} w="88%" />
+              <Skeleton h={14} w="58%" />
+            </Card>
+          </div>
+        ))
+      ) : (
+        <>
+          <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} />
+          <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
+          <OrgChart chart={chart} />
+          <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
+          <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />
+          <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
+          <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
+          <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
+          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} />
+        </>
+      )}
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
