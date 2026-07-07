@@ -30,6 +30,8 @@ export type Budget = { id: string; scope: string; scopeId?: string | null; limit
 export type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
 export type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }
 export type Plugin = { id: string; name: string; version: string; enabled: boolean; capabilities: string[]; tools: string[]; description?: string | null }
+export type PreflightRow = { agentId: string; agentName: string; provider: string | null; model: string; knownPricing: boolean; inputRate: number | null; outputRate: number | null; estMaxWakeCostUsd: number | null; level: 'ok' | 'warn'; issues: string[] }
+export type Preflight = { capUsd: number | null; cheapThresholdUsdPerMTok: number; warnCount: number; agents: PreflightRow[] }
 
 // Heartbeat → status table: green = running → active (purple), amber → paused,
 // stale → failed. Pair with statusIcon() — never a color-only dot.

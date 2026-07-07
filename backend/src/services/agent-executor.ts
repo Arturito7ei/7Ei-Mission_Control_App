@@ -14,6 +14,7 @@ import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 import { goalAncestry, formatGoalContext } from './goals'
 import { canAgentRun } from './governance'
 import { enforceAgentBudget } from './budget'
+import { preflightWake, parseCapUsd, estimateInputTokens } from './preflight'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 
 export interface ExecuteResult {
@@ -65,6 +66,31 @@ export async function executeAgentTask(opts: {
     }
     onDone?.(r)
     return r
+  }
+
+  // MCA-84 V3: per-wake preflight cap — bound the worst-case cost of THIS wake
+  // (input context + a full completion at the model's rates) and skip it if it
+  // would blow the configured per-wake ceiling. Runs before any expensive setup
+  // (RAG/Drive/memory fetches) so a capped wake costs nothing. Distinct from the
+  // cumulative scoped budgets above; opt-in via deployConfig.maxCostPerWakeUsd.
+  {
+    const orgCfg = await db.query.organisations.findFirst({
+      where: eq(schema.organisations.id, agent.orgId), columns: { deployConfig: true },
+    })
+    const capUsd = parseCapUsd(orgCfg?.deployConfig as any, agent.id)
+    if (capUsd != null) {
+      const inputTokens = estimateInputTokens([input, ...conversationHistory.map(m => m.content)])
+      const pf = preflightWake(agent.llmModel ?? 'claude-sonnet-4-20250514', { inputTokens, capUsd })
+      if (!pf.allowed) {
+        await db.update(schema.tasks).set({ status: 'blocked', inboxState: 'needs_attention', output: pf.reason } as any).where(eq(schema.tasks.id, taskId))
+        await db.insert(schema.taskComments).values({
+          id: randomUUID(), orgId: agent.orgId, taskId, authorAgentId: null, authorUser: null,
+          kind: 'system_notice', body: pf.reason ?? 'Preflight cap exceeded.', createdAt: new Date(),
+        }).catch(() => {})
+        const r: ExecuteResult = { output: pf.reason ?? 'Preflight cap exceeded.', tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'preflight' }
+        onDone?.(r); return r
+      }
+    }
   }
 
   const budget = checkDailyBudget(agent.orgId, 2000)

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, space } from './tokens'
 import { Button, Card, SectionLabel, Skeleton } from './ui'
-import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Timeline, type Workspace } from './cockpit/shared'
+import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Preflight, type Secret, type Timeline, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
 import AgentFleet from './cockpit/AgentFleet'
@@ -15,6 +15,7 @@ import TimelineSection from './cockpit/TimelineSection'
 import OrgChart from './cockpit/OrgChart'
 import GoalsSection from './cockpit/GoalsSection'
 import BudgetsSection from './cockpit/BudgetsSection'
+import PreflightSection from './cockpit/PreflightSection'
 import SecretsSection from './cockpit/SecretsSection'
 import WorkspacesSection from './cockpit/WorkspacesSection'
 import PluginsSection from './cockpit/PluginsSection'
@@ -30,6 +31,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [budgets, setBudgets] = useState<Budget[]>([])
+  const [preflight, setPreflight] = useState<Preflight | null>(null)
   const [secrets, setSecrets] = useState<Secret[]>([])
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [plugins, setPlugins] = useState<Plugin[]>([])
@@ -40,18 +42,19 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
   const load = useCallback(async () => {
     try {
       const token = await getToken()
-      const [c, tl, oc, ib, gl, bd, se, ws, pl] = await Promise.all([
+      const [c, tl, oc, ib, gl, bd, pf, se, ws, pl] = await Promise.all([
         api<Cockpit>(`/api/orgs/${orgId}/cockpit`, { token }),
         api<{ timeline: Timeline }>(`/api/orgs/${orgId}/timeline`, { token }),
         api<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, { token }),
         api<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, { token }),
         api<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, { token }),
         api<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, { token }),
+        api<Preflight>(`/api/orgs/${orgId}/preflight`, { token }),
         api<{ secrets: Secret[] }>(`/api/orgs/${orgId}/secrets`, { token }),
         api<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, { token }),
         api<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, { token }),
       ])
-      setData(c); setTimeline(tl.timeline); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
+      setData(c); setTimeline(tl.timeline); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setPreflight(pf); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -149,6 +152,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
           <OrgChart chart={chart} />
           <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
           <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />
+          <PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} />
           <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
           <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
           <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
