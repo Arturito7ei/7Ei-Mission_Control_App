@@ -11,11 +11,11 @@ import multipart from '@fastify/multipart'
 
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from '../routes/all'
 import { knowledgeRoutes } from '../routes/knowledge'
-import { commsRoutes } from '../routes/comms'
+import { commsRoutes, commsWebhookRoutes } from '../routes/comms'
 import { connectorRoutes } from '../routes/connectors'
 import { notificationRoutes } from '../routes/notifications'
 import { jiraRoutes } from '../routes/jira'
-import { jiraWebhookRoutes } from '../routes/jira-webhook'
+import { jiraWebhookRoutes, jiraEventRoutes } from '../routes/jira-webhook'
 import { memoryRoutes } from '../routes/memory'
 import { multiOrgRoutes } from '../routes/multi-org'
 import { usageRoutes } from '../middleware/ratelimit'
@@ -44,17 +44,19 @@ test('[MCA-85 D1] /api/openapi.json is a rich, correctly-authed spec', async () 
     await secured.register(scheduledRoutes)
     await secured.register(credentialRoutes)
     await secured.register(connectorRoutes)
+    await secured.register(jiraRoutes)
+    await secured.register(jiraEventRoutes)
+    await secured.register(commsRoutes)
+    await secured.register(notificationRoutes)
+    await secured.register(memoryRoutes)
+    await secured.register(webhookRoutes)
+    await secured.register(usageRoutes)
+    await secured.register(skillRoutes)
   })
 
-  await app.register(skillRoutes)
-  await app.register(commsRoutes)
-  await app.register(notificationRoutes)
-  await app.register(jiraRoutes)
+  await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
-  await app.register(memoryRoutes)
-  await app.register(usageRoutes)
   await app.register(modelRoutes)
-  await app.register(webhookRoutes)
   await app.register(telegramWebhookRoutes)
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
@@ -93,6 +95,34 @@ test('[MCA-85 D1] /api/openapi.json is a rich, correctly-authed spec', async () 
   // Clerk-protected core route.
   const tasks = spec.paths['/api/orgs/{orgId}/tasks']?.get
   assert.deepEqual(tasks.security, [{ clerkAuth: [] }])
+
+  // MCA-85 auth hardening — formerly-public groups now carry Clerk security in
+  // the generated spec (the spec mirrors the real onRoute auth tags).
+  const nowSecured: [string, string][] = [
+    ['/api/orgs/{orgId}/jira/issues', 'get'],
+    ['/api/orgs/{orgId}/jira/issues', 'post'],
+    ['/api/orgs/{orgId}/jira/events', 'get'],
+    ['/api/orgs/{orgId}/gmail/threads', 'get'],
+    ['/api/orgs/{orgId}/gmail/send', 'post'],
+    ['/api/orgs/{orgId}/comms/inbox', 'get'],
+    ['/api/orgs/{orgId}/meet/create', 'post'],
+    ['/api/orgs/{orgId}/notifications', 'get'],
+    ['/api/notifications/register', 'post'],
+    ['/api/agents/{agentId}/memory', 'get'],
+    ['/api/agents/{agentId}/memory', 'post'],
+    ['/api/orgs/{orgId}/webhooks', 'post'],
+    ['/api/orgs/{orgId}/usage', 'get'],
+    ['/api/skills', 'get'],
+    ['/api/skills', 'post'],
+    ['/api/skills/sync', 'post'],
+  ]
+  for (const [p, m] of nowSecured) {
+    assert.deepEqual(spec.paths[p]?.[m]?.security, [{ clerkAuth: [] }], `${m.toUpperCase()} ${p} must be Clerk-secured`)
+  }
+
+  // Inbound webhook receivers stay public — the external caller has no session.
+  assert.deepEqual(spec.paths['/api/telegram/webhook/{orgId}']?.post?.security, [], 'telegram webhook receiver stays public')
+  assert.deepEqual(spec.paths['/api/jira/webhook/{orgId}']?.post?.security, [], 'jira webhook receiver stays public')
 
   // Public route: no security.
   assert.deepEqual(spec.paths['/api/openapi.json'].get.security, [])
