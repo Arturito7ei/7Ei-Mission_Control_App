@@ -121,6 +121,8 @@ export async function setupDatabase() {
     `CREATE TABLE IF NOT EXISTS task_watchdogs (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, task_id TEXT NOT NULL, kind TEXT NOT NULL, threshold TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'ok', last_message TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_by_user TEXT, created_at INTEGER NOT NULL, last_evaluated_at INTEGER, triggered_at INTEGER)`,
     `CREATE INDEX IF NOT EXISTS idx_task_watchdogs_task ON task_watchdogs(task_id)`,
     `CREATE INDEX IF NOT EXISTS idx_task_watchdogs_enabled ON task_watchdogs(enabled)`,
+    // MCA-83 W5: ask-mode — per-task work mode (execute = full loop | ask = single-turn answer to thread)
+    `ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute'`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

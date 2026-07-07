@@ -101,6 +101,7 @@ export const tasks = sqliteTable('tasks', {
   dueAt: integer('due_at', { mode: 'timestamp' }),
   parentTaskId: text('parent_task_id'),
   inboxState: text('inbox_state').default('none'),   // none|needs_attention|blocked|awaiting_review|done (MCA-PC A3)
+  workMode: text('work_mode').notNull().default('execute'), // execute (full loop) | ask (single-turn, answer to thread) — MCA-83 W5
   goalId: text('goal_id'),                            // links task to a goal (MCA-PC B1)
   workspaceId: text('workspace_id'),                  // execution workspace (MCA-PC D1)
   branch: text('branch'),                             // operator branch

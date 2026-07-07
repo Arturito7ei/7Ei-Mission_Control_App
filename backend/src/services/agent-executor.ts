@@ -16,6 +16,7 @@ import { canAgentRun } from './governance'
 import { enforceAgentBudget } from './budget'
 import { preflightWake, parseCapUsd, estimateInputTokens } from './preflight'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
+import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -90,6 +91,18 @@ export async function executeAgentTask(opts: {
         const r: ExecuteResult = { output: pf.reason ?? 'Preflight cap exceeded.', tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'preflight' }
         onDone?.(r); return r
       }
+    }
+  }
+
+  // MCA-83 W5: ask-mode — a question, not a work order. Route to the lean
+  // single-turn path (no workspace checkout, no RAG/Drive/memory context, no
+  // delegation or tool side-effects); the answer is posted to the ticket thread.
+  // The governance / scoped-budget / preflight guards above still apply. External
+  // runtimes never reach here (they returned above), so this is internal-only.
+  {
+    const t = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId), columns: { workMode: true } })
+    if (isAskMode(t?.workMode)) {
+      return answerAskTask({ agent, taskId, input, conversationHistory, onToken, onDone })
     }
   }
 
@@ -284,6 +297,96 @@ export async function executeAgentTask(opts: {
       kind: 'system_notice', body: `Run failed: ${String(err?.message ?? err).slice(0, 1000)}`, createdAt: new Date(),
     }).catch(() => {})
     await fireWebhook('task.failed', agent.orgId, { taskId, agentId, error: err.message })
+    throw err
+  } finally {
+    releaseTaskSlot(agent.orgId)
+  }
+}
+
+// MCA-83 W5 — the lean ask-mode run. A single LLM turn against a stripped-down
+// prompt (identity + org + memory, no RAG/Drive/goal/delegation machinery); the
+// answer is posted to the thread as an agent-authored comment (the deliverable)
+// and mirrored to task.output. Reuses the daily-budget + concurrency guards but
+// none of the workspace/checkout setup. Wake-on-comment (W3) re-enters through
+// executeAgentTask → here, so an answered ask becomes a thread you can keep asking.
+export async function answerAskTask(opts: {
+  agent: typeof schema.agents.$inferSelect
+  taskId: string; input: string
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  onToken?: (t: string) => void; onDone?: (r: ExecuteResult) => void
+}): Promise<ExecuteResult> {
+  const { agent, taskId, input, conversationHistory = [], onToken, onDone } = opts
+
+  const dailyBudget = checkDailyBudget(agent.orgId, 2000)
+  if (!dailyBudget.allowed) throw new Error(`Daily budget exceeded. Remaining: $${dailyBudget.remaining.cost.toFixed(4)}`)
+  if (!acquireTaskSlot(agent.orgId)) throw new Error('Too many concurrent tasks. Please wait.')
+
+  try {
+    await db.update(schema.tasks).set({ status: 'in_progress' }).where(eq(schema.tasks.id, taskId))
+    await db.update(schema.agents).set({ status: 'active' }).where(eq(schema.agents.id, agent.id))
+    await fireWebhook('agent.active', agent.orgId, { agentId: agent.id, agentName: agent.name })
+
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, agent.orgId) })
+    const memory = await getMemory(agent.id)
+    const memoryBlock = formatMemoryForPrompt(memory)
+
+    // Reporting line (cheap, local) — helps the answer speak from the right seat.
+    const hierAgents = await db.select({ id: schema.agents.id, name: schema.agents.name, reportsTo: schema.agents.reportsTo })
+      .from(schema.agents).where(eq(schema.agents.orgId, agent.orgId))
+    const hierarchy = {
+      title: agent.title,
+      manager: agent.reportsTo ? (hierAgents.find(a => a.id === agent.reportsTo)?.name ?? null) : null,
+      reports: hierAgents.filter(a => a.reportsTo === agent.id).map(a => a.name),
+    }
+
+    const systemPrompt = buildAskSystemPrompt(agent, { org, memoryBlock, hierarchy })
+    const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
+    const provider = agent.llmProvider ?? 'anthropic'
+    const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
+    const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
+    const messages  = [...conversationHistory, { role: 'user' as const, content: input }]
+    const start = Date.now()
+
+    const result = await streamLLM({
+      provider, model, system: systemPrompt, messages, orgApiKey, baseURL,
+      onToken: (chunk) => onToken?.(chunk),
+    })
+
+    const tokensUsed = result.usage.inputTokens + result.usage.outputTokens
+    const costUsd    = calcCost(model, result.usage.inputTokens, result.usage.outputTokens)
+    const durationMs = Date.now() - start
+    const answer     = result.output.trim() || '(no answer)'
+
+    recordUsage(agent.orgId, tokensUsed, costUsd)
+
+    // The answer IS the deliverable — post it to the thread as an agent comment,
+    // and mirror to output so the drawer/inbox show it without a comment fetch.
+    await db.insert(schema.taskComments).values({
+      id: randomUUID(), orgId: agent.orgId, taskId, authorAgentId: agent.id, authorUser: null,
+      kind: ASK_ANSWER_KIND, body: answer.slice(0, 8000), createdAt: new Date(),
+    }).catch(() => {})
+    await db.update(schema.tasks).set({
+      output: answer, status: 'done', tokensUsed, costUsd, durationMs, llmModel: model, completedAt: new Date(),
+    }).where(eq(schema.tasks.id, taskId))
+    await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agent.id))
+
+    await fireWebhook('message.created', agent.orgId, { agentId: agent.id, taskId, role: 'assistant', contentLength: answer.length })
+    await fireWebhook('task.done', agent.orgId, { taskId, agentId: agent.id, agentName: agent.name, tokensUsed, costUsd })
+    await fireWebhook('agent.idle', agent.orgId, { agentId: agent.id, agentName: agent.name })
+    if (org?.ownerId) sendPushNotification(org.ownerId, `${agent.name} answered`, answer.slice(0, 100), { agentId: agent.id, taskId }).catch(() => {})
+
+    const r: ExecuteResult = { output: answer, tokensUsed, costUsd, durationMs, provider }
+    onDone?.(r)
+    return r
+  } catch (err: any) {
+    const msg = `Ask failed: ${String(err?.message ?? err).slice(0, 1000)}`
+    await db.update(schema.tasks).set({ status: 'failed', output: msg } as any).where(eq(schema.tasks.id, taskId))
+    await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agent.id))
+    await db.insert(schema.taskComments).values({
+      id: randomUUID(), orgId: agent.orgId, taskId, authorAgentId: null, authorUser: null,
+      kind: 'system_notice', body: msg, createdAt: new Date(),
+    }).catch(() => {})
+    await fireWebhook('task.failed', agent.orgId, { taskId, agentId: agent.id, error: err.message })
     throw err
   } finally {
     releaseTaskSlot(agent.orgId)

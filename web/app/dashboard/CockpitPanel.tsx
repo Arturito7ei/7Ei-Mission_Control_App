@@ -81,6 +81,12 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
     getToken().then(token => api(`/api/tasks/${taskId}/read`, { token, method: 'POST' }).catch(() => {}))
     onOpenTask?.(taskId)
   }
+  // W5 ask-mode: fire a single-turn question at an agent, open its task drawer so
+  // the answer streams into the thread, then reload once it lands.
+  const askAgent = async (agentId: string, question: string) => {
+    const r = await api<{ taskId?: string }>(`/api/agents/${agentId}/ask`, { token: await getToken(), method: 'POST', body: JSON.stringify({ question }) })
+    if (r?.taskId) { onOpenTask?.(r.taskId); setTimeout(() => load(), 1500) }
+  }
   const agentControl = async (id: string, verb: 'pause' | 'resume' | 'terminate') => {
     try { await api(`/api/agents/${id}/${verb}`, { token: await getToken(), method: 'POST' }) } catch {}
     load()
@@ -147,7 +153,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
       ) : (
         <>
           <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} />
-          <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
+          <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} />
           <TimelineSection timeline={timeline} />
           <OrgChart chart={chart} />
           <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
