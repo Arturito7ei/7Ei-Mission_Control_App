@@ -38,8 +38,9 @@ export function buildRequest(args) {
 }
 
 export const HELP = `7ei-mc — operator CLI for the 7Ei Mission Control agent API
-env: MC_BASE_URL (default https://7ei-backend.fly.dev), MC_AGENT_TOKEN (required)
+env: MC_BASE_URL (default https://7ei-backend.fly.dev), MC_AGENT_TOKEN (required for agent cmds)
 
+  onboard [--help]                       mint an org + external agent + token (Clerk-authed)
   openapi                                fetch the OpenAPI 3.1 spec (public, no token)
   me                                     who am I
   tasks [assigned|in_progress|open|all]  my queue

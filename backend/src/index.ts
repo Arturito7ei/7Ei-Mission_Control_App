@@ -28,6 +28,7 @@ import { clerkAuth } from './middleware/clerk-auth'
 import { telemetryPlugin } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
+import { buildLlmsTxt } from './services/llms-txt'
 
 // Keep in sync with package.json "version" — surfaced in /api/openapi.json + /api/health.
 const API_VERSION = '0.6.0'
@@ -160,6 +161,13 @@ async function start() {
     routes: collectedRoutes(),
     docs: endpointDocs(),
   }))
+
+  // Agent-facing install/context doc (MCA-85 D2) — https://llmstxt.org. Public,
+  // served as markdown; a static mirror lives at web/public/llms.txt for 7ei.ai.
+  app.get('/llms.txt', async (_req, reply) => {
+    reply.header('Content-Type', 'text/markdown; charset=utf-8')
+    return buildLlmsTxt({ apiUrl: process.env.PUBLIC_URL || 'https://7ei-backend.fly.dev' })
+  })
 
   app.get('/ready', async (_req, reply) => {
     // Could check DB connectivity here
