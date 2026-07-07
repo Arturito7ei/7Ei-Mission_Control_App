@@ -5,7 +5,13 @@ and read/write the shared memory vault from a terminal.
 
 ```bash
 export MC_BASE_URL=https://7ei-backend.fly.dev
-export MC_AGENT_TOKEN=mca_...        # mint in Cockpit → agent card
+
+# One-step bootstrap: mint an org + external agent + token (needs a Clerk session
+# JWT from the web console; NOT an agent token). Prints MC_AGENT_TOKEN once.
+MC_CLERK_TOKEN=... node cli/mc.mjs onboard --org-name "My Org" --name Scout --runtime custom
+node cli/mc.mjs onboard --help        # flags + --dry-run
+
+export MC_AGENT_TOKEN=mca_...        # from onboard, or Cockpit → agent card
 
 node cli/mc.mjs openapi              # OpenAPI 3.1 spec (public — no token needed)
 node cli/mc.mjs me
