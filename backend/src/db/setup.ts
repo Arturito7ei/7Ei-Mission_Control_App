@@ -117,6 +117,10 @@ export async function setupDatabase() {
     `ALTER TABLE approval_requests ADD COLUMN decision_note TEXT`,
     `CREATE TABLE IF NOT EXISTS task_reads (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, user_id TEXT NOT NULL, task_id TEXT NOT NULL, seen_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_task_reads ON task_reads(org_id, user_id)`,
+    // MCA-83 W4: task watchdogs — declarative per-task checks evaluated on the scheduler tick
+    `CREATE TABLE IF NOT EXISTS task_watchdogs (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, task_id TEXT NOT NULL, kind TEXT NOT NULL, threshold TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'ok', last_message TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_by_user TEXT, created_at INTEGER NOT NULL, last_evaluated_at INTEGER, triggered_at INTEGER)`,
+    `CREATE INDEX IF NOT EXISTS idx_task_watchdogs_task ON task_watchdogs(task_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_task_watchdogs_enabled ON task_watchdogs(enabled)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

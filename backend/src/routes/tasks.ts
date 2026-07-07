@@ -14,6 +14,7 @@ import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
 import { rollupCost } from '../services/worksurface'
 import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../services/thread'
+import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
@@ -474,6 +475,44 @@ export async function taskRoutes(app: FastifyInstance) {
       ? await db.query.agents.findFirst({ where: eq(schema.agents.id, card.ownerAgentId) })
       : null
     return { recovery: { ...card, ownerName: owner?.name ?? null, ownerEmoji: owner?.avatarEmoji ?? null } }
+  })
+
+  // MCA-83 W4 — task watchdogs: declarative checks the operator attaches to a
+  // task; the scheduler evaluates them each tick and posts a system-notice comment
+  // when one flips state. Read/create/toggle/remove here; evaluation lives in the
+  // scheduler sweep (services/watchdogs.ts).
+  app.get('/api/tasks/:taskId/watchdogs', async (req) => {
+    const { taskId } = req.params as any
+    const watchdogs = await db.select().from(schema.taskWatchdogs)
+      .where(eq(schema.taskWatchdogs.taskId, taskId)).orderBy(desc(schema.taskWatchdogs.createdAt))
+    return { watchdogs }
+  })
+  app.post('/api/tasks/:taskId/watchdogs', async (req, reply) => {
+    const { taskId } = req.params as any
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    let spec
+    try { spec = parseWatchdogSpec((req.body ?? {}) as any) }
+    catch (e: any) { return reply.code(400).send({ error: e?.message ?? 'Invalid watchdog' }) }
+    const watchdog = {
+      id: randomUUID(), orgId: task.orgId, taskId, kind: spec.kind, threshold: spec.threshold,
+      state: 'ok', lastMessage: null, enabled: true,
+      createdByUser: (req as any).userId ?? null, createdAt: new Date(), lastEvaluatedAt: null, triggeredAt: null,
+    }
+    await db.insert(schema.taskWatchdogs).values(watchdog as any)
+    reply.code(201); return { watchdog }
+  })
+  app.patch('/api/watchdogs/:id', async (req) => {
+    const { id } = req.params as any
+    const b = (req.body ?? {}) as any
+    const patch: Record<string, unknown> = {}
+    if (typeof b.enabled === 'boolean') patch.enabled = b.enabled
+    if (Object.keys(patch).length) await db.update(schema.taskWatchdogs).set(patch as any).where(eq(schema.taskWatchdogs.id, id))
+    return { ok: true }
+  })
+  app.delete('/api/watchdogs/:id', async (req, reply) => {
+    await db.delete(schema.taskWatchdogs).where(eq(schema.taskWatchdogs.id, (req.params as any).id))
+    reply.code(204)
   })
 
   app.patch('/api/tasks/:taskId', async (req) => {

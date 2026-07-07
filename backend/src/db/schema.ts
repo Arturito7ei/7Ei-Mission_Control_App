@@ -281,6 +281,25 @@ export const taskReads = sqliteTable('task_reads', {
   seenAt: integer('seen_at', { mode: 'timestamp' }).notNull(),
 })
 
+// MCA-83 W4: task watchdogs — declarative checks attached to a task, evaluated on
+// the scheduler tick, results posted in-thread as system-notice comments. Edge-
+// triggered (`state` = ok|triggered): a notice fires only when a check flips
+// state, so long-running tasks don't spam the thread. "Stop babysitting."
+export const taskWatchdogs = sqliteTable('task_watchdogs', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  taskId: text('task_id').notNull(),
+  kind: text('kind').notNull(),                       // runtime | cost | no_activity | status
+  threshold: text('threshold').notNull(),             // minutes | usd | status value (serialized)
+  state: text('state').notNull().default('ok'),       // ok | triggered
+  lastMessage: text('last_message'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdByUser: text('created_by_user'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  lastEvaluatedAt: integer('last_evaluated_at', { mode: 'timestamp' }),
+  triggeredAt: integer('triggered_at', { mode: 'timestamp' }),
+})
+
 export const skills = sqliteTable('skills', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

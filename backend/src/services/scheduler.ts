@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { sendPushNotification } from './push'
 import { runHeartbeatSweep } from './heartbeat-engine'
+import { runWatchdogSweep } from './watchdogs'
 import {
   resolveVaultForOrg, formatKvExport, appendSection,
   agentKvPath, agentRecentPath, agentArchiveRecentPath, agentLessonsPath, slugifyAgentName,
@@ -56,6 +57,9 @@ async function runDueTasks() {
     }
     // MCA-PC C1: heartbeat engine sweep (orphan recovery, status recompute, wakes).
     runHeartbeatSweep().catch(err => console.error('Heartbeat sweep error:', err))
+    // MCA-83 W4: task watchdogs — evaluate declarative per-task checks, post
+    // in-thread notices on a state flip. Never blocks the tick.
+    runWatchdogSweep().catch(err => console.error('Watchdog sweep error:', err))
     // MCA-75: nightly memory KV export (once per day, on the 03:00 UTC tick).
     maybeRunNightlyKvExport(now).catch(err => console.error('KV export error:', err))
     // MCA-76: weekly memory consolidation (Sundays at/after 04:00 UTC, once per day).
