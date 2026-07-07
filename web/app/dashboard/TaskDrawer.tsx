@@ -14,7 +14,7 @@ import RecoveryCard, { type Recovery } from './RecoveryCard'
 
 type Getter = () => Promise<string | null>
 
-type Task = { id: string; title: string; status: string; agentId?: string | null; input?: string | null; output?: string | null; labels?: string | null; costUsd?: number | null; tokensUsed?: number | null }
+type Task = { id: string; title: string; status: string; agentId?: string | null; input?: string | null; output?: string | null; labels?: string | null; costUsd?: number | null; tokensUsed?: number | null; workMode?: string | null }
 type TL = { kind: string; at: number; by?: string | null; text?: string; ref?: string }
 type Comment = { id: string; body: string; kind?: string | null; authorAgentId?: string | null; authorUser?: string | null; authorName?: string | null; authorEmoji?: string | null; createdAt: number }
 type Attach = { id: string; kind: string; name: string; url?: string | null }
@@ -149,6 +149,9 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
             <div style={{ fontSize: text.lg.fontSize, lineHeight: text.lg.lineHeight, fontWeight: 700 }}>{task?.title ?? 'Task'}</div>
             <div style={{ display: 'flex', gap: space.md, alignItems: 'center', marginTop: space.xs, flexWrap: 'wrap' }}>
               <span style={{ ...s.pill, color: task?.status ? statusColor(task.status) : tk.muted }}>{task?.status ? `${statusIcon(task.status)} ${task.status}` : '—'}</span>
+              {/* W5: ask-mode ticket = a question answered in-thread (no workspace
+                  run). Badge it so the operator reads the thread, not "output". */}
+              {task?.workMode === 'ask' && <span style={s.askPill} title="Ask mode — a single-turn answer in this thread, no workspace run">💬 Ask</span>}
               {labels.map(l => <span key={l} style={s.label}>{l}</span>)}
               {hasRollup
                 // W2: parent shows the whole subtree's spend, not just its own slice.
@@ -296,6 +299,7 @@ const s: Record<string, React.CSSProperties> = {
   woke: { marginTop: space.md, padding: space.sm, borderLeft: '3px solid var(--accent)', background: 'var(--accent-dim)', borderRadius: tk.r.sm, fontSize: text.sm.fontSize, color: tk.accent },
   pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '1px 8px' },
   label: { fontSize: text.xs.fontSize, color: tk.textDim, background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: 6, padding: '1px 7px' },
+  askPill: { fontSize: text.xs.fontSize, fontWeight: 700, color: tk.accent, background: 'var(--accent-dim)', border: '1px solid var(--accent)', borderRadius: tk.r.pill, padding: '1px 8px' },
   wdRemove: { background: 'transparent', border: 'none', color: tk.muted, cursor: 'pointer', fontSize: text.sm.fontSize, padding: '0 4px', flexShrink: 0 },
   muted: { color: tk.muted, fontSize: text.xs.fontSize },
   mono: { fontFamily: 'monospace', fontSize: text.sm.fontSize, color: tk.textDim, background: tk.bg, border: `1px solid ${tk.lineSoft}`, borderRadius: tk.r.sm, padding: space.md, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },

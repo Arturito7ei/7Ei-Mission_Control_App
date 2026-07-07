@@ -14,6 +14,7 @@ import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
 import { rollupCost } from '../services/worksurface'
 import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../services/thread'
+import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
@@ -337,7 +338,7 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/tasks', async (req, reply) => {
     const { orgId } = req.params as any
     const body = req.body as any
-    const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
+    const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', workMode: normalizeWorkMode(body.workMode), llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
     await db.insert(schema.tasks).values(task)
     reply.code(201); return { task }
   })
@@ -549,6 +550,30 @@ export async function taskRoutes(app: FastifyInstance) {
     }).catch(err => console.warn('Task execution failed:', err))
 
     return { taskId, status: 'executing' }
+  })
+
+  // MCA-83 W5 — ask an agent a question. Creates an ask-mode task and fires the
+  // lean single-turn run; the answer lands in the task thread (poll
+  // GET /api/tasks/:id/comments) and mirrors to task.output. Ergonomic entry point
+  // for the UI/CLI — the plain execute path also honours a task's stored workMode.
+  app.post('/api/agents/:agentId/ask', async (req, reply) => {
+    const { agentId } = req.params as any
+    const b = (req.body ?? {}) as any
+    const question = String(b.question ?? b.input ?? '').trim()
+    if (!question) return reply.code(400).send({ error: 'question is required' })
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    const task = {
+      id: randomUUID(), orgId: agent.orgId, agentId, projectId: b.projectId ?? null,
+      title: (b.title ? String(b.title) : question).slice(0, 200), input: question, output: null,
+      status: 'pending', priority: 'medium', kanbanColumn: 'todo', workMode: 'ask',
+      llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: null,
+      dueAt: null, blockedBy: null, createdAt: new Date(), completedAt: null,
+    }
+    await db.insert(schema.tasks).values(task as any)
+    reply.code(202)
+    executeAgentTask({ agentId, taskId: task.id, input: question }).catch(err => console.warn('Ask execution failed:', err))
+    return { taskId: task.id, status: 'asking' }
   })
 
   // CSV export
