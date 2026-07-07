@@ -11,6 +11,7 @@ import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
 import { nextUp } from '../services/worksurface'
 import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../services/timeline'
+import { unreadTaskIds } from '../services/receipts'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -343,9 +344,17 @@ export async function agentRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/cockpit', async (req) => {
     const { orgId } = req.params as any
     const now = Date.now()
+    const userId = (req as any).userId ?? 'anon'
     const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
-    const tasks = await db.select().from(schema.tasks)
-      .where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(200)
+    const [rawTasks, reads] = await Promise.all([
+      db.select().from(schema.tasks)
+        .where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(200),
+      // V2 board read receipts: the operator's seen-marks, to flag unread cards.
+      db.select({ taskId: schema.taskReads.taskId, seenAt: schema.taskReads.seenAt }).from(schema.taskReads)
+        .where(and(eq(schema.taskReads.orgId, orgId), eq(schema.taskReads.userId, userId))),
+    ])
+    const unread = unreadTaskIds(rawTasks as any, reads as any)
+    const tasks = rawTasks.map(t => ({ ...t, unread: unread.has(t.id) }))
     const roster = agents.map(a => ({
       id: a.id, name: a.name, role: a.role, runtime: a.runtime,
       llmProvider: a.llmProvider, llmModel: a.llmModel, status: a.status,

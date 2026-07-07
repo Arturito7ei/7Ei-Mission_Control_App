@@ -13,7 +13,7 @@ export type CAgent = {
   id: string; name: string; role: string; runtime: string; llmProvider: string; llmModel: string
   status: string; agentType: string; avatarEmoji: string; heartbeat: string; lastHeartbeatAt: number | null
 }
-export type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string }
+export type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string; unread?: boolean }
 // W2: the single next task the office should pick up (unblocked, highest priority).
 export type NextUp = { id: string; title: string; agentId: string | null; priority: string; blockedCleared: number }
 export type Cockpit = { agents: CAgent[]; tasks: CTask[]; nextUp: NextUp | null; summary: Record<string, number>; generatedAt: string }
@@ -22,9 +22,10 @@ export type TLBlock = { runId: string | null; taskId: string | null; title: stri
 export type TLLane = { agentId: string; name: string; avatarEmoji: string; heartbeat: string; status: string; lastHeartbeatAt: number | null; nextWakeAt: number | null; blocks: TLBlock[]; runCount: number; totalCost: number; activeMs: number }
 export type Timeline = { now: number; windowStart: number; windowEnd: number; windowMs: number; lanes: TLLane[] }
 export type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
-export type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
+export type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string; retryable?: boolean; error?: string | null }
 export type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
-export type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null }
+export type ApprovalDecision = 'approved' | 'rejected' | 'revision_requested'
+export type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null; decisionNote?: string | null }
 export type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
 export type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
 export type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }

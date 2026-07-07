@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, space } from './tokens'
 import { Button, Card, SectionLabel, Skeleton } from './ui'
-import { sx, type Approval, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Timeline, type Workspace } from './cockpit/shared'
+import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Timeline, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
 import AgentFleet from './cockpit/AgentFleet'
@@ -22,7 +22,7 @@ import TaskBoard from './cockpit/TaskBoard'
 import AddAgentWizard from './cockpit/AddAgentWizard'
 import HireDialog from './cockpit/HireDialog'
 
-export default function CockpitPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
+export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void }) {
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [timeline, setTimeline] = useState<Timeline | null>(null)
@@ -61,9 +61,22 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
     setInbox(x => x.filter(i => i.taskId !== taskId))
     try { await api(`/api/orgs/${orgId}/inbox/dismiss`, { token: await getToken(), method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
   }
-  const decide = async (id: string, decision: 'approved' | 'rejected') => {
+  const decide = async (id: string, decision: ApprovalDecision, note?: string) => {
     setApprovals(x => x.filter(a => a.id !== id))
-    try { await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision }) }) } catch {}
+    try { await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision, note }) }) } catch {}
+  }
+  // V2: retry a failed inbox row in place — re-execute, drop it, reload once done.
+  const retry = async (taskId: string) => {
+    setInbox(x => x.filter(i => i.taskId !== taskId))
+    try { await api(`/api/tasks/${taskId}/execute`, { token: await getToken(), method: 'POST' }) } catch {}
+    load()
+  }
+  // V2 board read receipts: opening a task marks it read (optimistic clear +
+  // durable receipt) then hands off to the page-level drawer.
+  const openTask = (taskId: string) => {
+    setData(d => d ? { ...d, tasks: d.tasks.map(t => t.id === taskId ? { ...t, unread: false } : t) } : d)
+    getToken().then(token => api(`/api/tasks/${taskId}/read`, { token, method: 'POST' }).catch(() => {}))
+    onOpenTask?.(taskId)
   }
   const agentControl = async (id: string, verb: 'pause' | 'resume' | 'terminate') => {
     try { await api(`/api/agents/${id}/${verb}`, { token: await getToken(), method: 'POST' }) } catch {}
@@ -130,7 +143,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         ))
       ) : (
         <>
-          <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} />
+          <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} />
           <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
           <TimelineSection timeline={timeline} />
           <OrgChart chart={chart} />
@@ -139,7 +152,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
           <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
           <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
           <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
-          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} />
+          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} onOpen={openTask} />
         </>
       )}
 
