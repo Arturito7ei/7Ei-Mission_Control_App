@@ -13,6 +13,7 @@ import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead
 import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
 import { rollupCost } from '../services/worksurface'
+import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../services/thread'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -334,7 +335,18 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get('/api/tasks/:taskId/comments', async (req) => {
     const { taskId } = req.params as any
     const comments = await db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId)).orderBy(schema.taskComments.createdAt)
-    return { comments }
+    // W3: enrich agent-authored comments with name + emoji so the thread reads as a
+    // conversation, not "agent 3f2a1c…".
+    const agentIds = [...new Set(comments.map(c => c.authorAgentId).filter(Boolean) as string[])]
+    const agents = agentIds.length
+      ? await db.select({ id: schema.agents.id, name: schema.agents.name, avatarEmoji: schema.agents.avatarEmoji }).from(schema.agents).where(inArray(schema.agents.id, agentIds))
+      : []
+    const amap = new Map(agents.map(a => [a.id, a]))
+    return { comments: comments.map(c => ({
+      ...c,
+      authorName: c.authorAgentId ? (amap.get(c.authorAgentId)?.name ?? null) : null,
+      authorEmoji: c.authorAgentId ? (amap.get(c.authorAgentId)?.avatarEmoji ?? '🤖') : null,
+    })) }
   })
   app.post('/api/tasks/:taskId/comments', async (req, reply) => {
     const { taskId } = req.params as any
@@ -342,9 +354,30 @@ export async function taskRoutes(app: FastifyInstance) {
     if (!b.body) return reply.code(400).send({ error: 'body required' })
     const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
     if (!task) return reply.code(404).send({ error: 'Task not found' })
-    const row = { id: randomUUID(), orgId: task.orgId, taskId, authorAgentId: null, authorUser: (req as any).userId ?? null, body: String(b.body).slice(0, 4000), createdAt: new Date() }
+    const row = { id: randomUUID(), orgId: task.orgId, taskId, authorAgentId: null, authorUser: (req as any).userId ?? null, kind: 'user', body: String(b.body).slice(0, 4000), createdAt: new Date() }
     await db.insert(schema.taskComments).values(row)
-    reply.code(201); return { comment: row }
+
+    // MCA-83 W3 — wake-on-comment: a human comment on an idle task re-runs the
+    // assigned agent with the comment as a follow-up and the prior thread as
+    // context. executeAgentTask owns the status/run transitions (internal → LLM
+    // loop, external → re-notify); we only decide whether to fire.
+    const runs = await db.select({ status: schema.agentRuns.status }).from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId))
+    const decision = decideWake({
+      status: task.status, hasAgent: !!task.agentId, activeRun: hasActiveRun(runs),
+      authorIsUser: true, requested: typeof b.wake === 'boolean' ? b.wake : undefined,
+    })
+    if (decision.wake && task.agentId) {
+      const prior = await db.select().from(schema.taskComments).where(eq(schema.taskComments.taskId, taskId))
+      const history = threadHistory(prior.filter((c) => c.id !== row.id))
+      // Durable marker so the async operator sees the comment relit the task.
+      await db.insert(schema.taskComments).values({
+        id: randomUUID(), orgId: task.orgId, taskId, authorAgentId: null, authorUser: null,
+        kind: 'system_notice', body: 'Agent woken to address the comment above.', createdAt: new Date(),
+      }).catch(() => {})
+      executeAgentTask({ agentId: task.agentId, taskId, input: buildWakeInput(task.title, row.body), conversationHistory: history })
+        .catch(err => console.warn('Wake-on-comment execution failed:', err))
+    }
+    reply.code(201); return { comment: row, woke: decision.wake, wakeReason: decision.reason }
   })
   app.get('/api/tasks/:taskId/runs', async (req) => {
     const { taskId } = req.params as any

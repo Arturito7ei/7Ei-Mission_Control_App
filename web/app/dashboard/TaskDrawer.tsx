@@ -14,9 +14,9 @@ import RecoveryCard, { type Recovery } from './RecoveryCard'
 
 type Getter = () => Promise<string | null>
 
-type Task = { id: string; title: string; status: string; input?: string | null; output?: string | null; labels?: string | null; costUsd?: number | null; tokensUsed?: number | null }
+type Task = { id: string; title: string; status: string; agentId?: string | null; input?: string | null; output?: string | null; labels?: string | null; costUsd?: number | null; tokensUsed?: number | null }
 type TL = { kind: string; at: number; by?: string | null; text?: string; ref?: string }
-type Comment = { id: string; body: string; kind?: string | null; authorAgentId?: string | null; authorUser?: string | null; createdAt: number }
+type Comment = { id: string; body: string; kind?: string | null; authorAgentId?: string | null; authorUser?: string | null; authorName?: string | null; authorEmoji?: string | null; createdAt: number }
 type Attach = { id: string; kind: string; name: string; url?: string | null }
 type Run = { id: string; status: string; startedAt: number; endedAt?: number | null; tokensUsed?: number | null; costUsd?: number | null }
 type Rollup = { ownCost: number; subtaskCost: number; totalCost: number; ownTokens: number; subtaskTokens: number; totalTokens: number; subtaskCount: number }
@@ -36,6 +36,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const [retrying, setRetrying] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [woke, setWoke] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const commentRef = useRef<HTMLInputElement>(null)
 
@@ -61,11 +62,17 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
     window.addEventListener('keydown', onEsc); return () => window.removeEventListener('keydown', onEsc)
   }, [onClose])
 
+  // W3 wake-on-comment: posting a comment on an idle task re-runs the agent with
+  // the comment as a follow-up. The server decides + reports `woke`; if it woke,
+  // reload after a beat so the new run + "Agent woken" notice show up.
   const addComment = async () => {
     if (!draft.trim()) return
-    setBusy(true); setErr(null)
-    try { await api(`/api/tasks/${taskId}/comments`, { token: await getToken(), method: 'POST', body: JSON.stringify({ body: draft.trim() }) }); setDraft(''); await load() }
-    catch (e: any) { setErr(e?.message ?? 'Failed') }
+    setBusy(true); setErr(null); setWoke(false)
+    try {
+      const r = await api<{ woke?: boolean }>(`/api/tasks/${taskId}/comments`, { token: await getToken(), method: 'POST', body: JSON.stringify({ body: draft.trim() }) })
+      setDraft('')
+      if (r?.woke) { setWoke(true); setTimeout(() => load(), 1500) } else await load()
+    } catch (e: any) { setErr(e?.message ?? 'Failed') }
     setBusy(false)
   }
 
@@ -79,6 +86,12 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
     } catch (e: any) { setErr(e?.message ?? 'Retry failed'); setRetrying(false) }
   }
   const focusComment = () => { commentRef.current?.focus(); commentRef.current?.scrollIntoView({ block: 'center' }) }
+
+  // W3: mirror the server's wake gate so the composer can promise it up front —
+  // a comment on an idle task (with an agent, no in-flight run) will wake it.
+  const WAKEABLE = ['pending', 'assigned', 'blocked', 'failed', 'done']
+  const agentBusy = runs.some(r => r.status === 'running')
+  const wakeable = !!task?.agentId && !agentBusy && WAKEABLE.includes(task?.status ?? '')
 
   const hasRollup = !!rollup && rollup.subtaskCount > 0 && rollup.totalCost > 0
   const labels: string[] = (() => { try { return task?.labels ? JSON.parse(task.labels) : [] } catch { return [] } })()
@@ -167,14 +180,16 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
               </div>
             ) : (
               <div key={c.id} style={s.comment}>
-                <div style={s.muted}>{c.authorAgentId ? `agent ${c.authorAgentId.slice(0, 8)}` : (c.authorUser ?? 'user')} · {fmt(c.createdAt)}</div>
+                <div style={s.muted}>{c.authorAgentId ? `${c.authorEmoji ?? '🤖'} ${c.authorName ?? `agent ${c.authorAgentId.slice(0, 8)}`}` : (c.authorUser ?? 'user')} · {fmt(c.createdAt)}</div>
                 <div style={{ fontSize: text.md.fontSize, marginTop: 2 }}>{c.body}</div>
               </div>
             ))}
+            {woke && <div style={s.woke}><span aria-hidden>↩</span> Comment posted — agent woken to address it. Re-running…</div>}
             <div style={{ display: 'flex', gap: space.md, marginTop: space.md }}>
-              <TextInput ref={commentRef} style={{ flex: 1 }} placeholder="Add a comment…" aria-label="Add a comment" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addComment() }} />
-              <Button variant="primary" disabled={busy} onClick={addComment}>{busy ? '…' : 'Comment'}</Button>
+              <TextInput ref={commentRef} style={{ flex: 1 }} placeholder={wakeable ? 'Comment & wake the agent…' : 'Add a comment…'} aria-label="Add a comment" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addComment() }} />
+              <Button variant="primary" disabled={busy} onClick={addComment}>{busy ? '…' : wakeable ? 'Comment & wake' : 'Comment'}</Button>
             </div>
+            {wakeable && <div style={{ ...s.muted, marginTop: space.xs }}>↩ Posting will wake the agent to pick this task back up.</div>}
           </Section>
         </div>
       </aside>
@@ -199,6 +214,7 @@ const s: Record<string, React.CSSProperties> = {
   tlRow: { display: 'flex', gap: space.md, alignItems: 'center', fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight, padding: `${space.xs}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
   comment: { padding: `${space.sm}px 0`, borderBottom: `1px solid ${tk.lineSoft}` },
   notice: { padding: space.sm, marginBottom: space.xs, borderLeft: '3px solid var(--danger-line)', background: 'var(--danger-bg)', borderRadius: tk.r.sm },
+  woke: { marginTop: space.md, padding: space.sm, borderLeft: '3px solid var(--accent)', background: 'var(--accent-dim)', borderRadius: tk.r.sm, fontSize: text.sm.fontSize, color: tk.accent },
   pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '1px 8px' },
   label: { fontSize: text.xs.fontSize, color: tk.textDim, background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: 6, padding: '1px 7px' },
   muted: { color: tk.muted, fontSize: text.xs.fontSize },
