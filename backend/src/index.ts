@@ -9,11 +9,11 @@ import { setupDatabase } from './db/setup'
 import { dbClient, db, schema } from './db/client'
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from './routes/all'
 import { knowledgeRoutes } from './routes/knowledge'
-import { commsRoutes } from './routes/comms'
+import { commsRoutes, commsWebhookRoutes } from './routes/comms'
 import { connectorRoutes } from './routes/connectors'
 import { notificationRoutes } from './routes/notifications'
 import { jiraRoutes } from './routes/jira'
-import { jiraWebhookRoutes } from './routes/jira-webhook'
+import { jiraWebhookRoutes, jiraEventRoutes } from './routes/jira-webhook'
 import { memoryRoutes } from './routes/memory'
 import { multiOrgRoutes } from './routes/multi-org'
 import { usageRoutes } from './middleware/ratelimit'
@@ -84,20 +84,28 @@ async function start() {
     await secured.register(scheduledRoutes)
     await secured.register(credentialRoutes)
     await secured.register(connectorRoutes)
+    // MCA-85 auth hardening — these route groups are org/agent-scoped (they read
+    // or mutate tenant data, or act on the org's behalf) and were previously
+    // registered public. They now require a Clerk JWT like the rest of the app.
+    await secured.register(jiraRoutes)            // /orgs/:orgId/jira/*
+    await secured.register(jiraEventRoutes)       // /orgs/:orgId/jira/{events,live,webhook-url}
+    await secured.register(commsRoutes)           // inbox, gmail, telegram send, meet
+    await secured.register(notificationRoutes)    // /orgs/:orgId/notifications + push register
+    await secured.register(memoryRoutes)          // /agents/:agentId/memory
+    await secured.register(webhookRoutes)         // outbound webhook config (SSRF-sensitive)
+    await secured.register(usageRoutes)           // /orgs/:orgId/usage, /limits
+    await secured.register(skillRoutes)           // skill library read + write/sync
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
-  // Webhooks (Jira/Telegram), the Google OAuth redirect callback, and the
-  // skill library are invoked without a Clerk session JWT, so they stay open.
-  await app.register(skillRoutes)
-  await app.register(commsRoutes)
-  await app.register(notificationRoutes)
-  await app.register(jiraRoutes)
-  await app.register(jiraWebhookRoutes)
-  await app.register(memoryRoutes)
-  await app.register(usageRoutes)
+  // These are called WITHOUT a Clerk session JWT by design: inbound webhooks
+  // (Jira/Telegram receivers — the caller is the external service, not a user),
+  // the Google OAuth redirect callback, the static model catalogue, the agent
+  // API (its own token auth), and the routine URL-token trigger. Everything that
+  // reads or writes tenant data lives in the secured scope above.
+  await app.register(commsWebhookRoutes)   // POST /telegram/webhook/:orgId (receiver)
+  await app.register(jiraWebhookRoutes)    // POST /jira/webhook/:orgId (receiver)
   await app.register(modelRoutes)
-  await app.register(webhookRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
   // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope

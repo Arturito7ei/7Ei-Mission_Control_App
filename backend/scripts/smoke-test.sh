@@ -31,7 +31,7 @@ check "Ready endpoint" "$BASE/ready" "200"
 check "Create org" "$BASE/api/orgs" "201" "POST" '{"name":"Smoke Test Org","mission":"Testing"}'
 check "List orgs" "$BASE/api/orgs" "200"
 check "Agent templates" "$BASE/api/agent-templates" "200"
-check "Skills list" "$BASE/api/skills" "200"
+check "Skills list (auth-gated)" "$BASE/api/skills" "401"
 check "Cron presets" "$BASE/api/scheduled/presets" "200"
 
 echo ""

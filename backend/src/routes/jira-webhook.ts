@@ -14,6 +14,10 @@ const eventStore = new Map<string, any[]>()
 // WebSocket clients per org for live push
 const wsClients = new Map<string, Set<any>>()
 
+// AUTH (MCA-85 hardening): the inbound receiver below is PUBLIC — Jira POSTs to it
+// with no session JWT. The org-scoped read routes that expose stored events (events
+// list, live WS, webhook-url) moved to `jiraEventRoutes`, registered in the
+// Clerk-secured scope. Both share the module-level `eventStore` / `wsClients`.
 export async function jiraWebhookRoutes(app: FastifyInstance) {
 
   // ─ Jira webhook receiver ────────────────────────────────────────────
@@ -60,6 +64,15 @@ export async function jiraWebhookRoutes(app: FastifyInstance) {
 
     reply.code(200).send({ ok: true })
   })
+}
+
+// ─── Clerk-secured Jira event routes ──────────────────────────────────────────
+// Org-scoped reads over the stored webhook events — must not be public.
+// NOTE: the live WS route authenticates via the Clerk onRequest hook on the
+// upgrade request; browser WebSocket clients can't set an Authorization header,
+// so a future in-browser live consumer would need query-param token auth. No
+// client uses this stream today.
+export async function jiraEventRoutes(app: FastifyInstance) {
 
   // ─ Get recent events ─────────────────────────────────────────────────
   app.get('/api/orgs/:orgId/jira/events', async (req) => {

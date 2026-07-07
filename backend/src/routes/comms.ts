@@ -8,6 +8,11 @@ import { getGoogleConnectorCfg } from './connectors'
 // ─── Unified Inbox ────────────────────────────────────────────────────────────
 // Aggregates messages across channels into a single feed per org.
 // v1: in-app messages only. v2: Gmail + Telegram webhooks.
+//
+// AUTH (MCA-85 hardening): `commsRoutes` is registered in the Clerk-secured scope
+// — every route here reads/writes org data or sends on the org's behalf. The one
+// externally-called route (the Telegram webhook receiver, which Telegram calls
+// with no session) lives in `commsWebhookRoutes` below and is registered PUBLIC.
 
 const SendMessageSchema = z.object({
   channel: z.enum(['internal', 'gmail', 'telegram', 'slack']),
@@ -139,32 +144,6 @@ export async function commsRoutes(app: FastifyInstance) {
     } catch (e: any) { return reply.code(500).send({ error: e.message }) }
   })
 
-  // ── Telegram: webhook receiver ───────────────────────────────────────────
-  app.post('/api/telegram/webhook/:orgId', async (req, reply) => {
-    const { orgId } = req.params as any
-    const update = req.body as any
-    const message = update.message ?? update.edited_message
-    if (!message) return { ok: true }
-
-    // Store as incoming message
-    const agents = await db.select().from(schema.agents).where(and(
-      eq(schema.agents.orgId, orgId),
-      eq(schema.agents.agentType, 'standard')
-    )).limit(1)
-
-    if (agents.length > 0) {
-      await db.insert(schema.messages).values({
-        id: randomUUID(),
-        agentId: agents[0].id,
-        taskId: null,
-        role: 'user',
-        content: `[Telegram @${message.from?.username ?? 'user'}]: ${message.text ?? ''}`,
-        createdAt: new Date(),
-      })
-    }
-    return { ok: true }
-  })
-
   // ── Telegram: send message ───────────────────────────────────────────────
   app.post('/api/orgs/:orgId/telegram/send', async (req, reply) => {
     const { botToken, chatId, text } = req.body as any
@@ -199,6 +178,37 @@ export async function commsRoutes(app: FastifyInstance) {
       const data = await res.json() as any
       return { ok: true, meetLink: data.hangoutLink, eventId: data.id, htmlLink: data.htmlLink }
     } catch (e: any) { return reply.code(500).send({ error: e.message }) }
+  })
+}
+
+// ─── Public webhook receiver ──────────────────────────────────────────────────
+// Registered OUTSIDE the Clerk-secured scope: Telegram POSTs updates here with no
+// session JWT. Org context comes from the URL path, not an authenticated user.
+export async function commsWebhookRoutes(app: FastifyInstance) {
+  // ── Telegram: webhook receiver ───────────────────────────────────────────
+  app.post('/api/telegram/webhook/:orgId', async (req) => {
+    const { orgId } = req.params as any
+    const update = req.body as any
+    const message = update.message ?? update.edited_message
+    if (!message) return { ok: true }
+
+    // Store as incoming message
+    const agents = await db.select().from(schema.agents).where(and(
+      eq(schema.agents.orgId, orgId),
+      eq(schema.agents.agentType, 'standard')
+    )).limit(1)
+
+    if (agents.length > 0) {
+      await db.insert(schema.messages).values({
+        id: randomUUID(),
+        agentId: agents[0].id,
+        taskId: null,
+        role: 'user',
+        content: `[Telegram @${message.from?.username ?? 'user'}]: ${message.text ?? ''}`,
+        createdAt: new Date(),
+      })
+    }
+    return { ok: true }
   })
 }
 
