@@ -2,6 +2,11 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { checkWebhook, deriveWebhookSecret } from '../services/webhook-auth'
+
+// Signing secret for the per-org Jira receiver. Jira Cloud can't set a custom
+// header, so the secret rides in the URL query (?secret=…) that webhook-url mints.
+const jiraSigningSecret = () => process.env.WEBHOOK_SIGNING_SECRET ?? process.env.JIRA_WEBHOOK_SECRET
 
 // ─── Jira Webhook — inbound real-time updates ───────────────────────────────
 // Setup: in Jira, go to Settings → System → Webhooks
@@ -23,6 +28,13 @@ export async function jiraWebhookRoutes(app: FastifyInstance) {
   // ─ Jira webhook receiver ────────────────────────────────────────────
   app.post('/api/jira/webhook/:orgId', async (req, reply) => {
     const { orgId } = req.params as any
+
+    // Shared-secret check: the secret rides in the URL query Jira was configured
+    // with (webhook-url mints it), or an x-webhook-secret header for other posters.
+    const provided = (req.query as any)?.secret ?? (req.headers['x-webhook-secret'] as string | undefined)
+    const { authorized } = checkWebhook(jiraSigningSecret(), 'jira', orgId, provided)
+    if (!authorized) return reply.code(403).send({ error: 'Invalid webhook signature' })
+
     const payload = req.body as any
 
     const event = {
@@ -100,8 +112,10 @@ export async function jiraEventRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/jira/webhook-url', async (req) => {
     const { orgId } = req.params as any
     const baseUrl = process.env.PUBLIC_URL ?? 'https://api.7ei.ai'
+    const secret = jiraSigningSecret()
+    const query = secret ? `?secret=${deriveWebhookSecret(secret, 'jira', orgId)}` : ''
     return {
-      url: `${baseUrl}/api/jira/webhook/${orgId}`,
+      url: `${baseUrl}/api/jira/webhook/${orgId}${query}`,
       instructions: [
         '1. In Jira: Settings \u2192 System \u2192 Webhooks \u2192 Create',
         '2. Set URL to the value above',
