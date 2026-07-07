@@ -7,10 +7,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, space } from './tokens'
 import { Button, Card, SectionLabel, Skeleton } from './ui'
-import { sx, type Approval, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Workspace } from './cockpit/shared'
+import { sx, type Approval, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Secret, type Timeline, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
 import AgentFleet from './cockpit/AgentFleet'
+import TimelineSection from './cockpit/TimelineSection'
 import OrgChart from './cockpit/OrgChart'
 import GoalsSection from './cockpit/GoalsSection'
 import BudgetsSection from './cockpit/BudgetsSection'
@@ -24,6 +25,7 @@ import HireDialog from './cockpit/HireDialog'
 export default function CockpitPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
+  const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
@@ -38,8 +40,9 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
   const load = useCallback(async () => {
     try {
       const token = await getToken()
-      const [c, oc, ib, gl, bd, se, ws, pl] = await Promise.all([
+      const [c, tl, oc, ib, gl, bd, se, ws, pl] = await Promise.all([
         api<Cockpit>(`/api/orgs/${orgId}/cockpit`, { token }),
+        api<{ timeline: Timeline }>(`/api/orgs/${orgId}/timeline`, { token }),
         api<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, { token }),
         api<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, { token }),
         api<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, { token }),
@@ -48,7 +51,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         api<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, { token }),
         api<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, { token }),
       ])
-      setData(c); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
+      setData(c); setTimeline(tl.timeline); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -115,7 +118,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
       <StatsRow sum={data?.summary ?? {}} agents={data?.agents ?? null} budgets={budgets} approvalsPending={approvals.length} loading={initialLoading} />
       {initialLoading ? (
         // MCA-81 — skeleton rows in place of the sections while the first load is in flight.
-        ['Inbox', 'Agent fleet', 'Goals', 'Budgets', 'Task board'].map(l => (
+        ['Inbox', 'Agent fleet', 'Heartbeat · last 24h', 'Goals', 'Budgets', 'Task board'].map(l => (
           <div key={l}>
             <SectionLabel>{l}</SectionLabel>
             <Card style={{ display: 'flex', flexDirection: 'column', gap: space.md }}>
@@ -129,6 +132,7 @@ export default function CockpitPanel({ orgId, getToken }: { orgId: string; getTo
         <>
           <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} />
           <AgentFleet agents={data ? data.agents : null} onControl={agentControl} />
+          <TimelineSection timeline={timeline} />
           <OrgChart chart={chart} />
           <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
           <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />

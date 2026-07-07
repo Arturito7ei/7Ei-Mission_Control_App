@@ -17,6 +17,10 @@ export type CTask = { id: string; title: string; status: string; kanbanColumn: s
 // W2: the single next task the office should pick up (unblocked, highest priority).
 export type NextUp = { id: string; title: string; agentId: string | null; priority: string; blockedCleared: number }
 export type Cockpit = { agents: CAgent[]; tasks: CTask[]; nextUp: NextUp | null; summary: Record<string, number>; generatedAt: string }
+// V1 (MCA-84): heartbeat 24h timeline — per-agent lanes of activity blocks.
+export type TLBlock = { runId: string | null; taskId: string | null; title: string; status: string; startPct: number; widthPct: number; startMs: number; endMs: number | null; ongoing: boolean; costUsd: number; tokensUsed: number }
+export type TLLane = { agentId: string; name: string; avatarEmoji: string; heartbeat: string; status: string; lastHeartbeatAt: number | null; nextWakeAt: number | null; blocks: TLBlock[]; runCount: number; totalCost: number; activeMs: number }
+export type Timeline = { now: number; windowStart: number; windowEnd: number; windowMs: number; lanes: TLLane[] }
 export type OrgNode = { id: string; name: string; role: string; title?: string | null; runtime?: string; avatarEmoji?: string | null; status?: string; children: OrgNode[] }
 export type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string }
 export type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }

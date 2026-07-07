@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { db, schema } from '../db/client'
-import { eq, and, desc, inArray } from 'drizzle-orm'
+import { eq, and, or, gte, isNull, desc, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
 import { streamLLM } from '../services/llm-router'
@@ -10,6 +10,7 @@ import { isExternalAgent, heartbeatFreshness } from '../services/agent-runtime'
 import { buildOrgChart } from '../services/orgchart'
 import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../services/hiring'
 import { nextUp } from '../services/worksurface'
+import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../services/timeline'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -366,6 +367,32 @@ export async function agentRoutes(app: FastifyInstance) {
         blocked: inCol('blocked'), done: inCol('done'),
       },
     }
+  })
+
+  // Heartbeat 24h timeline (MCA-84 V1): per-agent lanes of activity blocks over
+  // the last day, built from run telemetry (external) merged with task timing
+  // (internal). Pure projection in services/timeline.ts; this just fetches.
+  app.get('/api/orgs/:orgId/timeline', async (req) => {
+    const { orgId } = req.params as any
+    const now = Date.now()
+    const windowStart = new Date(now - TIMELINE_WINDOW_MS)
+    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const [runs, tasks] = await Promise.all([
+      // Runs that touch the window: started within it, or still open (ongoing).
+      db.select().from(schema.agentRuns).where(and(
+        eq(schema.agentRuns.orgId, orgId),
+        or(gte(schema.agentRuns.startedAt, windowStart), isNull(schema.agentRuns.endedAt)),
+      )),
+      db.select().from(schema.tasks).where(eq(schema.tasks.orgId, orgId))
+        .orderBy(desc(schema.tasks.createdAt)).limit(300),
+    ])
+    const roster = agents.filter(a => a.status !== 'terminated').map(a => ({
+      id: a.id, name: a.name, avatarEmoji: a.avatarEmoji, status: a.status,
+      heartbeat: isExternalAgent(a) ? heartbeatFreshness(a.lastHeartbeatAt as any, now) : 'green',
+      lastHeartbeatAt: a.lastHeartbeatAt, nextWakeAt: a.nextWakeAt, heartbeatEverySec: a.heartbeatEverySec,
+    }))
+    const activities = mergeActivity(runs as any, tasks as any, now)
+    return { timeline: buildHeartbeatTimeline(roster, activities, now) }
   })
 
   // Org chart & hierarchy (MCA-PC A1): reporting tree built from agents.reportsTo.
