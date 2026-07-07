@@ -12,6 +12,7 @@ import { buildHirePrompt, parseHireProposal, isExternalRuntime } from '../servic
 import { nextUp } from '../services/worksurface'
 import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../services/timeline'
 import { unreadTaskIds } from '../services/receipts'
+import { validateRoster, parseCapUsd, CHEAP_OUTPUT_RATE } from '../services/preflight'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -376,6 +377,39 @@ export async function agentRoutes(app: FastifyInstance) {
         blocked: inCol('blocked'), done: inCol('done'),
       },
     }
+  })
+
+  // Per-wake preflight cap + model config audit (MCA-84 V3). GET returns the
+  // configured per-wake cap and, per agent, whether its model is priced (spend
+  // trackable/cappable) and within the "cheap" output-rate threshold. Pure
+  // projection in services/preflight.ts; this fetches org config + roster.
+  app.get('/api/orgs/:orgId/preflight', async (req) => {
+    const { orgId } = req.params as any
+    const [org, agents] = await Promise.all([
+      db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId), columns: { deployConfig: true } }),
+      db.select({ id: schema.agents.id, name: schema.agents.name, llmModel: schema.agents.llmModel, llmProvider: schema.agents.llmProvider })
+        .from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+    ])
+    const { rows, warnCount } = validateRoster(agents as any)
+    return {
+      capUsd: parseCapUsd(org?.deployConfig as any),
+      cheapThresholdUsdPerMTok: CHEAP_OUTPUT_RATE * 1_000_000,
+      warnCount, agents: rows,
+    }
+  })
+
+  // Set (or clear) the org-wide per-wake preflight cap. Stored in deployConfig
+  // like the config-as-secret settings; null/≤0 clears it (no cap).
+  app.put('/api/orgs/:orgId/preflight', async (req, reply) => {
+    const { orgId } = req.params as any
+    const { capUsd } = z.object({ capUsd: z.number().positive().nullable() }).parse(req.body)
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Org not found' })
+    const config = (org.deployConfig ?? {}) as Record<string, string>
+    if (capUsd == null) delete config.maxCostPerWakeUsd
+    else config.maxCostPerWakeUsd = String(capUsd)
+    await db.update(schema.organisations).set({ deployConfig: config }).where(eq(schema.organisations.id, orgId))
+    return { capUsd: parseCapUsd(config) }
   })
 
   // Heartbeat 24h timeline (MCA-84 V1): per-agent lanes of activity blocks over
