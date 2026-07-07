@@ -12,7 +12,7 @@ export type CanonicalStatus = 'active' | 'idle' | 'pending' | 'done' | 'paused' 
 const ALIAS: Record<string, CanonicalStatus> = {
   in_progress: 'active', running: 'active',
   todo: 'pending', assigned: 'pending', 'to do': 'pending',
-  stopped: 'failed', terminated: 'failed', error: 'failed', stale: 'failed',
+  stopped: 'failed', terminated: 'failed', error: 'failed', stale: 'failed', orphaned: 'failed',
   review: 'info', 'in review': 'info', attention: 'info',
 }
 
