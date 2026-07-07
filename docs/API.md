@@ -1,6 +1,8 @@
 # 7Ei Mission Control — API Reference
 
-> Auto-generated from route definitions. Version 1.4.0.
+> **Machine-readable source of truth:** `GET /api/openapi.json` (OpenAPI 3.1) — generated live from the Fastify route table + Zod validators, so it never drifts. Fetch with `7ei-mc openapi` or `curl -s https://7ei-backend.fly.dev/api/openapi.json`. This hand-written doc is a curated narrative overview; when the two disagree, the endpoint wins.
+>
+> Version 1.4.0.
 
 ## Health & Readiness
 

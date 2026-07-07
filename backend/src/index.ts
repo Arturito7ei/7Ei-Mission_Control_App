@@ -27,6 +27,10 @@ import { auditLogPlugin } from './middleware/audit-log'
 import { clerkAuth } from './middleware/clerk-auth'
 import { telemetryPlugin } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
+import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
+
+// Keep in sync with package.json "version" — surfaced in /api/openapi.json + /api/health.
+const API_VERSION = '0.6.0'
 
 const app = Fastify({
   logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
@@ -34,6 +38,13 @@ const app = Fastify({
 })
 
 async function start() {
+  // Self-describing API (MCA-85 D1): collect every registered route into the
+  // OpenAPI route table. This baseline hook fires for all routes (it is added
+  // before any registration and propagates to descendant scopes) and tags them
+  // 'none'; scoped hooks below upgrade the auth of secured/agent routes. Auth
+  // rank is order-independent, so it doesn't matter which hook fires first.
+  app.addHook('onRoute', (r) => recordRoute('none', r.method, r.url))
+
   // Security headers
   await app.register(helmet, {
     contentSecurityPolicy: false,  // API — no CSP needed
@@ -62,6 +73,7 @@ async function start() {
   // rbac/audit/telemetry compat) or replies 401. OPTIONS preflight is skipped.
   await app.register(async (secured) => {
     secured.addHook('onRequest', clerkAuth)
+    secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
     await secured.register(taskRoutes)
@@ -88,8 +100,12 @@ async function start() {
   await app.register(webhookRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
-  // token via this plugin's own onRequest hook, not Clerk.
-  await app.register(agentApiRoutes)
+  // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope
+  // so an onRoute hook can tag these routes with the agentToken security scheme.
+  await app.register(async (agentScope) => {
+    agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
+    await agentScope.register(agentApiRoutes)
+  })
   // Public routine webhook/API trigger (MCA-PC C3) — token-authenticated by URL.
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
@@ -127,6 +143,15 @@ async function start() {
   }
   app.get('/health', async () => healthResponse())
   app.get('/api/health', async () => healthResponse())
+
+  // Self-describing API (MCA-85 D1) — the live route table + Zod request bodies
+  // as an OpenAPI 3.1 doc. Public: agents/tools fetch it to self-configure.
+  app.get('/api/openapi.json', async () => buildOpenApiSpec({
+    version: API_VERSION,
+    serverUrl: process.env.PUBLIC_URL || 'https://7ei-backend.fly.dev',
+    routes: collectedRoutes(),
+    docs: endpointDocs(),
+  }))
 
   app.get('/ready', async (_req, reply) => {
     // Could check DB connectivity here

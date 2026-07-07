@@ -10,6 +10,7 @@ import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead
 import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
 import { agentRecentPath, appendSection, formatSessionSummary } from '../services/agent-memory'
 import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval } from '../services/governance2'
+import { documentEndpoint } from '../services/openapi'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
@@ -41,8 +42,46 @@ const ResultSchema = z.object({
   costUsd: z.number().optional(),
 })
 
+// Request-body shapes for routes that validate ad-hoc (used only to enrich
+// /api/openapi.json — the runtime validation stays inline in each handler).
+const CommentBody = z.object({ body: z.string().max(4000) })
+const RunLogBody = z.object({ log: z.string().optional(), sessionState: z.string().optional(), tokensUsed: z.number().optional(), costUsd: z.number().optional() })
+const MemoryWriteBody = z.object({ path: z.string(), markdown: z.string(), message: z.string().optional() })
+const AttachmentBody = z.object({ url: z.string().optional(), name: z.string().optional(), markdown: z.string().optional(), contentType: z.string().optional() })
+const RuntimeBody = z.object({ status: z.string().optional(), previewUrl: z.string().optional(), devUrl: z.string().optional() })
+const RunTokenBody = z.object({ runId: z.string().optional() })
+const ApprovalBody = z.object({ type: z.string(), summary: z.string(), payload: z.any().optional() })
+const MessageBody = z.object({ taskId: z.string().optional(), content: z.string() })
+const PluginResultBody = z.object({ status: z.enum(['done', 'failed']).optional(), result: z.any().optional() })
+
+// Self-describing API (MCA-85 D1): summaries + request bodies for the whole
+// agent-facing surface — this is what a BYO runtime reads to configure itself.
+function documentAgentApi() {
+  documentEndpoint('GET', '/api/agent/me', { summary: 'Identity of the authenticated agent (build a system prompt from it)' })
+  documentEndpoint('GET', '/api/agent/secrets', { summary: 'Decrypted company+agent-scoped secrets to inject as env' })
+  documentEndpoint('GET', '/api/agent/memory/tree', { summary: 'List the shared Obsidian vault at ?path=' })
+  documentEndpoint('GET', '/api/agent/memory/file', { summary: 'Read a markdown note from the vault at ?path=' })
+  documentEndpoint('PUT', '/api/agent/memory/file', { summary: 'Write a markdown note to the vault (commits as the agent)', body: MemoryWriteBody })
+  documentEndpoint('POST', '/api/agent/memory/session-summary', { summary: 'Append a session-continuity summary to the agent’s own recent.md', body: SessionSummarySchema })
+  documentEndpoint('POST', '/api/agent/runs/:id/log', { summary: 'Stream run progress: append a log line, update cost/tokens, persist sessionState', body: RunLogBody })
+  documentEndpoint('POST', '/api/agent/tasks/:taskId/comment', { summary: 'Comment on a task thread as the agent', body: CommentBody })
+  documentEndpoint('POST', '/api/agent/tasks/:taskId/attachment', { summary: 'Attach a work product (markdown → vault) or a link', body: AttachmentBody })
+  documentEndpoint('POST', '/api/agent/workspaces/:id/runtime', { summary: 'Report a running dev server + preview URL for a workspace', body: RuntimeBody })
+  documentEndpoint('POST', '/api/agent/run-token', { summary: 'Mint a short-lived HMAC per-run token scoped to this agent', body: RunTokenBody })
+  documentEndpoint('GET', '/api/agent/plugin-jobs', { summary: 'Pull up to 5 queued plugin jobs for this org' })
+  documentEndpoint('POST', '/api/agent/plugin-jobs/:id/claim', { summary: 'Atomically claim a queued plugin job' })
+  documentEndpoint('POST', '/api/agent/plugin-jobs/:id/result', { summary: 'Report a plugin job result (done|failed)', body: PluginResultBody })
+  documentEndpoint('POST', '/api/agent/heartbeat', { summary: 'Liveness heartbeat; returns who the runtime is authenticated as', body: HeartbeatSchema })
+  documentEndpoint('GET', '/api/agent/tasks', { summary: 'This agent’s queue. ?state=assigned|in_progress|open|all' })
+  documentEndpoint('POST', '/api/agent/tasks/:taskId/claim', { summary: 'Atomic checkout: assigned → in_progress (returns runId + sessionState)' })
+  documentEndpoint('POST', '/api/agent/tasks/:taskId/result', { summary: 'Report a task result (done|failed)', body: ResultSchema })
+  documentEndpoint('POST', '/api/agent/approvals', { summary: 'Request human sign-off for a sensitive action', body: ApprovalBody })
+  documentEndpoint('POST', '/api/agent/messages', { summary: 'Free-form progress/chatter message from the runtime', body: MessageBody })
+}
+
 export async function agentApiRoutes(app: FastifyInstance) {
   app.addHook('onRequest', agentAuth)
+  documentAgentApi()
 
   // Identity of the authenticated agent — lets a runtime build its system prompt.
   app.get('/api/agent/me', async (req) => {

@@ -7,6 +7,9 @@ const q = (p) => encodeURIComponent(p ?? '')
 export function buildRequest(args) {
   const [cmd, ...rest] = args
   switch (cmd) {
+    case 'openapi':
+      // Self-describing API (MCA-85 D1) — public, no token required.
+      return { method: 'GET', path: '/api/openapi.json', public: true }
     case 'me':
       return { method: 'GET', path: '/api/agent/me' }
     case 'tasks':
@@ -37,6 +40,7 @@ export function buildRequest(args) {
 export const HELP = `7ei-mc — operator CLI for the 7Ei Mission Control agent API
 env: MC_BASE_URL (default https://7ei-backend.fly.dev), MC_AGENT_TOKEN (required)
 
+  openapi                                fetch the OpenAPI 3.1 spec (public, no token)
   me                                     who am I
   tasks [assigned|in_progress|open|all]  my queue
   claim <taskId>                         atomic checkout (returns runId + sessionState)
