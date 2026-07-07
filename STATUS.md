@@ -1,9 +1,21 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-02 (go-live hardening) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-07 (W5 wrap-up — all four Paperclip-gap-bridge v2 epics complete) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Live:** backend on Fly (`7ei-backend`), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
-Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis.md`.
+**Live:** backend on Fly (`7ei-backend`, v1.3.0), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
+Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **588 backend tests · 11/11 evals · web build**.
+Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`.
+
+## Paperclip gap-bridge v2 — 4 / 4 epics complete
+| Epic | Stories (all ✅) | PR trail |
+|---|---|---|
+| **MCA-82** · Theme (design system v2) | T1 foundation · T2 glass chrome · T3 hex sweep + WCAG AA audit | #155 · #156 · #159 |
+| **MCA-83** · Work surface / failure UX | W1 recovery cards · W2 blocker chips + next-up + cost rollups · W3 thread wake-on-comment · W4 task watchdogs · W5 ask-mode | #157 · #158 · #161 · #168 · #169 |
+| **MCA-84** · Visibility | V1 heartbeat 24h timeline · V2 tri-state approvals + inbox retry + read receipts · V3 per-wake preflight cap + model validation | #160 · #162 · #163 |
+| **MCA-85** · DX | D1 self-describing API (`/api/openapi.json` + CLI) · D2 `llms.txt` + `7ei-mc onboard` | #164 · #167 |
+| _Unplanned security_ | Auth-scoping hardening (org/agent groups → Clerk) · per-org webhook shared-secret verification | #165 · #166 |
+
+**All four v2 epics (MCA-82/83/84/85) complete.** Per-story detail below. Standing items (Jira transitions, webhook-secret rollout, apex DNS, vault mirror) tracked in **Standing items** at the foot of this file.
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |
@@ -61,6 +73,14 @@ Remaining **user-only** console actions (assistant can't create accounts / enter
 
 ## Refactors
 - **MCA-74** (2026-07-02): `routes/all.ts` (1,383 lines) split into domain modules (orgs/agents/tasks/projects/costs/skills/auth/credentials), `all.ts` kept as barrel; `sendPushNotification` + token map extracted to `services/push.ts` (fixes the routes→services inversion). No behavior change; 415 tests + 11/11 evals green.
+
+## Standing items (carry forward)
+Not blockers for the code — deferred console/ops actions and follow-through owed after the v2 epics:
+- **Jira transitions pending** — MCA-82/83/84/85 stories are shipped in code but not transitioned in Jira. Atlassian Rovo OAuth is **unavailable in these build sessions**, so the assistant cannot move them; transition MCA + OS issues to Done in the next interactive/authorized session (cloudId `5dadc567-085a-4cd8-99a3-c0bd9886fee9`).
+- **`WEBHOOK_SIGNING_SECRET` rollout** (PR #166) — set the secret via Fly/Cockpit to enforce per-org Telegram/Jira receiver verification. It's **open in dev until set**. After setting it, **re-register both integrations** (Telegram `secret_token`, Jira `?secret=` URL) so they carry the derived token — see the W-side note in `services/webhook-auth.ts`.
+- **7ei.ai apex DNS for `llms.txt`** (PR #167) — `web/public/llms.txt` mirror resolves at the web/apex domain only once apex DNS points at Vercel; API host already serves `GET /llms.txt`.
+- **Vault milestone mirror** — mirror the v2-epics-complete milestone into the Obsidian vault `07-Agents/` (repo `Arturito7ei/7Ei-MC_TARCO`, content under `vault/`), alongside `STATUS-Mission-Control-2026-07-02.md`.
+- **Go-live user-only console actions** — unchanged, see `GO-LIVE.md` §1–4 (Clerk prod keys, Google sensitive scopes, NVIDIA/vault key rotation, Mac-mini adapter move).
 
 ## Verify
 `cd backend && npm test` · `npm run evals` · `cd web && npm run build` · self-host: `docker compose up -d --build`.
