@@ -8,6 +8,7 @@ export interface InboxTask {
   inboxState?: string | null
   priority?: string | null
   agentId: string
+  output?: string | null        // MCA-84 V2: last output — the inline error on a failed row
   createdAt: Date | number | null
 }
 
@@ -20,6 +21,8 @@ export interface InboxItem {
   priority: string
   agentId: string
   createdAt: number
+  retryable: boolean            // MCA-84 V2: failed tasks can be re-executed inline
+  error: string | null          // MCA-84 V2: truncated failure text for the row
 }
 
 /** Classify a task into an inbox kind, or null if it doesn't need attention. */
@@ -41,7 +44,10 @@ export function buildInbox(tasks: InboxTask[], dismissed: Set<string> = new Set(
     const kind = inboxKind(t)
     if (!kind) continue
     const ts = t.createdAt instanceof Date ? t.createdAt.getTime() : Number(t.createdAt ?? 0)
-    items.push({ taskId: t.id, title: t.title, kind, priority: t.priority ?? 'medium', agentId: t.agentId, createdAt: ts })
+    // V2: a failed task can be retried in place; carry its output as inline error.
+    const retryable = kind === 'failed'
+    const error = kind === 'failed' && t.output?.trim() ? t.output.trim().slice(0, 240) : null
+    items.push({ taskId: t.id, title: t.title, kind, priority: t.priority ?? 'medium', agentId: t.agentId, createdAt: ts, retryable, error })
   }
   items.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.createdAt - a.createdAt)
   return items

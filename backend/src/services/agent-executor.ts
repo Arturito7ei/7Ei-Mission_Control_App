@@ -247,7 +247,10 @@ export async function executeAgentTask(opts: {
     onDone?.(execResult)
     return execResult
   } catch (err: any) {
-    await db.update(schema.tasks).set({ status: 'failed' } as any).where(eq(schema.tasks.id, taskId))
+    // MCA-84 V2: persist the failure text as output so the inbox retry row can
+    // show an inline error without an extra comment fetch (recovery card still
+    // prefers the richer system-notice below).
+    await db.update(schema.tasks).set({ status: 'failed', output: `Run failed: ${String(err?.message ?? err).slice(0, 1000)}` } as any).where(eq(schema.tasks.id, taskId))
     await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agentId))
     // MCA-83 W1: durable failure record on the ticket thread → feeds the recovery card.
     await db.insert(schema.taskComments).values({

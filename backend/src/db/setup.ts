@@ -113,6 +113,10 @@ export async function setupDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_execution_policies_org ON execution_policies(org_id)`,
     `CREATE TABLE IF NOT EXISTS plugin_jobs (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, plugin_id TEXT, type TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'queued', result TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
     `CREATE INDEX IF NOT EXISTS idx_plugin_jobs_org ON plugin_jobs(org_id, status)`,
+    // MCA-84 V2: tri-state approvals (revision loop) + board read receipts
+    `ALTER TABLE approval_requests ADD COLUMN decision_note TEXT`,
+    `CREATE TABLE IF NOT EXISTS task_reads (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, user_id TEXT NOT NULL, task_id TEXT NOT NULL, seen_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_task_reads ON task_reads(org_id, user_id)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

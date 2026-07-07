@@ -339,7 +339,7 @@ export default function DashboardPage() {
 
       <main className="mc-main" style={s.main}>
 
-        {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} />}
+        {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} />}
 
         {tab === 'memory' && <MemoryPanel orgId={org.id} getToken={getToken} />}
 

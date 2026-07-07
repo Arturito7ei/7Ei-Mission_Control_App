@@ -14,6 +14,7 @@ import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
 import { rollupCost } from '../services/worksurface'
 import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../services/thread'
+import { decideApproval } from '../services/approvals'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -23,7 +24,7 @@ export async function taskRoutes(app: FastifyInstance) {
   const inboxCols = {
     id: schema.tasks.id, title: schema.tasks.title, status: schema.tasks.status,
     inboxState: schema.tasks.inboxState, priority: schema.tasks.priority,
-    agentId: schema.tasks.agentId, createdAt: schema.tasks.createdAt,
+    agentId: schema.tasks.agentId, output: schema.tasks.output, createdAt: schema.tasks.createdAt,
   }
   const dismissedSet = async (orgId: string, userId: string) => new Set(
     (await db.select({ taskId: schema.inboxDismissals.taskId }).from(schema.inboxDismissals)
@@ -60,6 +61,18 @@ export async function taskRoutes(app: FastifyInstance) {
     const { taskId } = (req.body ?? {}) as any
     if (!taskId) return reply.code(400).send({ error: 'taskId is required' })
     await db.insert(schema.inboxDismissals).values({ id: randomUUID(), orgId, userId, taskId, createdAt: new Date() })
+    return { ok: true }
+  })
+
+  // V2 board read receipts: bump the operator's seenAt for a task (they opened
+  // it) — the board clears the "new activity" flag. One row per (user, task).
+  app.post('/api/tasks/:taskId/read', async (req, reply) => {
+    const { taskId } = req.params as any
+    const userId = (req as any).userId ?? 'anon'
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    await db.delete(schema.taskReads).where(and(eq(schema.taskReads.userId, userId), eq(schema.taskReads.taskId, taskId)))
+    await db.insert(schema.taskReads).values({ id: randomUUID(), orgId: task.orgId, userId, taskId, seenAt: new Date() })
     return { ok: true }
   })
 
@@ -301,11 +314,13 @@ export async function taskRoutes(app: FastifyInstance) {
     reply.code(201)
     return { orgId: newOrgId, counts: { agents: r.agents.length, goals: r.goals.length, budgets: r.budgets.length, routines: r.routines.length } }
   })
+  // V2 tri-state: approved | rejected | revision_requested (+ reviewer note).
   app.post('/api/approvals/:id/decide', async (req, reply) => {
     const { id } = req.params as any
-    const { decision } = (req.body ?? {}) as any
-    if (decision !== 'approved' && decision !== 'rejected') return reply.code(400).send({ error: 'decision must be approved|rejected' })
-    await db.update(schema.approvalRequests).set({ status: decision, decidedBy: (req as any).userId ?? 'human', decidedAt: new Date() }).where(eq(schema.approvalRequests.id, id))
+    const { decision, note } = (req.body ?? {}) as any
+    const result = decideApproval({ decision, note, actor: (req as any).userId ?? 'human' })
+    if (!result.ok) return reply.code(400).send({ error: result.error })
+    await db.update(schema.approvalRequests).set(result.patch!).where(eq(schema.approvalRequests.id, id))
     return { approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }) }
   })
 

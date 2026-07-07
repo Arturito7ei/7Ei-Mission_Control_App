@@ -242,10 +242,11 @@ export const approvalRequests = sqliteTable('approval_requests', {
   type: text('type').notNull(),                       // spend | hire | external_action | ...
   summary: text('summary').notNull(),
   payload: text('payload', { mode: 'json' }).$type<Record<string, unknown>>(),
-  status: text('status').notNull().default('pending'), // pending | approved | rejected
+  status: text('status').notNull().default('pending'), // pending | approved | rejected | revision_requested (MCA-84 V2 tri-state)
   requestedByAgentId: text('requested_by_agent_id'),
   decidedBy: text('decided_by'),
   decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  decisionNote: text('decision_note'),                // MCA-84 V2: reviewer note — required for revision_requested (the comment loop)
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
@@ -267,6 +268,17 @@ export const inboxDismissals = sqliteTable('inbox_dismissals', {
   userId: text('user_id').notNull(),
   taskId: text('task_id').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// MCA-84 V2: board read receipts — one row per (user, task); seenAt is bumped
+// each time the user opens the task. A task reads "unread" when its last
+// activity (createdAt/completedAt) is newer than seenAt, or no row exists.
+export const taskReads = sqliteTable('task_reads', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  userId: text('user_id').notNull(),
+  taskId: text('task_id').notNull(),
+  seenAt: integer('seen_at', { mode: 'timestamp' }).notNull(),
 })
 
 export const skills = sqliteTable('skills', {

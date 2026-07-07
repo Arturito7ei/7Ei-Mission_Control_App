@@ -12,7 +12,7 @@ const COLS: { key: string; label: string }[] = [
   { key: 'blocked', label: 'Blocked' }, { key: 'done', label: 'Done' },
 ]
 
-export default function TaskBoard({ tasks, agentName, nextUp }: { tasks: CTask[]; agentName: (id: string) => string; nextUp?: NextUp | null }) {
+export default function TaskBoard({ tasks, agentName, nextUp, onOpen }: { tasks: CTask[]; agentName: (id: string) => string; nextUp?: NextUp | null; onOpen?: (taskId: string) => void }) {
   return (
     <div>
       <SectionLabel>Task board</SectionLabel>
@@ -38,13 +38,20 @@ export default function TaskBoard({ tasks, agentName, nextUp }: { tasks: CTask[]
                 // W1: flag cards that have an open recovery card in the drawer.
                 const needsRecovery = t.status === 'failed' || t.status === 'blocked' || col.key === 'blocked'
                 const isNext = nextUp?.id === t.id
+                const open = onOpen ? () => onOpen(t.id) : undefined
                 return (
-                  <div key={t.id} style={{ background: tk.surfaceHigh, border: isNext ? '1px solid var(--accent)' : `1px solid ${tk.line}`, boxShadow: isNext ? '0 0 0 1px var(--accent)' : undefined, borderLeft: `3px solid ${PRI_C[t.priority] ?? 'var(--muted)'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm }}>
+                  <div key={t.id} role={open ? 'button' : undefined} tabIndex={open ? 0 : undefined}
+                    onClick={open} onKeyDown={open ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() } } : undefined}
+                    style={{ background: tk.surfaceHigh, border: isNext ? '1px solid var(--accent)' : `1px solid ${tk.line}`, boxShadow: isNext ? '0 0 0 1px var(--accent)' : undefined, borderLeft: `3px solid ${PRI_C[t.priority] ?? 'var(--muted)'}`, borderRadius: tk.r.sm, padding: `${density.cellY}px ${density.cellX}px`, marginBottom: space.sm, cursor: open ? 'pointer' : undefined }}>
                     <div style={{ fontSize: text.sm.fontSize, lineHeight: text.sm.lineHeight }}>
                       {needsRecovery ? <span aria-label="needs recovery" title="Needs recovery" style={{ color: tk.red, marginRight: 4 }}>⚠</span> : null}
                       {isNext ? <span aria-label="next up" title="Next up" style={{ color: tk.accent, marginRight: 4 }}>▶</span> : null}{t.title}
                     </div>
-                    <div style={{ fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2 }}>{agentName(t.agentId)}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2 }}>
+                      <span>{agentName(t.agentId)}</span>
+                      {/* V2 read receipt: unread cards carry a "new" chip (accent + text, never color-only). */}
+                      {t.unread ? <span aria-label="unread — new activity" title="New activity since you last opened this" style={s.unread}>● new</span> : null}
+                    </div>
                   </div>
                 )
               })}
@@ -64,4 +71,6 @@ const s: Record<string, React.CSSProperties> = {
   nextUpTitle: { flex: 1, color: tk.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   nextUpAgent: { color: tk.muted, fontSize: text.xs.fontSize, whiteSpace: 'nowrap' },
   nextUpMeta: { color: tk.accent, fontSize: text.xs.fontSize, fontWeight: 700, whiteSpace: 'nowrap' },
+  // Unread chip: accent fill + "new" text + ● glyph — colorblind-safe, not a lone dot.
+  unread: { color: tk.accent, background: 'var(--accent-dim)', borderRadius: tk.r.pill, padding: '0 6px', fontSize: text.xs.fontSize, fontWeight: 700, whiteSpace: 'nowrap' },
 }
