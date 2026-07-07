@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, text, space } from './tokens'
 import { statusColor, statusIcon } from './status'
-import { Button, TextInput } from './ui'
+import { Button, TextInput, Select } from './ui'
 import RecoveryCard, { type Recovery } from './RecoveryCard'
 
 // MCA-UI U2 — Task detail drawer. Surfaces the shipped-but-invisible backend:
@@ -20,6 +20,26 @@ type Comment = { id: string; body: string; kind?: string | null; authorAgentId?:
 type Attach = { id: string; kind: string; name: string; url?: string | null }
 type Run = { id: string; status: string; startedAt: number; endedAt?: number | null; tokensUsed?: number | null; costUsd?: number | null }
 type Rollup = { ownCost: number; subtaskCost: number; totalCost: number; ownTokens: number; subtaskTokens: number; totalTokens: number; subtaskCount: number }
+// W4 task watchdogs: declarative checks the scheduler evaluates each tick.
+type Watchdog = { id: string; kind: string; threshold: string; state: string; lastMessage?: string | null; enabled: boolean; triggeredAt?: number | null }
+
+// Kind → { label for the add-menu, unit hint for the threshold field }.
+const WD_KINDS: { kind: string; label: string; unit: string; placeholder: string }[] = [
+  { kind: 'runtime', label: 'Runtime over…', unit: 'min', placeholder: '30' },
+  { kind: 'cost', label: 'Cost over…', unit: 'USD', placeholder: '0.50' },
+  { kind: 'no_activity', label: 'Idle over…', unit: 'min', placeholder: '45' },
+  { kind: 'status', label: 'Status reaches…', unit: '', placeholder: 'blocked' },
+]
+const WD_STATUSES = ['blocked', 'failed', 'done', 'in_progress']
+function watchdogLabel(w: { kind: string; threshold: string }): string {
+  switch (w.kind) {
+    case 'runtime': return `Runtime over ${w.threshold}m`
+    case 'cost': return `Cost over $${w.threshold}`
+    case 'no_activity': return `Idle over ${w.threshold}m`
+    case 'status': return `Status is ${w.threshold}`
+    default: return w.kind
+  }
+}
 
 const KIND_ICON: Record<string, string> = { created: '🆕', comment: '💬', run_started: '▶️', run_done: '✓', run_failed: '✗', attach_work_product: '📎', attach_link: '🔗', attach_file: '📄', completed: '✅', closed: '⛔' }
 const fmt = (t: number) => { try { return new Date(t).toLocaleString() } catch { return '' } }
@@ -33,6 +53,10 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const [subtasks, setSubtasks] = useState<Task[]>([])
   const [rollup, setRollup] = useState<Rollup | null>(null)
   const [recovery, setRecovery] = useState<Recovery | null>(null)
+  const [watchdogs, setWatchdogs] = useState<Watchdog[]>([])
+  const [wdKind, setWdKind] = useState('runtime')
+  const [wdThreshold, setWdThreshold] = useState('')
+  const [wdBusy, setWdBusy] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -43,7 +67,7 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
   const load = useCallback(async () => {
     const t = await getToken()
     try {
-      const [tk_, tl, cm, at, rn, st, rc] = await Promise.all([
+      const [tk_, tl, cm, at, rn, st, rc, wd] = await Promise.all([
         api<{ task: Task }>(`/api/tasks/${taskId}`, { token: t }).catch(() => ({ task: null as any })),
         api<{ timeline: TL[] }>(`/api/tasks/${taskId}/timeline`, { token: t }).catch(() => ({ timeline: [] })),
         api<{ comments: Comment[] }>(`/api/tasks/${taskId}/comments`, { token: t }).catch(() => ({ comments: [] })),
@@ -51,8 +75,9 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
         api<{ runs: Run[] }>(`/api/tasks/${taskId}/runs`, { token: t }).catch(() => ({ runs: [] })),
         api<{ subtasks: Task[]; rollup: Rollup | null }>(`/api/tasks/${taskId}/subtasks`, { token: t }).catch(() => ({ subtasks: [], rollup: null })),
         api<{ recovery: Recovery | null }>(`/api/tasks/${taskId}/recovery`, { token: t }).catch(() => ({ recovery: null })),
+        api<{ watchdogs: Watchdog[] }>(`/api/tasks/${taskId}/watchdogs`, { token: t }).catch(() => ({ watchdogs: [] })),
       ])
-      setTask(tk_.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks); setRollup(st.rollup ?? null); setRecovery(rc.recovery)
+      setTask(tk_.task); setTimeline(tl.timeline); setComments(cm.comments); setAttachments(at.attachments); setRuns(rn.runs); setSubtasks(st.subtasks); setRollup(st.rollup ?? null); setRecovery(rc.recovery); setWatchdogs(wd.watchdogs)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [taskId, getToken])
 
@@ -86,6 +111,25 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
     } catch (e: any) { setErr(e?.message ?? 'Retry failed'); setRetrying(false) }
   }
   const focusComment = () => { commentRef.current?.focus(); commentRef.current?.scrollIntoView({ block: 'center' }) }
+
+  // W4 watchdogs: attach a declarative check; the scheduler evaluates it each tick
+  // and posts a thread notice on a state flip.
+  const addWatchdog = async () => {
+    const threshold = (wdKind === 'status' ? (wdThreshold || WD_STATUSES[0]) : wdThreshold).trim()
+    if (!threshold) return
+    setWdBusy(true); setErr(null)
+    try {
+      await api(`/api/tasks/${taskId}/watchdogs`, { token: await getToken(), method: 'POST', body: JSON.stringify({ kind: wdKind, threshold }) })
+      setWdThreshold(''); await load()
+    } catch (e: any) { setErr(e?.message ?? 'Failed to add watchdog') }
+    setWdBusy(false)
+  }
+  const removeWatchdog = async (id: string) => {
+    setWatchdogs(ws => ws.filter(w => w.id !== id))  // optimistic
+    try { await api(`/api/watchdogs/${id}`, { token: await getToken(), method: 'DELETE' }) }
+    catch (e: any) { setErr(e?.message ?? 'Failed to remove'); load() }
+  }
+  const wdMeta = WD_KINDS.find(k => k.kind === wdKind)!
 
   // W3: mirror the server's wake gate so the composer can promise it up front —
   // a comment on an idle task (with an agent, no in-flight run) will wake it.
@@ -148,6 +192,41 @@ export default function TaskDrawer({ orgId, taskId, getToken, onClose }: { orgId
                 <span style={s.muted}>{r.tokensUsed ? `${r.tokensUsed} tok` : ''}{r.costUsd != null ? ` · $${r.costUsd.toFixed(4)}` : ''}</span>
               </div>
             ))}
+          </Section>
+
+          {/* W4 watchdogs: declarative checks; triggered ones are ⚠-iconed + amber
+              (colorblind-safe, never color-only). Add row lets you attach a check. */}
+          <Section title={`Watchdogs (${watchdogs.length})`}>
+            {watchdogs.length === 0 && <div style={{ ...s.muted, padding: `${space.xs}px 0` }}>No checks. Add one to be told when this task runs long, costs too much, stalls, or changes status — no babysitting.</div>}
+            {watchdogs.map(w => {
+              const triggered = w.state === 'triggered'
+              return (
+                <div key={w.id} style={s.tlRow}>
+                  <span aria-hidden style={{ color: triggered ? tk.amber : tk.green, fontWeight: 700 }}>{triggered ? '⚠' : '✓'}</span>
+                  <span style={{ flex: 1 }}>
+                    {watchdogLabel(w)}
+                    {triggered && <span style={{ ...s.muted, color: tk.amber, marginLeft: space.sm }} title={w.lastMessage ?? ''}>triggered{w.lastMessage ? ` — ${w.lastMessage.slice(0, 60)}` : ''}</span>}
+                  </span>
+                  <button style={s.wdRemove} onClick={() => removeWatchdog(w.id)} aria-label={`Remove watchdog ${watchdogLabel(w)}`}>✕</button>
+                </div>
+              )
+            })}
+            <div style={{ display: 'flex', gap: space.sm, marginTop: space.md, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Select aria-label="Watchdog type" value={wdKind} onChange={e => { setWdKind(e.target.value); setWdThreshold('') }}>
+                {WD_KINDS.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+              </Select>
+              {wdKind === 'status' ? (
+                <Select aria-label="Target status" value={wdThreshold || WD_STATUSES[0]} onChange={e => setWdThreshold(e.target.value)}>
+                  {WD_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
+                </Select>
+              ) : (
+                <>
+                  <TextInput style={{ width: 90 }} inputMode="decimal" placeholder={wdMeta.placeholder} aria-label="Threshold" value={wdThreshold} onChange={e => setWdThreshold(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addWatchdog() }} />
+                  <span style={s.muted}>{wdMeta.unit}</span>
+                </>
+              )}
+              <Button disabled={wdBusy} onClick={addWatchdog}>{wdBusy ? '…' : 'Add check'}</Button>
+            </div>
           </Section>
 
           {subtasks.length > 0 && (
@@ -217,6 +296,7 @@ const s: Record<string, React.CSSProperties> = {
   woke: { marginTop: space.md, padding: space.sm, borderLeft: '3px solid var(--accent)', background: 'var(--accent-dim)', borderRadius: tk.r.sm, fontSize: text.sm.fontSize, color: tk.accent },
   pill: { fontSize: text.xs.fontSize, fontWeight: 700, textTransform: 'capitalize', border: '1px solid var(--line-strong)', borderRadius: tk.r.pill, padding: '1px 8px' },
   label: { fontSize: text.xs.fontSize, color: tk.textDim, background: tk.surfaceHigh, border: '1px solid var(--line-strong)', borderRadius: 6, padding: '1px 7px' },
+  wdRemove: { background: 'transparent', border: 'none', color: tk.muted, cursor: 'pointer', fontSize: text.sm.fontSize, padding: '0 4px', flexShrink: 0 },
   muted: { color: tk.muted, fontSize: text.xs.fontSize },
   mono: { fontFamily: 'monospace', fontSize: text.sm.fontSize, color: tk.textDim, background: tk.bg, border: `1px solid ${tk.lineSoft}`, borderRadius: tk.r.sm, padding: space.md, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   link: { color: tk.blue, fontSize: text.sm.fontSize, textDecoration: 'none', flex: 1 },
