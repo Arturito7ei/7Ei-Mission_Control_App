@@ -7,6 +7,7 @@ and read/write the shared memory vault from a terminal.
 export MC_BASE_URL=https://7ei-backend.fly.dev
 export MC_AGENT_TOKEN=mca_...        # mint in Cockpit → agent card
 
+node cli/mc.mjs openapi              # OpenAPI 3.1 spec (public — no token needed)
 node cli/mc.mjs me
 node cli/mc.mjs tasks assigned
 node cli/mc.mjs claim <taskId>        # → { runId, sessionState }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { buildRequest } from '../lib.mjs'
 
 test('routes commands to method + path + body', () => {
+  assert.deepEqual(buildRequest(['openapi']), { method: 'GET', path: '/api/openapi.json', public: true })
   assert.deepEqual(buildRequest(['me']), { method: 'GET', path: '/api/agent/me' })
   assert.equal(buildRequest(['tasks']).path, '/api/agent/tasks?state=assigned')
   assert.equal(buildRequest(['tasks', 'all']).path, '/api/agent/tasks?state=all')
