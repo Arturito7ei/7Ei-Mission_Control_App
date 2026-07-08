@@ -13,8 +13,8 @@
 | ID | Requirement | Story | Status |
 |---|---|---|---|
 | FR-1 | Operator can issue spoken commands from the desk (Cockpit mic, push-to-talk). | B2 | `[ ]` |
-| FR-2 | Spoken input is transcribed with a confidence score; low-confidence transcripts trigger a re-prompt, never a guess. | B1, A3 | `[ ]` |
-| FR-3 | Wake-word ("Arturita") is available as an opt-in; push-to-talk is the default. | B2 (S5) | `[ ]` |
+| FR-2 | Spoken input is transcribed with a confidence score; low-confidence transcripts trigger a re-prompt, never a guess. | B1, A3 | `[~]` (B1: `gateTranscript` (empty/reprompt/accept) + `TranscriptResult.confidence`; A3 re-prompt path done; live STT provider returning the score wires when an S1 provider is configured) |
+| FR-3 | Wake-word ("Arturita") is available as an opt-in; push-to-talk is the default. | B2 (S5) | `[~]` (B1: `hasWakeWord`/`stripWakeWord`/`shouldProcessCapture` — push-to-talk default, wake-word opt-in; Cockpit panel UI is B2) |
 | FR-4 | Arturita replies by voice (TTS) on the desk and as a Telegram voice message remotely. | B1, D2 | `[ ]` |
 | FR-5 | Questions route to a single-turn `ask` (no workspace/checkout); work orders route to the `execute` loop. | B3 | `[ ]` |
 | FR-6 | A follow-up utterance continues the same task thread (wake-on-comment). | B3 | `[ ]` |
@@ -109,7 +109,7 @@
 ### Privacy & observability
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| NFR-17 | Voice audio discarded after transcription; no long-term audio store; transcripts operator-deletable. | B1 | `[ ]` |
+| NFR-17 | Voice audio discarded after transcription; no long-term audio store; transcripts operator-deletable. | B1 | `[~]` (B1: `AUDIO_RETENTION='discard_after_transcription'` invariant marker + no audio persisted by design; enforced end-to-end when the voice endpoint lands with the S1 provider) |
 | NFR-18 | A "what did you hear/do" audit view lists recent transcripts + actions. | B2/G1 | `[ ]` |
 | NFR-19 | Every Arturita action is visible as a task with a thread + heartbeat block (no silent actions). | A1/C2/timeline | `[ ]` |
 

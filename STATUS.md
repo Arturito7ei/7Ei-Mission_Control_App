@@ -34,6 +34,8 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 
 | **C1** (pure planner) · Host safety logic | `services/host-planner.ts` (pure, **fail-closed**: `HOST_EXECUTION_ENABLED=false` + `assertExecutionEnabled()` throw until S3; `canonicalizePath`/`isWithinRoot` no-escape prefix check; `hitsDenylist` catastrophic-target hard-deny; `classifyBlastRadius` auto-safe/needs-approval/refuse with destructive-never-auto-safe; `decideAccess`; `planHostOp` combined plan → `file_destructive` approval; undo-journal `buildUndoEntry`/`isReversible`). **No daemon, no routes, NO filesystem execution** — the write/destructive path stays blocked on **S3**. | in progress | PR pending |
 
+| **B1** (pure helpers) · Voice gateway core | `services/voice.ts` (pure: `normalizeTranscript`; `hasWakeWord`/`stripWakeWord`/`shouldProcessCapture` — push-to-talk default, wake-word opt-in; `gateTranscript` empty/reprompt/accept confidence gate; `orderVoiceProviders` cloud→alt→local→text-only with **local-only for sensitive/wallet contexts** (S1 privacy default); `nextVoiceProvider`; `AUDIO_RETENTION` discard-after-transcription marker). Provider adapters + the `/voice` endpoint land when an **S1** STT/TTS provider is configured. | in progress | PR pending |
+
 Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) + host filesystem writes (C1/C2 daemon) stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody; no real destructive machine op ships until S3.**
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
