@@ -30,7 +30,9 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 
 | **F1** · LLM fallback chain + circuit breaker | `services/llm-fallback.ts` (pure: `parseFallbackChain` from deployConfig; `classifyLlmError` → 6 failure classes + failover/breaker guidance; circuit breaker `recordFailure`/`isProviderHealthy` with window + cooldown/re-probe; `planFallback` walks the chain, skips open breakers, drops hops over the preflight per-wake cap, parks with a plain-language reason when exhausted). **Pure decision layer only** — live wiring into the `agent-executor`/`streamLLM` retry loop is a deliberate follow-up (kept off the LLM hot path in the overnight session). | in progress | PR pending |
 
-Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded and stay blocked on **S3/S6/S4** until CONFIRMED.
+| **E1** · Wallet read + prepare + simulate | `services/wallet.ts` (pure: `buildUnsignedTx` key-free assembly; `decodeCalldata` ABI-layout decode of a curated selector table; `summarizeSimulation` gas/revert; `checkCaps` per-tx/per-day/allowlist; `detectScamSignals` new-address/setApprovalForAll/unlimited/drain/unknown-contract; `weiToEth`/`weiToGwei`; **`assertNoKeyMaterial` no-key-custody invariant**). `wallet_intents` table (no key material). Routes `POST …/wallet/prepare` + `…/:id/simulate` + `GET …/wallet/intents` — **no signing endpoint by design**. | in progress | PR pending |
+
+Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) are last + most-guarded and stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody, ever.**
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |

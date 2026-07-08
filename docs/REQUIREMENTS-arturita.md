@@ -42,12 +42,12 @@
 ### Crypto wallet (read + prepare, never sign)
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-19 | Arturita reads balances/positions and public chain data (gas, etc.) via RPC — no key needed. | E1 | `[ ]` |
-| FR-20 | Arturita builds an **unsigned** transaction and **simulates** it (gas, slippage, expected output, revert). | E1 | `[ ]` |
+| FR-19 | Arturita reads balances/positions and public chain data (gas, etc.) via RPC — no key needed. | E1 | `[~]` (E1: unit helpers + `wallet_intents` + prepare/simulate endpoints; live RPC balance read wires when an RPC endpoint is configured — no key needed by design) |
+| FR-20 | Arturita builds an **unsigned** transaction and **simulates** it (gas, slippage, expected output, revert). | E1 | `[x]` (E1: `buildUnsignedTx` (key-free) + `summarizeSimulation` (gas cost + revert) + `POST …/wallet/prepare`/`…/simulate`; no signing endpoint exists) |
 | FR-21 | Transactions surface a `wallet_tx` approval with decoded calldata + contract label in plain language. | E2, A2 | `[ ]` |
 | FR-22 | On approval the unsigned tx is handed to MetaMask/Brave via WalletConnect; the operator signs in the wallet UI. Arturita never signs. | E2 (S4) | `[ ]` |
 | FR-23 | Per-tx / per-day caps + destination allowlist enforced; over-cap requires step-up. | E2 | `[ ]` |
-| FR-24 | Scam guards: warn on new addresses, `setApprovalForAll`, unlimited approvals, drain-pattern calldata. | E2 | `[ ]` |
+| FR-24 | Scam guards: warn on new addresses, `setApprovalForAll`, unlimited approvals, drain-pattern calldata. | E2 | `[~]` (E1: `detectScamSignals` covers all four (+ unknown contract), surfaced on `prepare`; the `wallet_tx` approval *card* rendering these is E2, gated on S4) |
 
 ### Remote (Telegram)
 | ID | Requirement | Story | Status |
@@ -82,7 +82,7 @@
 | ID | Requirement | Story | Status |
 |---|---|---|---|
 | NFR-1 | **100%** of destructive file ops, wallet txs, and email sends pass through an approval before execution. | A2 + C2/E2/A2 | `[~]` (A2: the gate exists — dangerous types + machine-rendered verbatim summary + step-up on approve; per-surface *execution* wiring enforced in C2/E2/D2) |
-| NFR-2 | **Zero** private keys / seed phrases ever touch Arturita's process — enforced by design invariant + CI secret-scan. | E1 | `[ ]` |
+| NFR-2 | **Zero** private keys / seed phrases ever touch Arturita's process — enforced by design invariant + CI secret-scan. | E1 | `[~]` (E1: design invariant enforced — `looksLikeKeyMaterial`/`assertNoKeyMaterial` guard every persisted `wallet_intents` field, no signing endpoint, no key fields on `UnsignedTx`; the CI secret-scan **workflow** is a go-live item — needs a `.github/workflows` change, see QUESTIONS) |
 | NFR-3 | No dangerous surface (B/C/D/E) merges before A2 (the approval-type gate) is on `main`. | sequencing | `[ ]` |
 | NFR-4 | Destructive voice commands are never one-shot: ≥99% require an explicit confirmation utterance/tap; ambiguous/low-confidence → reject + re-prompt. | A3, B1 | `[~]` (A3: two-phase confirm logic — bare affirmative rejected, action-verb restatement or tap required, sub-threshold STT re-prompts; end-to-end voice wiring in B1) |
 | NFR-5 | Voice never authorizes an address or amount alone — entities echoed visually before wallet/email approval. | A3, E2 | `[ ]` |

@@ -22,6 +22,7 @@ import { scheduledRoutes, routineTriggerRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
+import { arturitaWalletRoutes } from './routes/arturita-wallet'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
@@ -98,6 +99,7 @@ async function start() {
     await secured.register(usageRoutes)           // /orgs/:orgId/usage, /limits
     await secured.register(skillRoutes)           // skill library read + write/sync
     await secured.register(arturitaRoutes)        // Arturita persona/session/binding (A1)
+    await secured.register(arturitaWalletRoutes)  // Arturita wallet read/prepare/simulate (E1)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────

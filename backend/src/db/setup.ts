@@ -135,6 +135,12 @@ export async function setupDatabase() {
     // captured voice-note replay (enforced fully in D1; table lands with A1).
     `CREATE TABLE IF NOT EXISTS arturita_nonces (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, nonce TEXT NOT NULL, seen_at INTEGER NOT NULL)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_arturita_nonces_uniq ON arturita_nonces(org_id, nonce)`,
+    // Arturita E1: prepared UNSIGNED wallet transactions (read+prepare+simulate).
+    // Holds the decoded summary, simulation result, caps/scam checks, and — only
+    // after the operator signs in the wallet UI (E2) — the resulting txhash.
+    // NEVER any key material (design invariant + assertNoKeyMaterial + CI scan).
+    `CREATE TABLE IF NOT EXISTS wallet_intents (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, chain TEXT NOT NULL, kind TEXT, to_address TEXT, value_wei TEXT, decoded_summary TEXT, unsigned_tx TEXT, sim_result TEXT, caps_check TEXT, warnings TEXT, status TEXT NOT NULL DEFAULT 'prepared', approval_id TEXT, signed_txhash TEXT, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_wallet_intents_org ON wallet_intents(org_id, status)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
