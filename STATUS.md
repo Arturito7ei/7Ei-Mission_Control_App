@@ -26,7 +26,9 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 | **A1** · Persona, sessions & `/panic` | `services/arturita-session.ts` (pure: session mint/verify/revoke + TTL/step-up freshness, single-operator binding, nonce guard, panic plan); `arturita_sessions`/`arturita_bindings`/`arturita_nonces` tables; owner-scoped Arturita persona seed; session/bind routes + **`POST panic`** (owner-authed via session token). | ✅ done | #174 |
 | **A2** · Dangerous approval types + step-up | `services/dangerous-approvals.ts` (pure: `file_destructive`/`wallet_tx`/`email_send`/`machine_exec` classification, **machine-rendered verbatim** action summaries + scam/danger warnings, step-up evaluation); `decideApproval` gains a step-up gate (approve a dangerous type ⇒ needs a fresh command session, else 403); approvals POST regenerates the summary from a structured `action` (ignores model prose). | in progress | PR pending |
 
-Safety gate: **A2 is the mechanical approval-type gate** every dangerous surface depends on — **no B/C/D/E dangerous surface merges before A2 is on `main`**. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded.
+| **A3** · Intent classifier + two-phase confirm | `services/intent.ts` (pure: `classifyIntent` tiers safe/destructive/critical + maps to A2 approval types; `confirmationPhraseFor`; `isConfirmed` two-phase — bare "yes" rejected for the top tier, action-verb restatement or tap required; sub-threshold STT re-prompts, never guesses). Table-driven tests over a destructive/safe/ambiguous corpus. | in progress | PR pending |
+
+Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded and stay blocked on **S3/S6/S4** until CONFIRMED.
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |
