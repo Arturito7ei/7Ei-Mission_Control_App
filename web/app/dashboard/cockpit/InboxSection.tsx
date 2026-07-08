@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { tk, text, space } from '../tokens'
 import { Button, Card, SectionLabel, TextInput } from '../ui'
 import { EXT_PURPLE, KIND_C, KIND_LABEL, sx, type Approval, type ApprovalDecision, type InboxItem } from './shared'
+import { isReviewCase } from '@/lib/trust'
 
 export default function InboxSection({ inbox, approvals, onDismiss, onDecide, onRetry }: {
   inbox: InboxItem[]
@@ -39,15 +40,28 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
     <div>
       <SectionLabel>Inbox · {inbox.length + approvals.length}</SectionLabel>
       <Card style={{ paddingTop: 0, paddingBottom: 0 }}>
-        {approvals.map(a => (
+        {approvals.map(a => {
+          // Epic P / P1 — a low-trust review case is a QUARANTINE hold, not a
+          // routine approval. Distinct chip (🛡, icon+text+shape — never color
+          // alone) + the machine-rendered warnings, but the same tri-state loop.
+          const review = isReviewCase(a.type)
+          const warnings: string[] = review && Array.isArray(a.payload?.warnings) ? a.payload.warnings : []
+          return (
           <div key={a.id}>
             <div style={sx.row}>
-              <span style={{ ...sx.tag, background: 'var(--accent-dim)', color: EXT_PURPLE }}>Approval · {a.type}</span>
+              <span style={{ ...sx.tag, background: review ? 'var(--warning-dim, var(--accent-dim))' : 'var(--accent-dim)', color: review ? 'var(--warning-text, #b45309)' : EXT_PURPLE }}>
+                {review ? '🛡 Low-trust review' : `Approval · ${a.type}`}
+              </span>
               <div style={{ flex: 1, minWidth: 0, fontWeight: 600 }}>{a.summary}</div>
               <Button style={{ color: tk.accent }} onClick={() => onDecide(a.id, 'approved')}>✓ Approve</Button>
               <Button style={{ color: tk.accent }} onClick={() => { setRevising(r => r === a.id ? null : a.id); setNote('') }}>↩ Request changes</Button>
               <Button style={{ color: tk.red }} onClick={() => onDecide(a.id, 'rejected')}>✕ Reject</Button>
             </div>
+            {warnings.length > 0 && (
+              <div style={{ padding: `0 0 ${space.sm}px`, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {warnings.map((w, i) => <div key={i} style={s.warnLine}>⚠ {w}</div>)}
+              </div>
+            )}
             {revising === a.id && (
               <div style={{ ...sx.row, gap: space.md, borderBottom: `1px solid ${tk.lineSoft}` }}>
                 <TextInput autoFocus value={note} onChange={e => setNote(e.target.value)}
@@ -58,7 +72,8 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
         {inbox.map(i => (
           <div key={i.taskId} style={{ ...sx.row, alignItems: i.error ? 'flex-start' : 'center' }}>
             <span style={{ ...sx.tag, background: (KIND_C[i.kind] ?? KIND_C.attention).bg, color: (KIND_C[i.kind] ?? KIND_C.attention).fg, marginTop: i.error ? 3 : 0 }}>{KIND_LABEL[i.kind] ?? i.kind}</span>
@@ -81,4 +96,6 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
 const s: Record<string, React.CSSProperties> = {
   // Failure evidence: muted, monospace-ish, single-line clamp (full text on hover).
   errLine: { fontSize: text.xs.fontSize, color: 'var(--danger-text)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace' },
+  // Low-trust review warnings — amber, iconed (⚠), indented under the case.
+  warnLine: { fontSize: text.xs.fontSize, color: 'var(--warning-text, #b45309)', paddingLeft: space.md },
 }

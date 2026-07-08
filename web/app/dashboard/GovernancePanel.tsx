@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, text, space, density } from './tokens'
 import { Button, Card, Pill, SectionLabel, Skeleton, TextInput } from './ui'
+import { parseTrustMode, boundaryToFields, parseBoundaryFields, trustBadge, isContainedToNothing, type TrustMode, type TrustBoundary } from '@/lib/trust'
 
 // MCA-UI U3 (MCA-72) — Governance panel. Surfaces the MCA-GOV2 backend:
 // execution policies (action→approval), per-agent permissions, and config
@@ -12,7 +13,9 @@ import { Button, Card, Pill, SectionLabel, Skeleton, TextInput } from './ui'
 type Getter = () => Promise<string | null>
 
 type Policy = { id: string; action: string; requiresApproval: number }
-type Agent = { id: string; name: string; avatarEmoji?: string; permissions?: string | null }
+type Agent = { id: string; name: string; avatarEmoji?: string; permissions?: string | null; trustMode?: string | null; trustBoundary?: string | null }
+type TrustEdit = { mode: TrustMode; projects: string; tasks: string; agents: string }
+const parseBoundaryJson = (j?: string | null): Partial<TrustBoundary> => { try { return j ? JSON.parse(j) : {} } catch { return {} } }
 type Revision = { id: string; entity: string; entityId: string; actor?: string | null; createdAt: number }
 
 const CAP_HINTS = ['memory:write', 'attachment:write', 'connector:*', '*']
@@ -24,6 +27,7 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
   const [revisions, setRevisions] = useState<Revision[]>([])
   const [newAction, setNewAction] = useState('')
   const [capEdits, setCapEdits] = useState<Record<string, string>>({})
+  const [trustEdits, setTrustEdits] = useState<Record<string, TrustEdit>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false) // MCA-81 — skeletons on initial load
@@ -38,8 +42,13 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
       ])
       setPolicies(p.policies); setAgents(a.agents); setRevisions(r.revisions)
       const edits: Record<string, string> = {}
-      for (const ag of a.agents) edits[ag.id] = parseCaps(ag.permissions).join(', ')
-      setCapEdits(edits)
+      const tEdits: Record<string, TrustEdit> = {}
+      for (const ag of a.agents) {
+        edits[ag.id] = parseCaps(ag.permissions).join(', ')
+        const bf = boundaryToFields(parseBoundaryJson(ag.trustBoundary))
+        tEdits[ag.id] = { mode: parseTrustMode(ag.trustMode), ...bf }
+      }
+      setCapEdits(edits); setTrustEdits(tEdits)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
     setLoaded(true)
   }, [orgId, getToken])
@@ -68,6 +77,15 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
     catch (e: any) { setErr(e?.message ?? 'Failed') }
   }
   const rollback = async (id: string) => { try { const r = await api<{ restored?: string[] }>(`/api/revisions/${id}/rollback`, { token: await getToken(), method: 'POST', body: '{}' }); await load(); note(`Rolled back (${(r.restored ?? []).length} fields)`) } catch (e: any) { setErr(e?.message ?? 'Failed') } }
+  // Epic P / P1 — owner-gated trust level + boundary set. PUT is owner-only on the
+  // backend; a member sees a 403 surfaced here rather than a silent no-op.
+  const setTrust = (id: string, patch: Partial<TrustEdit>) => setTrustEdits(t => ({ ...t, [id]: { ...t[id], ...patch } }))
+  const saveTrust = async (agentId: string) => {
+    const e = trustEdits[agentId]; if (!e) return
+    const boundary = parseBoundaryFields({ projects: e.projects, tasks: e.tasks, agents: e.agents })
+    try { await api(`/api/orgs/${orgId}/agents/${agentId}/trust`, { token: await getToken(), method: 'PUT', body: JSON.stringify({ trustMode: e.mode, boundary }) }); await load(); note('Trust level saved') }
+    catch (e: any) { setErr(e?.message ?? 'Failed (owner role required)') }
+  }
 
   return (
     <div style={s.page}>
@@ -115,6 +133,41 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
       </section>
 
       <section>
+        <SectionLabel style={{ margin: '0 0 4px' }}>Trust &amp; containment <span style={s.muted}>(owner only)</span></SectionLabel>
+        <p style={s.hint}>A <strong>low-trust</strong> agent is contained: it may only touch the resources in its <em>boundary set</em> (project / task / agent ids), and every gated action — <code>file_destructive</code>, <code>wallet_tx</code>, <code>email_send</code>, <code>machine_exec</code>, create-agents/skills, assign-tasks — is held for your review before it takes effect. Default is <strong>Standard</strong> (no change).</p>
+        <Card style={s.card}>
+          {!loaded && skelRows}
+          {loaded && agents.map(ag => {
+            const e = trustEdits[ag.id] ?? { mode: 'standard' as TrustMode, projects: '', tasks: '', agents: '' }
+            const low = e.mode === 'low_trust_review'
+            const badge = trustBadge(e.mode)
+            const stranded = isContainedToNothing(e.mode, parseBoundaryFields({ projects: e.projects, tasks: e.tasks, agents: e.agents }))
+            return (
+              <div key={ag.id} style={{ display: 'flex', flexDirection: 'column', gap: space.sm, padding: `${space.sm}px 0`, borderBottom: `1px solid ${tk.lineSoft}` }}>
+                <div style={s.row}>
+                  <span style={{ width: 150, fontSize: text.md.fontSize }}>{ag.avatarEmoji} {ag.name}</span>
+                  <Pill tone={badge.tone}>{badge.icon} {badge.label}</Pill>
+                  <div style={{ flex: 1 }} />
+                  <Button style={{ color: low ? tk.muted : tk.accent }} onClick={() => setTrust(ag.id, { mode: 'standard' })} aria-pressed={!low}>● Standard</Button>
+                  <Button style={{ color: low ? tk.accent : tk.muted }} onClick={() => setTrust(ag.id, { mode: 'low_trust_review' })} aria-pressed={low}>🛡 Low-trust</Button>
+                  <Button variant="primary" onClick={() => saveTrust(ag.id)}>Save</Button>
+                </div>
+                {low && (
+                  <div style={{ display: 'flex', gap: space.md, flexWrap: 'wrap', paddingLeft: 150 }}>
+                    <label style={s.bLabel}>Projects<TextInput placeholder="p1, p2" value={e.projects} onChange={ev => setTrust(ag.id, { projects: ev.target.value })} /></label>
+                    <label style={s.bLabel}>Tasks<TextInput placeholder="t1, t2" value={e.tasks} onChange={ev => setTrust(ag.id, { tasks: ev.target.value })} /></label>
+                    <label style={s.bLabel}>Agents<TextInput placeholder="a1, a2" value={e.agents} onChange={ev => setTrust(ag.id, { agents: ev.target.value })} /></label>
+                  </div>
+                )}
+                {stranded && <div style={{ ...s.hint, color: 'var(--warning-text, #b45309)', paddingLeft: 150, margin: 0 }}>⚠ Empty boundary — this agent can touch nothing (fully contained).</div>}
+              </div>
+            )
+          })}
+          {loaded && agents.length === 0 && <div style={s.muted}>No agents.</div>}
+        </Card>
+      </section>
+
+      <section>
         <SectionLabel style={{ margin: '0 0 4px' }}>Config revisions</SectionLabel>
         <p style={s.hint}>Every agent change is snapshotted. Roll back to restore the prior state.</p>
         <Card style={s.card}>
@@ -141,6 +194,7 @@ const s: Record<string, React.CSSProperties> = {
   card: { display: 'flex', flexDirection: 'column', gap: space.sm },
   row: { display: 'flex', gap: space.md, alignItems: 'center', minHeight: density.row },
   muted: { color: tk.muted, fontSize: text.sm.fontSize },
+  bLabel: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: text.xs.fontSize, color: tk.muted },
   err: ui.err,
   ok: ui.ok,
 }

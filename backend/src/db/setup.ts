@@ -146,6 +146,11 @@ export async function setupDatabase() {
     // default 0 (off) — mainnet + autonomous signing stay off until an explicit
     // operator go. The burner key lives sealed in the secret store, not here.
     `CREATE TABLE IF NOT EXISTS wallet_policy (org_id TEXT PRIMARY KEY, per_tx_threshold_usd INTEGER, per_day_cap_usd INTEGER, allowlist TEXT, autonomous_signing_enabled INTEGER NOT NULL DEFAULT 0, mainnet_enabled INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
+    // Epic P / P1 — low-trust review mode. `trust_mode` defaults to 'standard'
+    // so nothing changes for existing agents; `trust_boundary` is the JSON
+    // allowlist { projects, tasks, agents } a low-trust agent may touch.
+    `ALTER TABLE agents ADD COLUMN trust_mode TEXT NOT NULL DEFAULT 'standard'`,
+    `ALTER TABLE agents ADD COLUMN trust_boundary TEXT`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

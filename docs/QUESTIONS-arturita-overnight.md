@@ -112,3 +112,12 @@ Nine PRs squash-merged to `main`, invariant green throughout (ended at **707 bac
 - Recovered cleanly from a mid-session `ECONNRESET` (dropped while polling F2's CI): F2 (#182) was verified green and merged on resume; tracker docs reconciled to match `main`.
 - **Jira** Epics A–G still not filed (Atlassian OAuth unavailable in build sessions) — file interactively, back-fill MCA numbers.
 - **Vault mirror** (`vault/07-Agents/Arturita.md`) — Obsidian MCP was disconnected at wrap-up; mirror pending (see below).
+
+---
+
+## Epic P / P1 — low-trust review mode (2026-07-08) — follow-ups (non-blocking)
+The pure decision core, schema, owner-gated routes, one enforcement chokepoint (orchestrator delegation), and the UI shipped and are green. Deferred, safe to leave:
+- **Auto-resume of an approved quarantined action.** Today the review case is HELD (fail-closed): approving a `low_trust_review` case lifts the quarantine but does not itself re-run the action — the operator (or a re-issued command) executes it, and any dangerous re-run still hits the A2 gate + step-up. A resume-on-approve worker (replay the stored `payload.action` after `approved`) is a clean follow-up; the safety property (nothing runs unattended) holds without it.
+- **Wire the `review-evaluate` guard into the remaining action-producers.** The orchestrator delegation path enforces `task_assign` now; the same `evaluateLowTrustAction` + `buildReviewCaseRow` pair should be called at the other low-trust chokepoints (agent-create, skill-create, and the dangerous-action approval-creation path) so a low-trust agent is contained everywhere, not only on delegation. The route (`POST …/review-evaluate`) already exists for any producer to call.
+- **Boundary-set pickers.** The Governance UI takes comma-separated ids; a follow-up can turn these into project/task/agent multi-select pickers (the backend already normalizes + validates shape).
+- **Jira** — Epic P not filed (Atlassian OAuth unavailable in build sessions); file interactively + back-fill the MCA number.
