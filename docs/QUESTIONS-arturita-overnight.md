@@ -6,18 +6,26 @@
 
 ---
 
-## ⚠️ Decisions I need you to confirm (blocking further dangerous work)
+## ✅ DECISION LOCK 2026-07-08 — S1–S6 all CONFIRMED (was: blocking)
 
-These are the S-decisions from `DECISIONS-arturita.md`. Until you flip them to `CONFIRMED`, I have **not** shipped the dangerous surface they gate — only pure logic behind a fail-closed default.
+The operator confirmed all six S-decisions at their desk and added two new requirements. Details + rationale in `docs/DECISIONS-arturita.md`; the wave is unblocked. Summary of the confirmed answers:
 
-| # | Decision | What I need | Why it blocks |
-|---|---|---|---|
-| **S3** | Mac-control adapter approach + allowlist root/denylist | Approve building a local daemon; give the **allowlist root(s)** and confirm the **denylist**. | Blocks shipping any real host filesystem write/destructive path (C1/C2/C3 execution). I built the pure planners + fail-closed guard only. |
-| **S6** | `machine_exec` allowlist at launch | Confirm **empty allowlist** at launch + opt-in-per-command. | Blocks C3. Launch default is empty; no command is enabled. |
-| **S4** | WalletConnect project id + test wallet | Provide a **WalletConnect project id** (go-live) + a **test wallet/testnet**; confirm per-tx/per-day caps + destination allowlist values. | Blocks E2 live handshake. I built prepare/simulate/decode + unsigned-tx handoff against a **mocked** handshake only. **No auto-signing, ever.** |
-| **S1** | STT/TTS provider | Confirm local-first stance; name a cloud provider + budget if you want the optional tier. | I scaffolded `voice.ts` pure helpers on the provisional local-first decision. No provider keys wired. |
-| **S2** | iPhone surface (Telegram-only v1) | Confirm Telegram is the sole remote surface for v1. | Framing only; I proceeded on Telegram-only. |
-| **S5** | Wake-word vs push-to-talk | Confirm push-to-talk default. | UI default only. |
+| # | Decision | Confirmed answer |
+|---|---|---|
+| **S1** | STT/TTS provider | `local\|provider` config, per-context; interim `provider` = **Chatterbox TTS via NVIDIA API** (key in encrypted store, **never git** — verified not committed). |
+| **S2** | iPhone surface | **Telegram-only v1** (operator provides bot token); **v2 native/PWA app → Epic H**. |
+| **S3** | Mac-control + access | Custom daemon, **whole-machine access** (full control assumed), **minimal self-protection denylist only**. Destructive ops still A2-gated. |
+| **S4** | **Wallet — CHANGED** | **Bounded autonomous signing from a capped burner**; autonomous < **$100**, ≥ $100 → approval; local keystore/session key; **testnet only, mainnet flag-gated**. Overrides the old never-sign invariant. |
+| **S5** | Wake-word | **Push-to-talk default**, "Arturita" wake-word opt-in. |
+| **S6** | `machine_exec` | **Broad exec allowed** (full control); destructive/irreversible still A2-gated with argv verbatim. |
+
+**New requirements (2026-07-08):** distributable packaging + iPhone app → **Epic H** (PLAN) + FR-38..42 / NFR-25..27 (REQUIREMENTS).
+
+### Still needed from the operator (go-live, not build blockers)
+- **Telegram bot token** + set `WEBHOOK_SIGNING_SECRET` (enables D-epic remote control).
+- **Wallet:** fund + name the **burner** (separate from main wallet), testnet + RPC, confirm per-tx threshold ($100 default)/per-day cap/allowlist, and the **final explicit go** before any mainnet autonomous signing.
+- **F1 default fallback chain** confirmed: `claude-sonnet → gpt-4o → gemini-2.0-flash → deepseek → local llama`.
+- Load `NVIDIA_API_KEY` into the encrypted store (Cockpit → Secrets); local voice models installed for `local` mode.
 
 ---
 

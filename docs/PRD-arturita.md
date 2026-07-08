@@ -1,8 +1,10 @@
 # PRD — Arturita: Voice-First Personal AI Agent
 
-> **Status:** Draft for review · **Owner:** operator (arturito@7ei.ai) · **Author:** build agent · **Date:** 2026-07-07
+> **Status:** Draft for review · **Owner:** operator (arturito@7ei.ai) · **Author:** build agent · **Date:** 2026-07-07 · **Amended:** 2026-07-08 (decision lock S1–S6 + wallet-model change + Epic H)
 > **Type:** Major update to 7Ei Mission Control (same monorepo) · **Supersedes:** the "Incoming major update" placeholder in `HANDOFF.md`
-> **Companions:** `CLAUDE.md` (conventions), `STATUS.md` (shipped surface), `docs/DESIGN_SYSTEM.md` (binding design rules), `GO-LIVE.md` (console actions), `HANDOFF.md` (kickoff)
+> **Companions:** `CLAUDE.md` (conventions), `STATUS.md` (shipped surface), `docs/DESIGN_SYSTEM.md` (binding design rules), `GO-LIVE.md` (console actions), `HANDOFF.md` (kickoff), `docs/DECISIONS-arturita.md` (S1–S6)
+
+> **⚠️ 2026-07-08 amendment — wallet safety-model CHANGE.** S4 was confirmed with a **material override**: Arturita moves from *read/prepare/never-sign, no key custody* to **bounded autonomous signing from a dedicated capped burner wallet** — she may transact autonomously **below** a per-tx threshold (default **USD $100**), and any transaction **at/above** it still routes through the A2 approval flow. Downside is bounded by the burner balance (capped funding = capped loss). **Mainnet autonomous signing is NOT enabled this wave** (testnet + full policy/keystore design only). The affected invariants below (§2 goals/non-goals, §2 metrics, §7.4) are updated; see `docs/DECISIONS-arturita.md` S4 for the full rationale + residual-risk note. Two new requirements — **distributable packaging** + an **iPhone app** — are captured as **Epic H** in the PLAN.
 
 This PRD is a **plan of record**, not an implementation. It restates scope and acceptance so the next session can file it as epics/stories and ship one PR per story with the invariant green (backend tests · 11/11 evals · web build). It deliberately **reuses existing Mission Control primitives** rather than inventing parallel ones — every capability below names the primitive it extends.
 
@@ -12,7 +14,7 @@ This PRD is a **plan of record**, not an implementation. It restates scope and a
 
 **Arturita** is a voice-first personal AI agent that lives inside 7Ei Mission Control as a special, single-operator agent persona (the female counterpart to the org's auto-hired **Arturito**). She is the operator's always-on chief-of-staff: talk to her, and she reads and writes files on the operator's machine, triages email and calendar, prepares (but never auto-signs) crypto transactions, and reports back — from the desk via the web Cockpit and voice, or remotely from an iPhone over Telegram (voice notes, text, files).
 
-Arturita is **not a new runtime**. She is a new *surface* (voice + a hardened local host + a remote Telegram control plane) on top of the existing agent-executor, LLM router, approval flow, preflight/budget guards, watchdogs, secrets store, and heartbeat/timeline. The single most important design commitment: **every irreversible or outward-facing action passes through the existing tri-state approval flow with a human in the loop.** Wallet signing, destructive file operations, and sending email are never autonomous.
+Arturita is **not a new runtime**. She is a new *surface* (voice + a hardened local host + a remote Telegram control plane) on top of the existing agent-executor, LLM router, approval flow, preflight/budget guards, watchdogs, secrets store, and heartbeat/timeline. The single most important design commitment: **every material irreversible or outward-facing action passes through the existing tri-state approval flow with a human in the loop.** Destructive file operations and sending email are never autonomous; **wallet transactions are autonomous only below a per-tx spend threshold (default USD $100) from a dedicated capped burner wallet — at/above the threshold they gate through approval** (S4, 2026-07-08). The burner is separate from the operator's main wallet and, this wave, testnet-only.
 
 ### One-paragraph pitch
 "Hey Arturita, archive last week's downloads, draft a reply to the Fly invoice email, and check my calendar for Thursday." She transcribes the voice, plans the steps, executes the safe ones (read calendar, list files, draft the reply into a file), and **stops at the two dangerous ones** — moving files and sending email — surfacing each as an approval card you confirm by voice, tap, or Telegram button. Everything she does shows up on the Cockpit timeline and in the task thread, so there's never a silent action.
@@ -25,12 +27,13 @@ Arturita is **not a new runtime**. She is a new *surface* (voice + a hardened lo
 1. **Voice-first control** of the operator's machine, email, and calendar from the desk and remotely.
 2. **Remote control from iPhone** via Telegram: voice notes, text commands, file up/download, and one-tap approvals — no App Store release required for v1.
 3. **Full machine control, safely bounded**: read/edit/create/move files, directories, and documents on the operator's Mac, with destructive operations gated by approval and a blast-radius cap.
-4. **Crypto wallet awareness with human-in-the-loop signing only**: read balances/positions, *prepare* transactions, *simulate* them — but **never** hold keys or auto-sign. The operator signs in MetaMask/Brave themselves.
+4. **Crypto wallet with bounded autonomous signing from a capped burner** *(changed 2026-07-08 — S4)*: read balances/positions, *prepare* + *simulate* transactions, and **sign autonomously below a per-tx threshold (default USD $100)** from a **dedicated low-balance burner wallet** separate from the operator's main wallet. Transactions **at/above the threshold** route to the operator through the A2 approval flow. Downside is capped by the burner balance. Mainnet autonomous signing stays behind an explicit go flag; this wave builds the policy engine + keystore + testnet path only.
 5. **Resilient LLM backbone**: swap providers per task and **fail over automatically** across the existing multi-provider router, with cost governed by the existing preflight/budget system.
 6. **Zero silent actions**: everything Arturita does is a task with a thread, a heartbeat block, and (for dangerous actions) an approval record.
 
 ### Non-goals (v1)
-- **Not** a custodial wallet. Arturita never imports, stores, or transmits a private key or seed phrase. No auto-signing, ever. (See §7.4.)
+- **Not** a manager of the operator's **main** wallet. Arturita controls **only a dedicated capped burner** (S4). She never imports/holds the operator's primary keys or seed phrase; the burner's key is sealed in the encrypted keystore, never plaintext at rest, never logged. Autonomy is bounded (< per-tx threshold, capped balance/day); mainnet autonomous signing is off this wave. (See §7.4.)
+- **Not** a trading bot or MEV/strategy engine. Autonomous signing is for small operational transactions only, always simulated first; it does not run strategies (that's the separate 7PolyBet track).
 - **Not** a native iOS app on the App Store for v1. Remote control is via Telegram; a thin native/PWA client is a v2 candidate (§10).
 - **Not** a general multi-user product. Arturita is scoped to **one operator** (the org owner). She is not offered to other org members or tenants in v1.
 - **Not** a replacement for Arturito or the existing agents. She is an additional persona on the same executor.
@@ -38,7 +41,7 @@ Arturita is **not a new runtime**. She is a new *surface* (voice + a hardened lo
 - **Not** a new LLM runtime or model — she uses the existing `llm-router.ts` providers.
 
 ### Success metrics
-- **Safety (primary):** 100% of destructive file ops, wallet transactions, and email sends pass through an approval before execution. Zero private keys ever touch Arturita's process (verified by design + secret-scan CI).
+- **Safety (primary):** 100% of destructive file ops, **wallet transactions at/above the per-tx threshold**, and email sends pass through an approval before execution. Sub-threshold burner transactions are autonomous but simulated-before-sign, cap-checked (per-tx + per-day + destination allowlist), and each logged as a visible task. The burner private key is never in plaintext at rest, never logged, never in a prompt/transcript/vault (verified by design invariant + secret-scan CI). No operator **main-wallet** key ever touches Arturita's process.
 - **Latency:** desk voice → first action ≤ 3 s p50; Telegram voice note → acknowledged ≤ 5 s p50.
 - **Reliability:** LLM failover succeeds (task completes on a fallback provider) in ≥ 95% of primary-provider outages, within the per-wake cost cap.
 - **Recall/misrecognition safety:** ≥ 99% of destructive voice commands require an explicit confirmation utterance/tap before executing (no "one-shot" destructive voice).
@@ -71,7 +74,7 @@ Each flow is a task on the existing board with a thread, heartbeat block, and �
 4. **"Archive last week's downloads to ~/Archive/2026-07."** — destructive file move. Local host computes the exact file list, returns a **preview manifest** (N files, total size, destination), raises `[APPROVAL: file_destructive | move 42 files → ~/Archive/2026-07]`; on approval, executes atomically with an undo journal.
 5. **"Edit the PRD — change the deadline to August."** — file edit. Small, in-root edit shows a diff preview; edits inside the allowlisted root and under a size threshold are auto-safe; edits outside root or above threshold need approval.
 6. **"What's my ETH balance and the gas price?"** — read-only wallet. Reads public chain data via RPC / wallet read; no key needed. Spoken answer.
-7. **"Prepare a swap of 0.5 ETH to USDC."** — wallet transaction. Arturita builds the unsigned tx, **simulates** it (gas, slippage, expected output), raises `[APPROVAL: wallet_tx | ...]` with the decoded human-readable summary; on approval she hands the **unsigned** tx to MetaMask/Brave for the operator to sign **in the wallet UI**. Arturita never signs.
+7. **"Swap 0.5 ETH to USDC."** — wallet transaction (S4 model). Arturita builds + **simulates** the tx (gas, slippage, expected output, revert), decodes the calldata, and runs the **policy engine**. If the USD value is **below** the per-tx threshold (default $100) and in-policy (per-day cap OK, destination allowed, no scam flag), she **signs it autonomously from the burner** and records it as a visible task. If **at/above** the threshold (or over per-day / off-allowlist / scam-flagged), she raises `[APPROVAL: wallet_tx | ...]` with the decoded summary and waits for the operator (voice never authorizes value alone — entities echoed visually). Testnet this wave; mainnet behind the explicit go flag.
 8. **"From my phone: move the screenshots into the Q3 folder."** — Telegram voice note → STT → same file-move flow → inline "✅ Approve / ✕ Reject / ↩ Changes" buttons in Telegram.
 9. **"From my phone: here's a PDF, save it to the project and summarize it."** — Telegram file upload → local host writes it into root (auto-safe if in-root + under threshold) → document-ingest → spoken summary back as a Telegram voice message.
 10. **"Stop everything / kill switch."** — voice or Telegram `/panic` immediately pauses Arturita (existing `canAgentRun` paused state), cancels in-flight runs, and revokes the current session token. Always available, never itself gated.
@@ -84,7 +87,8 @@ Each flow is a task on the existing board with a thread, heartbeat block, and �
   Desk voice ─┐                                   ┌─ Google (Gmail/Calendar) — existing connectors
   Cockpit ────┼─► Voice Gateway (STT/TTS) ─► Backend agent-executor ─┼─ Vault memory — existing bus
   Telegram ───┘        (new)                  (existing loop)         ├─ LLM router (failover) — existing
-                                                     │                └─ Wallet read/prepare (new, read+simulate only)
+                                                     │                └─ Wallet (new): read + prepare + simulate + policy-gated sign
+                                                     │                   (capped burner; autonomous < $100, approval ≥ $100; testnet this wave)
                                                      ▼
                                        Governance + Approvals (existing tri-state)
                                                      │  (dangerous actions gated here)
@@ -103,7 +107,7 @@ Each flow is a task on the existing board with a thread, heartbeat block, and �
 | Govern LLM cost | `preflight.ts` per-wake cap + `budget.ts` scoped budgets | Failover retries are bounded by the same per-wake cap |
 | Provider swap/failover | `llm-router.ts` (Anthropic/Gemini/OpenAI-compatible/local) | Add an ordered fallback chain + health/circuit-breaker (§6) |
 | Remote comms | `telegram-bot.ts` + `webhook-auth.ts` (HMAC per-org) | Voice notes, files, inline-button approvals, per-operator binding |
-| Secrets at rest | `secrets.ts` (AES-256-GCM, scoped, never into prompts) | Wallet RPC keys, provider keys, Telegram binding — **never** private keys |
+| Secrets at rest | `secrets.ts` (AES-256-GCM, scoped, never into prompts) | Wallet RPC keys, provider keys (incl. `NVIDIA_API_KEY`), Telegram bot token/binding, and the **sealed burner keystore** (S4) — never the operator's **main-wallet** key, never plaintext key at rest, never into prompts/logs/vault |
 | Declarative safety checks | `watchdogs.ts` | Runaway-run / cost / no-activity watchdogs on long Arturita tasks |
 | Visibility | `timeline.ts` heartbeat + `receipts.ts` + task thread | Every voice action is a visible task with a heartbeat block |
 | Machine runtime pattern | `adapters/mac-mini/` (OpenClaw, launchd keep-alive) | New sibling `adapters/arturita-host/` daemon, same install/keep-alive shape |
@@ -150,24 +154,29 @@ STT is fallible; a misheard destructive command must never execute silently.
 - **No batching of confirmations.** Each destructive action is confirmed on its own; "approve all" is not offered for destructive tiers.
 - **Cool-down / undo window.** Destructive file ops execute via the undo journal (§7.3) with a short reversible window where feasible.
 
-### 7.3 Machine-control blast radius
-- **Allowlisted root only.** The local host operates inside an operator-configured root (e.g. `~/` minus a denylist, or a set of allowed roots). Anything outside root is refused — no absolute-path escape, no `..` traversal (canonicalize + verify prefix).
-- **Denylist of catastrophic targets.** System dirs, `~/.ssh`, keychains, `.env`/secret files, wallet vaults, browser profiles holding wallet extension data, and the Arturita host's own config are **hard-denied** for read *and* write (so a compromised model can't exfil keys or brick the machine).
-- **Blast-radius caps.** Operations touching more than N files or more than X GB, or recursive deletes, require approval regardless of location; a hard ceiling refuses outright and asks the operator to narrow the request.
-- **Command execution is allowlisted, not arbitrary.** `machine_exec` runs only from a curated allowlist of commands (or explicitly-approved one-offs), never a free-form shell from the model. Every exec is an approval-gated `machine_exec` with the exact argv shown.
+### 7.3 Machine-control blast radius (**whole-machine access + self-protection denylist — S3, 2026-07-08**)
+- **Whole machine allowed, minimal denylist (changed).** The operator grants **full machine access** — the install assumes full control of the given machine, so the allowlist root is **effectively the whole machine**. Path canonicalization still applies (no `..`/symlink escape) but now enforces the *denylist* boundary, not a small allowlist.
+- **Minimal hard denylist — self-protection ONLY.** A short list is hard-denied for read *and* write, purely so Arturita can't harm herself or brick the host: **(1)** her own **secret store** backing file(s), the **burner wallet keystore** (S4), and the **daemon's own credentials/config** (she must never exfiltrate or overwrite her own signing key); **(2)** **OS system-integrity paths** (SIP-protected locations, boot/firmware, `/System`, `/usr` except `/usr/local`). Everything else is permitted.
+- **Blast-radius caps still apply.** Operations touching more than N files / more than X GB, or recursive deletes, require approval regardless of location; a hard ceiling refuses outright and asks the operator to narrow the request. The undo journal + preview manifest still gate destructive ops.
+- **Command execution is broad, destructive subset gated (changed — S6).** `machine_exec` may run commands (full control assumed); the model still never gets a *silent* destructive shell — **destructive/irreversible commands route through the A2 approval gate with the exact argv shown verbatim** and the two-phase confirm. Non-destructive commands run without a per-command approval.
 - **Undo journal.** File moves/edits/deletes record a reversible journal (originals staged, not immediately purged) so a mistaken op can be rolled back by voice ("undo that").
 - **Least privilege.** The host runs as the operator user (not root); no sudo. It's the operator's own machine, self-hosted, keep-alive via launchd like the existing mac-mini adapter.
 - **Auditability.** Every host action is a task + thread entry + heartbeat block; nothing the host does is invisible in the Cockpit.
 
-### 7.4 Wallet safety (never auto-sign)
-This is the hardest constraint and the clearest line.
-- **No key custody — ever.** Arturita never imports, stores, generates, or transmits a private key or seed phrase. `secrets.ts` holds RPC endpoints and *read* keys only; a CI secret-scan and a design invariant forbid private-key material in the process.
-- **Read + prepare + simulate only.** Arturita reads balances/positions (public RPC), *constructs* unsigned transactions, and **simulates** them (gas, slippage, expected output, revert check) to build a human-readable approval summary.
-- **Human-in-the-loop signing in the wallet UI.** On approval, the unsigned tx is handed to MetaMask/Brave (via WalletConnect or the browser extension prompt) and **the operator signs in the wallet**, where they see the wallet's own confirmation. Two independent confirmations: Arturita's approval card *and* the wallet's native prompt.
-- **Decoded, not raw.** The approval card shows decoded calldata ("Swap 0.5 ETH → ~1,180 USDC on Uniswap v3, max slippage 0.5%, gas ~$3.10"), the destination contract's known label, and warnings for unknown contracts/approvals-to-spender.
-- **Hard limits & allowlists.** Per-tx and per-day value caps; destination-address allowlist for higher amounts; unlimited-approval (`approve(spender, max)`) transactions flagged as high-risk with an extra warning. Anything over a cap requires step-up (§7.1).
-- **Phishing/scam guards.** Warn on transfers to never-before-seen addresses, on `setApprovalForAll`, on contracts flagged by a reputation source, and on drain-pattern calldata.
-- **No private mempool / MEV auto-actions.** Arturita does not run trading bots or auto-execute strategies (that's the separate 7PolyBet track, not Arturita).
+### 7.4 Wallet safety (bounded autonomous signing from a capped burner — **changed 2026-07-08, S4**)
+This is the hardest constraint. The model changed on 2026-07-08: from *never-sign / no key custody* to **bounded autonomous signing from a dedicated capped burner wallet**, with every material (≥ threshold) transaction still human-approved. The safety story is now **capped funding = capped loss** plus the approval gate on the material tier — not "never hold a key."
+
+- **Dedicated capped burner — not the main wallet.** Arturita controls a **separate low-balance burner wallet** (MetaMask or Brave), funded with only what she may spend. The operator's **main** wallet keys/seed are never imported or touched. Maximum autonomous loss is bounded by the burner balance + the per-day cap.
+- **Bounded autonomy with a per-tx threshold.** Below a per-tx USD threshold (**default $100, operator-configurable**) Arturita may **sign autonomously**; **at/above the threshold** the tx routes to the operator via the A2 `wallet_tx` approval card (decoded summary, caps, scam guards). Value is never authorized by voice alone — entities are echoed visually first (NFR-5).
+- **Local signer / session key — WalletConnect is insufficient for autonomy.** Plain WalletConnect always defers to a human tap in the wallet UI, so it cannot do unattended signing. Autonomous signing therefore uses either **(a)** the burner key **sealed in the AES-256-GCM encrypted keystore** (OS-keychain-backed where possible), decrypted only in-process at signing time, or **(b)** a **delegated session key** (smart-account / ERC-4337-style) with an **on-chain or policy-enforced cap**. Preference: the smallest blast radius for the same UX (a capped session key over a raw hot key when the chain/wallet supports it). WalletConnect may still be used to *present* an at/above-threshold tx for a human tap.
+- **Policy engine (enforced).** Per-tx threshold + per-day cap + destination allowlist, evaluated on every tx. Under-threshold + in-policy → autonomous sign; over threshold / off-allowlist / over per-day → step-up / approval (§7.1). Caps are operator-config.
+- **Simulate before sign — always.** Every tx (autonomous or approved) is simulated (gas, slippage, expected output, revert check) *before* signing; a tx that would revert or whose simulation is missing is refused, not signed.
+- **Decoded, not raw.** Approval cards (and the autonomous-tx audit entry) show decoded calldata ("Swap 0.5 ETH → ~1,180 USDC on Uniswap v3, max slippage 0.5%, gas ~$3.10"), the destination contract's known label, and warnings for unknown contracts/approvals-to-spender.
+- **Phishing/scam guards** (carry over): warn/step-up on never-before-seen addresses, `setApprovalForAll`, unlimited approvals (`approve(spender, max)`), and drain-pattern calldata — these force approval even below the value threshold.
+- **Key hygiene (absolute).** The burner private key is **never exposed or logged**, never in a prompt/transcript/vault, never plaintext at rest, and is **denylisted from the host daemon** (S3) so a file/exec path can't read it. The `assertNoKeyMaterial` guard stays on everything persisted to `wallet_intents`.
+- **Testnet-only this wave; mainnet behind an explicit flag.** Build the policy engine + burner-keystore plumbing + a testnet signing path. `WALLET_AUTONOMOUS_SIGNING_ENABLED` and `WALLET_MAINNET_ENABLED` default **false**; real mainnet autonomous signing needs a final explicit operator go + a funded wallet.
+- **Residual risk (documented, accepted for the capped amount):** below the $100 line a compromised model or mis-simulated tx could lose up to the burner balance / per-day cap autonomously before a human sees it. Mitigated by small balances, conservative caps, destination allowlist, scam guards, simulate-before-sign, and full task-level auditability. This risk is the explicit trade for autonomy and did not exist under the old never-sign model.
+- **No private mempool / MEV auto-actions / trading strategies.** Autonomy is for small operational txs only (that's the separate 7PolyBet track, not Arturita).
 
 ### 7.5 Email & outbound comms
 - **Draft by default, send by approval.** Every send is an `[APPROVAL: email_send | to · subject]` with the full body shown; the Gmail connector sends only after approval.
@@ -210,7 +219,9 @@ New tables (idempotent `CREATE TABLE IF NOT EXISTS` in `db/setup.ts`, thin route
 - `arturita_sessions` — operator command sessions (token hash, TTL, revoked_at, last_stepup_at, source: desk|telegram).
 - `arturita_bindings` — operator ↔ Telegram chat id (+ Cockpit identity), one row, revocable.
 - `host_actions` — audit of every local-host op (kind, path/argv, blast-radius, approval_id, undo_ref, result).
-- `wallet_intents` — prepared unsigned txs (decoded summary, simulation result, caps checked, approval_id, signed_txhash once the operator signs; **no key material**).
+- `wallet_intents` — prepared txs (decoded summary, simulation result, caps/policy checked, approval_id when ≥ threshold, signed_txhash once signed — autonomously by the burner if sub-threshold+in-policy, else by the operator; **no key material persisted**).
+- `wallet_policy` — per-operator policy (per-tx threshold USD, per-day cap USD, destination allowlist, `autonomous_signing_enabled`, `mainnet_enabled`, network) — the S4 policy engine's config. **No key material.**
+- Burner **keystore** is a **sealed** artifact (encrypted keystore file / OS-keychain ref via `secrets.ts`), **not** a DB table with plaintext; denylisted from the host daemon (S3).
 - Reuse existing `approval_requests` (add types `file_destructive|wallet_tx|email_send|machine_exec`), `task_comments`/thread, `task_watchdogs`, `agent_runs`/heartbeat.
 
 New endpoints (self-described via `openapi.ts`, Clerk-secured except the Telegram receiver which stays public+HMAC):
@@ -218,7 +229,7 @@ New endpoints (self-described via `openapi.ts`, Clerk-secured except the Telegra
 - `POST /api/arturita/session` / `DELETE …/session` — mint/revoke command session; `POST …/bind` for Telegram binding.
 - `POST /api/arturita/panic` — kill switch (pause + cancel runs + revoke sessions).
 - `GET/POST /api/arturita/host/*` — capability API proxied to the local host (**only** after approval); never a raw shell.
-- `GET/POST /api/arturita/wallet/*` — read balances, prepare+simulate tx, fetch decoded summary (no signing endpoint — signing is in the wallet UI).
+- `GET/POST /api/arturita/wallet/*` — read balances, prepare+simulate tx, fetch decoded summary, evaluate policy, and (testnet, flag-gated) submit a policy-approved tx for signing. Signing happens **inside the signer boundary** (sealed burner key / session key) — the private key is never an API input or output; for ≥-threshold txs the submit path first requires an A2 `wallet_tx` approval.
 - Extend the Telegram receiver (`POST /api/telegram/webhook/:orgId`) to handle voice notes, files, and inline-button approval callbacks.
 - CLI `7ei-mc`: `arturita bind`, `arturita panic`, `arturita host-status` verbs.
 
@@ -245,9 +256,16 @@ New endpoints (self-described via `openapi.ts`, Clerk-secured except the Telegra
 - D1 Voice notes (STT) + text commands from the bound chat; HMAC-enforced; nonce/replay guard.
 - D2 File up/download; inline-button approvals (✅/✕/↩) mapped to the tri-state flow; spoken (voice-message) replies.
 
-**Epic E — Wallet (read + prepare, never sign)**
-- E1 `wallet.ts`: balances/positions read via RPC; unsigned tx build + simulation + calldata decode.
-- E2 `wallet_tx` approval card (decoded summary, caps, scam guards) + WalletConnect/extension handoff for the operator to sign; caps/allowlists.
+**Epic E — Wallet (read + prepare + policy-gated bounded signing)** *(model changed 2026-07-08 — S4)*
+- E1 `wallet.ts`: balances/positions read via RPC; tx build + simulation + calldata decode + caps + scam guards. **Done (#178).**
+- E2 **Policy engine + burner keystore + testnet signing + `wallet_tx` approval card.** Policy engine (per-tx threshold default $100, per-day cap, destination allowlist, autonomous-signing/mainnet flags); sealed burner keystore plumbing (local encrypted keystore or delegated session key); **testnet** autonomous-sign path for sub-threshold in-policy txs; `wallet_tx` approval card (decoded summary, caps, scam guards) for ≥-threshold txs. **Mainnet autonomous signing stays behind `WALLET_MAINNET_ENABLED=false` + a final operator go.**
+
+**Epic H — Packaging & Distribution** *(new 2026-07-08 — S2/D-h; design/plan this wave, build later)*
+- H1 macOS installable app bundle: `.dmg` / signed app, code-signing + notarization.
+- H2 First-run permission wizard: walks the operator through granting macOS TCC permissions the host daemon needs (Full Disk Access, Accessibility, Automation, Microphone, …).
+- H3 Auto-update channel (signed release feed).
+- H4 Fresh-machine config + secret bootstrapping (encrypted store init, deployConfig, bind flow).
+- H5 iPhone remote surface: v1 Telegram (D-epic), v2 dedicated native/PWA client.
 
 **Epic F — Resilience & LLM failover**
 - F1 Ordered fallback chain + circuit breaker on `llm-router.ts`, cost-bounded by preflight; health on `/health` + Cockpit.
@@ -257,33 +275,36 @@ New endpoints (self-described via `openapi.ts`, Clerk-secured except the Telegra
 - G1 `openapi` self-description of all new endpoints; CLI verbs; `docs/API.md` narrative.
 - G2 Go-live gates (§11) + operator runbook; update `STATUS.md`/`HANDOFF.md`/vault.
 
-> Sequencing rule: **A before everything** (no dangerous surface ships before the approval spine + kill switch). Wallet signing handoff (E2) and `machine_exec` (C3) are the last, most-guarded stories.
+> Sequencing rule: **A before everything** (no dangerous surface ships before the approval spine + kill switch). Wallet **mainnet** autonomous signing (E2, behind an explicit go flag) and `machine_exec` (C3) are the last, most-guarded stories. Epic H is design/plan this wave; the installer/wizard/native-app build come later.
 
 ---
 
 ## 11. Go-live gates (user-only console actions — assistant can't do these)
 Extends `GO-LIVE.md`:
 1. **`WEBHOOK_SIGNING_SECRET` set** (already a standing item) — **required** to enable Telegram remote control (receivers must be HMAC-enforced, not open).
-2. **STT/TTS provider keys** set via Cockpit → Secrets (+ local models installed on the Mac for offline fallback).
-3. **Telegram bot** created + bound to the operator's chat id via the one-time Cockpit code.
-4. **Arturita Local Host** installed on the Mac (`adapters/arturita-host/setup.sh`, launchd keep-alive), root/denylist/caps configured by the operator.
-5. **Wallet:** WalletConnect project id / RPC endpoints set; per-tx and per-day caps + address allowlist configured. **Confirm the no-custody invariant** (no private key anywhere).
-6. **LLM fallback chain** + per-wake cost cap configured in `deployConfig`.
+2. **STT/TTS:** `NVIDIA_API_KEY` (Chatterbox `provider` mode) set via Cockpit → Secrets; local models installed on the Mac for `local` mode / offline fallback; per-context `local|provider` default chosen (S1).
+3. **Telegram bot** token (operator-provided) loaded into the secrets store + bot bound to the operator's chat id via the one-time Cockpit code.
+4. **Arturita Local Host** installed on the Mac (`adapters/arturita-host/setup.sh`, launchd keep-alive), **whole-machine access + self-protection denylist** (S3) confirmed; TCC permissions granted via the Epic H first-run wizard.
+5. **Wallet (S4):** fund + name the **burner** (MetaMask/Brave), set RPC endpoints, configure per-tx threshold (default $100) / per-day cap / destination allowlist, seal the burner key in the keystore. **Confirm the burner is separate from the main wallet.** `WALLET_AUTONOMOUS_SIGNING_ENABLED` + `WALLET_MAINNET_ENABLED` stay **false** until a **final explicit operator go** (testnet only until then).
+6. **LLM fallback chain** + per-wake cost cap configured in `deployConfig` (default chain: `claude-sonnet` → `gpt-4o` → `gemini-2.0-flash` → `deepseek-chat` → local `llama`).
+7. **Packaging (Epic H):** signed + notarized macOS bundle, auto-update feed, fresh-machine bootstrap — all user-only console/Apple-Developer actions when H is built.
 
-## 12. Open questions
-- STT/TTS vendor default (cloud provider vs. local-first for privacy)? Lean local-first for sensitive contexts.
-- ~~Wallet integration path: WalletConnect vs. a browser-extension bridge~~ **Decided (v1): WalletConnect.** Works with both MetaMask and Brave, keeps Arturita fully out of key custody (she only emits an unsigned tx to the wallet; the operator signs in the wallet's own UI), and avoids a fragile extension bridge. Revisit only if a target wallet drops WalletConnect support.
-- Wake-word on desk: always-listening vs. push-to-talk default (privacy). Recommend push-to-talk default, wake-word opt-in.
-- Does the operator want a thin PWA/native iOS client in v2, or is Telegram sufficient long-term?
-- Scope of `machine_exec` allowlist at launch (probably empty; opt-in per command).
+## 12. Open questions (resolved 2026-07-08 unless noted)
+- ~~STT/TTS vendor default~~ **Decided (S1):** per-context **`local|provider`** config setting; interim `provider` = **Chatterbox TTS via NVIDIA API** (key in the encrypted store, never git); `local` default for sensitive contexts.
+- ~~Wallet integration path~~ **Superseded (S4, 2026-07-08):** the model changed from never-sign/WalletConnect-handoff to **bounded autonomous signing from a capped burner** via a **local encrypted keystore or delegated session key** (plain WalletConnect can't do unattended signing). WalletConnect may still present ≥-threshold txs for a human tap. **Testnet only this wave.**
+- ~~Wake-word on desk~~ **Decided (S5):** push-to-talk default, wake-word ("Arturita") opt-in.
+- ~~PWA/native iOS client in v2~~ **Decided (S2/D-h):** Telegram-only v1; native/PWA app is **v2**, tracked in **Epic H**.
+- ~~Scope of `machine_exec` allowlist at launch~~ **Decided (S6):** full control assumed → **broad exec allowed**; destructive/irreversible commands still gate through A2 with argv shown.
+- **Still open:** session-key vs local-encrypted-keystore final choice for the burner signer (resolve in the E2 build); target chains + testnet + RPC provider for the wallet build; whether the operator wants an audit-audio store (default: no).
 
 ## 13. Risks
-- **Blast radius** (machine + email + wallet) — mitigated by approval-gating, allowlist root, no key custody, kill switch.
+- **Blast radius** (machine + email + wallet) — mitigated by approval-gating the *material/irreversible* subset, self-protection denylist, **capped-burner + per-tx/per-day caps + testnet-only** for the wallet, and the kill switch. The 2026-07-08 model change (whole-machine access + autonomous sub-$100 signing) **raises** baseline blast radius vs the earlier draft; it is deliberately bounded by caps, denylist, undo journal, and the approval gate on everything material.
 - **Voice misrecognition on destructive ops** — mitigated by two-phase confirm, confidence thresholds, visual echo of entities.
 - **Remote spoofing** — mitigated by single-operator binding + HMAC + nonces + short sessions + step-up.
 - **LLM cost runaway on failover** — mitigated by preflight per-wake cap bounding every retry.
 - **Provider outage** — mitigated by ordered fallback + local last resort + degraded mode.
-- **Scope creep into custodial/trading territory** — explicitly out of scope; wallet is read+prepare+human-sign only (7PolyBet is a separate track).
+- **Scope creep into custodial/trading territory** — bounded: autonomy is a **capped burner** for small operational txs, simulated-before-sign, no strategies/MEV (7PolyBet is a separate track). The operator's main wallet is never held; mainnet autonomous signing is off until an explicit go.
+- **Autonomous wallet loss below the approval line (new, S4)** — a compromised model or mis-simulated tx could lose up to the burner balance / per-day cap before a human sees it. Mitigated by small balances, conservative per-tx/per-day caps, destination allowlist, scam guards, simulate-before-sign, testnet-first, and per-tx task auditability. Accepted as the explicit trade for autonomy.
 
 ---
 
