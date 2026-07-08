@@ -29,7 +29,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 |
 | **E1** | Wallet read + prepare + simulate | `todo` | — | — |
 | **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
-| **F1** | LLM fallback chain + circuit breaker | `todo` | — | — |
+| **F1** | LLM fallback chain + circuit breaker | `in-progress` | PR pending (pure layer; executor wiring follow-up) | — |
 | **F2** | Degraded/offline + watchdogs | `todo` | — | — |
 | **G1** | Self-description + CLI | `todo` | — | — |
 | **G2** | Go-live gates + runbook | `todo` | — | — |

@@ -60,8 +60,8 @@
 ### Resilience & LLM
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-29 | Arturita swaps LLM providers per task and fails over across an ordered fallback chain on provider failure. | F1 | `[ ]` |
-| FR-30 | Failover handles 5xx/timeout/429/auth/context-overflow/refusal; a circuit breaker skips unhealthy providers. | F1 | `[ ]` |
+| FR-29 | Arturita swaps LLM providers per task and fails over across an ordered fallback chain on provider failure. | F1 | `[~]` (F1: `parseFallbackChain` + `planFallback` pure ordered-chain logic done; wiring into the live `agent-executor`/`streamLLM` retry loop is a follow-up — kept off the LLM hot path overnight) |
+| FR-30 | Failover handles 5xx/timeout/429/auth/context-overflow/refusal; a circuit breaker skips unhealthy providers. | F1 | `[~]` (F1: `classifyLlmError` covers all six classes + `recordFailure`/`isProviderHealthy` circuit breaker with cooldown/re-probe, all tested; live wiring is the follow-up) |
 | FR-31 | Offline/degraded: local LLM + local STT/TTS keep Arturita conversational; cloud-dependent actions queue and replay idempotently on reconnect. | F2 | `[ ]` |
 | FR-32 | Provider/model health is visible on `/health` + the Cockpit. | F1 | `[ ]` |
 
@@ -102,7 +102,7 @@
 | ID | Requirement | Story | Status |
 |---|---|---|---|
 | NFR-13 | LLM failover completes the task on a fallback in ≥95% of primary-provider outages, within the per-wake cost cap. | F1 | `[ ]` |
-| NFR-14 | Failover retries are cost-bounded — cannot exceed the preflight per-wake cap; exhausted chain parks the task with a plain-language `system_notice`. | F1 | `[ ]` |
+| NFR-14 | Failover retries are cost-bounded — cannot exceed the preflight per-wake cap; exhausted chain parks the task with a plain-language `system_notice`. | F1 | `[~]` (F1: `planFallback` drops hops over the per-wake cap (reuses `estimateWakeCost`) and emits a plain-language park reason when exhausted; posting the `system_notice` wires with the executor follow-up) |
 | NFR-15 | Desk voice → first action ≤ 3s p50; Telegram voice note → acknowledged ≤ 5s p50. | B1/B2/D1 | `[ ]` |
 | NFR-16 | Long/expensive Arturita runs carry watchdogs (runtime/cost/no_activity), edge-triggered (fire once on transition). | F2 | `[ ]` |
 
