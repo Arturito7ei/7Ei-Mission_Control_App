@@ -22,8 +22,8 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **B1** | Voice Gateway (`local|provider` config + Chatterbox/NVIDIA adapter + `/voice`) | `done` (pure helpers [#180]; `voice-config.ts` per-context mode + `voice-provider.ts` Chatterbox/NVIDIA TTS + `POST …/arturita/voice` endpoint [#188]; live raw-audio STT + local engine = go-live) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180), [#188](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/188) | S1 ✅ |
 | **B2** | Cockpit voice panel | `todo` | — | S5 ✅ |
 | **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done [#181]; endpoint wiring pends B1-full) | [#181](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/181) | — |
-| **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon scaffold + read/preview/undo = this wave, destructive/exec behind A2) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | S3 ✅ |
-| **C2** | File ops + preview + undo | `todo` (read/preview/undo path this wave; destructive gated) | — | S3 ✅ |
+| **C1** | Local Host daemon | `done` (pure planner [#179]; `adapters/arturita-host/` daemon scaffold — localhost+token, real read/list/preview + staged undo, S3 whole-machine root + self-protection denylist, destructive fail-closed behind `approved` [#189]) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179), [#189](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/189) | S3 ✅ |
+| **C2** | File ops + preview + undo | `in-progress` (daemon read/preview/undo + fail-closed destructive shipped [#189]; backend→daemon proxy + `host_actions` audit table + A2 wiring = follow-up) | [#189](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/189) | S3 ✅ |
 | **C3** | `machine_exec` (broad) + doc editing | `todo` (destructive subset A2-gated) | — | S6 ✅ |
 | **D1** | Telegram voice notes + text + auth | `todo` | — | S2 ✅ (needs bot token + `WEBHOOK_SIGNING_SECRET`) |
 | **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 ✅ |

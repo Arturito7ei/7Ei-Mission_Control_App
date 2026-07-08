@@ -1,0 +1,13 @@
+{
+  "name": "@7ei/arturita-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Arturita Local Host daemon — hardened localhost file/machine capability service (S3). Reads/previews free; destructive ops fail closed behind an A2 approval + undo journal.",
+  "bin": { "arturita-host": "src/server.mjs" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

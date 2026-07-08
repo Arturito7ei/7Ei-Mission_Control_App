@@ -1,18 +1,22 @@
-// Arturita C1 (safe subset) — Local Host SAFETY PLANNER (pure, fail-closed).
+// Arturita C1 — Local Host SAFETY PLANNER (pure). The decision logic for the
+// Arturita Local Host daemon (`adapters/arturita-host/`); it performs NO
+// filesystem I/O itself. The daemon (which DOES touch the FS) mirrors these RULES
+// so the denylist / blast-radius / canonicalization / undo-journal logic is
+// owned + tested here.
 //
-// ⚠️ This module is the *decision logic* for the future Arturita Local Host
-// daemon (`adapters/arturita-host/`), NOT the daemon itself. It performs NO
-// filesystem I/O and NO command execution. It exists so the allowlist-root /
-// denylist / blast-radius / path-canonicalization / undo-journal RULES are
-// written, owned, and exhaustively tested in the backend — behind a FAIL-CLOSED
-// default — before any real host write path ships.
+// S3 CONFIRMED (2026-07-08): the operator grants FULL machine access — the
+// allowlist root is effectively the whole machine. What protects the host is now
+// a MINIMAL SELF-PROTECTION denylist (Arturita's own secret store + burner
+// keystore + daemon config, plus OS system-integrity paths) AND the A2 approval
+// gate on every destructive/irreversible op. Reads/previews are safe; destructive
+// execution (move/delete/overwrite over the cap, machine_exec) stays behind the
+// approval gate + two-phase confirm.
 //
-// The real write/destructive path stays BLOCKED until decision S3 (adapter
-// approach + allowlist root/denylist) is CONFIRMED in docs/DECISIONS-arturita.md.
-// `HOST_EXECUTION_ENABLED = false` here is the fail-closed guard: every planner
-// returns a decision, but a decision to *allow* is meaningless until the daemon
-// exists AND S3 is confirmed. `assertExecutionEnabled()` throws so no caller can
-// accidentally treat a plan as permission to act.
+// `HOST_EXECUTION_ENABLED = false` remains the backend→daemon PROXY gate: the
+// backend does not drive real destructive host actions until the operator has
+// installed + wired the daemon. `assertExecutionEnabled()` throws so a plan is
+// never mistaken for permission. The daemon does real reads/previews under its
+// own enforcement (see `adapters/arturita-host/`).
 
 // ─── Fail-closed master switch ───────────────────────────────────────────────
 
@@ -92,7 +96,32 @@ export const DEFAULT_DENYLIST = [
   '.metamask',
   'Ethereum',             // wallet vaults
   '.arturita-host',       // the host's own config
+  '.arturita-keystore',   // the burner wallet keystore (S4) — never readable/writable
+  '.arturita-secrets',    // the host's copy of the secret store, if any
 ] as const
+
+// OS system-integrity path prefixes — hard-denied so Arturita can't brick the OS
+// (S3 self-protection). Matched as canonical absolute prefixes; `/usr/local` is
+// the documented exception (Homebrew etc. live there and are operator space).
+export const SYSTEM_INTEGRITY_PREFIXES = [
+  '/system',
+  '/usr',                 // except /usr/local (carved out below)
+  '/bin',
+  '/sbin',
+  '/private/var/db/systempolicy',
+  '/library/apple',
+] as const
+
+const SYSTEM_INTEGRITY_EXCEPTIONS = ['/usr/local']
+
+/** Is this a protected OS system-integrity path (SIP-ish)? Canonical + lowercase
+ *  prefix match, with the `/usr/local` operator carve-out. Pure. */
+export function hitsSystemIntegrity(path: string): boolean {
+  const c = canonicalizePath(path).toLowerCase()
+  if (!c) return false
+  if (SYSTEM_INTEGRITY_EXCEPTIONS.some(ex => c === ex || c.startsWith(ex + '/'))) return false
+  return SYSTEM_INTEGRITY_PREFIXES.some(p => c === p || c.startsWith(p + '/'))
+}
 
 /** Does a path hit the denylist (catastrophic target)? Case-insensitive; matches
  *  a full segment, a dotfile, or a known filename prefix anywhere in the path.
@@ -100,6 +129,8 @@ export const DEFAULT_DENYLIST = [
 export function hitsDenylist(path: string, denylist: readonly string[] = DEFAULT_DENYLIST): boolean {
   const c = canonicalizePath(path).toLowerCase()
   if (!c) return true
+  // S3 self-protection: OS system-integrity paths are always denied.
+  if (hitsSystemIntegrity(c)) return true
   const segments = c.split('/')
   for (const d of denylist) {
     const dl = d.toLowerCase()
@@ -275,4 +306,40 @@ export function buildUndoEntry(input: {
 export function isReversible(entry: UndoEntry | null | undefined, now: number): boolean {
   if (!entry || !entry.staged) return false
   return now < entry.expiresAt
+}
+
+// ─── Preview manifest ────────────────────────────────────────────────────────
+
+export interface PreviewFile { path: string; bytes: number }
+
+export interface PreviewManifest {
+  op: HostOp
+  fileCount: number
+  totalBytes: number
+  destination: string | null
+  files: PreviewFile[]     // capped sample for display
+  truncated: boolean       // true when more files than the sample cap
+}
+
+/** Build the human-facing preview manifest a destructive op shows BEFORE it runs
+ *  ("move 42 files → ~/Archive"): counts, total size, destination, and a capped
+ *  sample of paths. Pure — the daemon supplies the resolved file list. This is
+ *  what the A2 `file_destructive` card renders verbatim. */
+export function buildPreviewManifest(input: {
+  op: HostOp
+  files: PreviewFile[]
+  destination?: string | null
+  sampleCap?: number
+}): PreviewManifest {
+  const cap = input.sampleCap ?? 20
+  const files = input.files ?? []
+  const totalBytes = files.reduce((s, f) => s + (Number(f.bytes) || 0), 0)
+  return {
+    op: input.op,
+    fileCount: files.length,
+    totalBytes,
+    destination: input.destination ?? null,
+    files: files.slice(0, cap).map(f => ({ path: canonicalizePath(f.path), bytes: Number(f.bytes) || 0 })),
+    truncated: files.length > cap,
+  }
 }
