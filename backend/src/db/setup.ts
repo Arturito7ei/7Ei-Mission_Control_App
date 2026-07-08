@@ -141,6 +141,11 @@ export async function setupDatabase() {
     // NEVER any key material (design invariant + assertNoKeyMaterial + CI scan).
     `CREATE TABLE IF NOT EXISTS wallet_intents (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, chain TEXT NOT NULL, kind TEXT, to_address TEXT, value_wei TEXT, decoded_summary TEXT, unsigned_tx TEXT, sim_result TEXT, caps_check TEXT, warnings TEXT, status TEXT NOT NULL DEFAULT 'prepared', approval_id TEXT, signed_txhash TEXT, created_at INTEGER NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_wallet_intents_org ON wallet_intents(org_id, status)`,
+    // Arturita E2 (S4) — wallet POLICY config per org (autonomy line + caps +
+    // switches for bounded burner signing). NEVER key material. Both switches
+    // default 0 (off) — mainnet + autonomous signing stay off until an explicit
+    // operator go. The burner key lives sealed in the secret store, not here.
+    `CREATE TABLE IF NOT EXISTS wallet_policy (org_id TEXT PRIMARY KEY, per_tx_threshold_usd INTEGER, per_day_cap_usd INTEGER, allowlist TEXT, autonomous_signing_enabled INTEGER NOT NULL DEFAULT 0, mainnet_enabled INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

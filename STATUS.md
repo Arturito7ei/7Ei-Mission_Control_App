@@ -43,7 +43,9 @@ Full planning/tracking layer filed: **PRD** `docs/PRD-arturita.md` (intent) · *
 
 | **F2** (pure helpers) · Degraded/offline + watchdogs | `services/arturita-resilience.ts` (pure: `actionNeed` local/cloud/host; `routeForConnectivity` — local runs offline, cloud queues offline with a spoken notice, host fails closed when the daemon is down; `planReplay` idempotent nonce-guarded exactly-once replay on reconnect; `defaultArturitaWatchdogs` runtime/cost/no_activity via the shipped `watchdogs.ts`). Queue store + host-health wiring pends B1/C1 execution. | ✅ done | #182 |
 
-Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) + host filesystem writes (C1/C2 daemon) stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody; no real destructive machine op ships until S3.**
+| **E2** (policy engine) · Wallet bounded-signing policy *(S4 model change)* | `services/wallet-policy.ts` (pure: `evaluateWalletPolicy` → `autonomous_sign\|require_approval\|refuse` with per-tx threshold (default **$100**)/per-day cap/allowlist/scam/simulate-before-sign; fail-closed `checkSigningGate`/`assertSigningAllowed` keeping **mainnet signing off** unless both switches on; `classifyNetwork`; `SIGNER_MODELS` — WalletConnect can't do unattended signing). `wallet_policy` table (both switches default 0). Routes `GET/PUT …/wallet/policy` + `POST …/wallet/:id/evaluate` (no signing — real testnet signer is go-live). Keystore design: `docs/WALLET-KEYSTORE-arturita.md`. **No key material anywhere; no mainnet signing.** | ✅ done | #186 |
+
+Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. **S1–S6 CONFIRMED (2026-07-08).** Wallet mainnet autonomous signing stays behind `WALLET_MAINNET_ENABLED`/`WALLET_AUTONOMOUS_SIGNING_ENABLED` (both default off) + a final operator go; real destructive host ops route through A2 with two-phase confirm. **No mainnet wallet signing; no irreversible action without the operator.**
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |
