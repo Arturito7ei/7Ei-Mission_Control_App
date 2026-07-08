@@ -21,15 +21,15 @@ export default function AssistantOrb({ state, size = 168, logoSrc }: { state: Vo
         {/* expanding rings (listening/speaking) */}
         <div className="mc-orb-ring" style={{ width: size, height: size }} />
         <div className="mc-orb-ring" style={{ width: size * 0.8, height: size * 0.8, opacity: 0.18 }} />
-        {/* core with the logo floated on top */}
+        {/* core with the 7Ei mark floated on top (crisp white honeycomb vector) */}
         <div className="mc-orb-core" style={{ width: core, height: core, display: 'grid', placeItems: 'center' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={logoSrc}
-            alt="Arturita"
-            width={Math.round(core * 0.5)}
-            height={Math.round(core * 0.5)}
-            style={{ color: 'var(--accent-contrast)', opacity: 0.95, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.35))' }}
+            alt="7Ei — Arturita"
+            width={Math.round(core * 0.62)}
+            height={Math.round(core * 0.62)}
+            style={{ opacity: 0.97, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,.4))' }}
           />
         </div>
       </div>
