@@ -28,6 +28,8 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 
 | **A3** · Intent classifier + two-phase confirm | `services/intent.ts` (pure: `classifyIntent` tiers safe/destructive/critical + maps to A2 approval types; `confirmationPhraseFor`; `isConfirmed` two-phase — bare "yes" rejected for the top tier, action-verb restatement or tap required; sub-threshold STT re-prompts, never guesses). Table-driven tests over a destructive/safe/ambiguous corpus. | in progress | PR pending |
 
+| **F1** · LLM fallback chain + circuit breaker | `services/llm-fallback.ts` (pure: `parseFallbackChain` from deployConfig; `classifyLlmError` → 6 failure classes + failover/breaker guidance; circuit breaker `recordFailure`/`isProviderHealthy` with window + cooldown/re-probe; `planFallback` walks the chain, skips open breakers, drops hops over the preflight per-wake cap, parks with a plain-language reason when exhausted). **Pure decision layer only** — live wiring into the `agent-executor`/`streamLLM` retry loop is a deliberate follow-up (kept off the LLM hot path in the overnight session). | in progress | PR pending |
+
 Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded and stay blocked on **S3/S6/S4** until CONFIRMED.
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped

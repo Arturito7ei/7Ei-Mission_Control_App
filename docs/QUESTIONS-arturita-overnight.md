@@ -29,7 +29,9 @@ _(appended as the session progresses)_
 
 ## Deferred / smaller questions
 
-_(appended as the session progresses)_
+- **F1 executor wiring (follow-up, not a blocker).** F1 shipped the full pure decision layer (fallback chain + circuit breaker + cost-bounded planning) with tests, but I deliberately did **not** wire it into the live `agent-executor`/`streamLLM` retry loop overnight — that changes the LLM hot path and I'd want you to validate real failover behavior (and confirm the fallback-chain values in `deployConfig`) before it goes live. Follow-up story: catch `streamLLM` errors → `classifyLlmError` → `planFallback` → retry, holding a module-level breaker registry, plus surface breaker health on `/health` + Cockpit. **Q:** confirm the desired default `arturita_fallback_chain` (e.g. `claude-sonnet-4-20250514, gpt-4o, gemini-2.0-flash, deepseek-chat, ollama/llama3.3`).
+- **A1 panic auth model.** `/panic` is public-scope but owner-authed via a valid command-session token. The Cockpit panic button therefore needs a live session token to call it. **Q:** OK that the button mints/uses a command session, or do you want a Clerk-only panic variant too? (Telegram-driven panic lands in D1 via the HMAC receiver.)
+- **A1 bind confirm path.** A1 exposes `POST …/arturita/bind/confirm` in the Clerk scope so you can confirm a binding from the Cockpit. In D1 the *primary* confirm path moves to the HMAC Telegram receiver (operator types the code in Telegram). Confirm that's the intended UX.
 
 ---
 
