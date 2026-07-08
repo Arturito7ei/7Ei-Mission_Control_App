@@ -312,6 +312,20 @@ export const walletIntents = sqliteTable('wallet_intents', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Arturita E2 (S4) — wallet POLICY config per org. The autonomy line + caps +
+// switches for bounded burner signing. NEVER any key material (the burner key is
+// sealed in the secret store, not here). Testnet-only this wave; mainnet is gated
+// by `mainnet_enabled` which defaults false.
+export const walletPolicy = sqliteTable('wallet_policy', {
+  orgId: text('org_id').primaryKey(),                       // one policy per org (owner-scoped)
+  perTxThresholdUsd: integer('per_tx_threshold_usd'),       // autonomy line; null → $100 default
+  perDayCapUsd: integer('per_day_cap_usd'),                 // cumulative autonomous cap; null → uncapped-by-day
+  allowlist: text('allowlist', { mode: 'json' }).$type<string[]>(),
+  autonomousSigningEnabled: integer('autonomous_signing_enabled', { mode: 'boolean' }).notNull().default(false),
+  mainnetEnabled: integer('mainnet_enabled', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const goals = sqliteTable('goals', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
