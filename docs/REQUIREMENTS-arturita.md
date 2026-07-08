@@ -12,13 +12,13 @@
 ### Voice & interaction
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-1 | Operator can issue spoken commands from the desk (Cockpit mic, push-to-talk). | B2 | `[ ]` |
+| FR-1 | Operator can issue spoken commands from the desk (Cockpit mic, push-to-talk). | B2 | `[x]` (B2 #197: `VoiceSection` push-to-talk mic in Cockpit via Web Speech API, routes through `/arturita/voice`; typed fallback for no-mic browsers. Live raw-audio STT *engine* server-side remains the go-live item) |
 | FR-2 | Spoken input is transcribed with a confidence score; low-confidence transcripts trigger a re-prompt, never a guess. | B1, A3 | `[~]` (B1: `gateTranscript` (empty/reprompt/accept) + `TranscriptResult.confidence`; A3 re-prompt path done; live STT provider returning the score wires when an S1 provider is configured) |
-| FR-3 | Wake-word ("Arturita") is available as an opt-in; push-to-talk is the default. | B2 (S5) | `[~]` (B1: `hasWakeWord`/`stripWakeWord`/`shouldProcessCapture` — push-to-talk default, wake-word opt-in; Cockpit panel UI is B2) |
+| FR-3 | Wake-word ("Arturita") is available as an opt-in; push-to-talk is the default. | B2 (S5) | `[x]` (B2 #197: Cockpit panel — push-to-talk default, "Arturita" wake-word opt-in toggle; client gate mirrors B1's `hasWakeWord`/`stripWakeWord`, unit-tested) |
 | FR-3a | **(new — S1)** Voice runs under a **`local\|provider` config setting, selectable per context**; interim `provider` = **Chatterbox TTS via NVIDIA API**; `local` default for sensitive/wallet-adjacent contexts. Provider key lives in the encrypted secrets store, never git. | B1 (S1) | `[x]` (B1 #188: `voice-config.ts` `resolveVoiceMode` (sensitive→forced local) + `selectVoiceProvider`; `voice-provider.ts` `chatterboxNvidiaSynthesize` reads `NVIDIA_API_KEY` from the secret store at call time; `POST …/arturita/voice`) |
-| FR-4 | Arturita replies by voice (TTS) on the desk and as a Telegram voice message remotely. | B1, D2 | `[~]` (B1 #188: `synthesizeSpeech` returns spoken audio (Chatterbox/NVIDIA or local), degrading to text on outage; `/voice` returns the reply. Desk playback UI is B2; Telegram voice replies are D2) |
+| FR-4 | Arturita replies by voice (TTS) on the desk and as a Telegram voice message remotely. | B1, B2, D2 | `[~]` (B1 #188: `synthesizeSpeech` returns spoken audio (Chatterbox/NVIDIA or local), degrading to text on outage. **B2 #197: desk playback shipped** — provider TTS bytes play directly, else the browser SpeechSynthesis voices the text locally. Telegram voice replies remain D2) |
 | FR-5 | Questions route to a single-turn `ask` (no workspace/checkout); work orders route to the `execute` loop. | B3 | `[~]` (B3: `routeVoiceCommand` — question→ask, work order→execute, destructive→execute-always; reuses `askmode`/`intent`. Executor wiring pends the B1 voice endpoint) |
-| FR-6 | A follow-up utterance continues the same task thread (wake-on-comment). | B3 | `[~]` (B3: `routeVoiceCommand` sets `isFollowUp` from an existing thread id → reuses `thread.ts` wake-on-comment; endpoint wiring pends B1) |
+| FR-6 | A follow-up utterance continues the same task thread (wake-on-comment). | B3, B2 | `[~]` (B3 `routeVoiceCommand` sets `isFollowUp` from an existing thread id; the `/voice` endpoint links `parentTaskId`, and **B2 passes the last `taskId` as `existingThreadId`** so consecutive utterances thread. Full wake-on-comment re-entry into a *running* thread pends the executor wiring) |
 | FR-7 | Operator can interrupt (barge-in) a spoken reply; long answers summarized aloud with full text in the thread. | B1/B2 | `[ ]` |
 
 ### Machine control
@@ -132,7 +132,7 @@
 | ID | Requirement | Story | Status |
 |---|---|---|---|
 | NFR-17 | Voice audio discarded after transcription; no long-term audio store; transcripts operator-deletable. | B1 | `[~]` (B1: `AUDIO_RETENTION='discard_after_transcription'` invariant marker + no audio persisted by design; enforced end-to-end when the voice endpoint lands with the S1 provider) |
-| NFR-18 | A "what did you hear/do" audit view lists recent transcripts + actions. | B2/G1 | `[ ]` |
+| NFR-18 | A "what did you hear/do" audit view lists recent transcripts + actions. | B2/G1 | `[~]` (B2 #197: the panel's action feed lists recent commands heard + how each routed (ask/execute/reprompt, needs-approval); a persisted org-wide audit view is G1) |
 | NFR-19 | Every Arturita action is visible as a task with a thread + heartbeat block (no silent actions). | A1/C2/timeline | `[ ]` |
 
 ### Conventions & quality gates (per story)
@@ -140,7 +140,7 @@
 |---|---|---|---|
 | NFR-20 | Business logic in pure-helper services with `node --test`; routes thin (routes→services only). | all | `[ ]` |
 | NFR-21 | Schema changes are idempotent migrations; boot + auth-scoping tests green. | all | `[ ]` |
-| NFR-22 | UI is colorblind-safe per DESIGN_SYSTEM v2 (icon+text+shape, red never lone CTA). | B2/D2 | `[ ]` |
+| NFR-22 | UI is colorblind-safe per DESIGN_SYSTEM v2 (icon+text+shape, red never lone CTA). | B2/D2 | `[~]` (B2 #197: voice panel is colorblind-safe — every state carries icon+text+shape, tri-state approvals reuse the accent/accent/red pattern where red is never the lone CTA, design tokens only; D2 Telegram surface pending) |
 | NFR-23 | Invariant green each merge: backend tests · 11/11 evals · web build. | all | `[ ]` |
 | NFR-24 | Docs bumped per PR (STATUS + this checklist + PLAN tracker); milestone mirrored to the vault. | all | `[ ]` |
 

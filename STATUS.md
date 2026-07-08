@@ -1,9 +1,10 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-07 (W5 wrap-up — all four Paperclip-gap-bridge v2 epics complete) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-08 (Arturita B2 Cockpit voice panel + zero-auth vault-graph preview shipped) · auto-maintained by the build agent (bumped at each story/phase)._
 
 **Live:** backend on Fly (`7ei-backend`, v1.3.0), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
-Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **767 backend tests · 11/11 evals · web build green**.
+**Zero-auth vault-graph preview:** https://app.7ei.ai/vault-graph.html — self-contained render of the enriched graph (785 nodes / 108 named communities), no login, no `GITHUB_VAULT_TOKEN` needed (#196).
+Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **769 backend tests · 11/11 evals · web build green · 15 web tests**.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`.
 
 ## Paperclip gap-bridge v2 — 4 / 4 epics complete
@@ -58,6 +59,8 @@ Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dange
 |---|---|---|---|
 | **M1/M2** (backend) · Vault graph + Graphify | `services/vault-graph.ts` (pure: `buildNativeGraph` from markdown — [[wikilinks]]/#tags/frontmatter, folder clusters, degree, unresolved-count, file cap; `parseGraphifyGraph` normalizes a Graphify `graph.json` into the same node/edge model, scoped to the vault root, dropping `.obsidian/`+out-of-root leaks). `GET …/memory/graph` (Graphify-first: prefers `<root>/graphify-out/graph.json`, native fallback, TTL-cached, `?rebuild=1`/`?tags=0`, `hasGraphify`+`rebuildCommand`). `vaultTree` (1-call recursive listing). Graph built from the TARCO vault + **semantic pass via local Ollama `qwen2.5:14b`** (S-M1 resolved) — **110 communities / 109 named concepts / god-node hubs / GRAPH_REPORT.md**, 786 nodes/747 edges, **$0 / no key / nothing external**; committed to `vault/graphify-out/`. `parseGraphifyGraph` surfaces `community`/`communityName`; tab shows concepts on hover/search/meta. 19 unit tests. | ✅ done | #192, #194 |
 | **M3** (web) · Vault picker + d3-force graph map | MemoryPanel upgrade — vault picker at top + `VaultGraph.tsx` interactive force-directed map (folder-clustered Okabe–Ito palette, zoom/pan/search/hover-highlight/click-to-open, d3-force). | ✅ done | #192 |
+| **M+** (web) · Zero-auth vault-graph preview | `web/public/vault-graph.html` — a self-contained, dependency-free render of the enriched Graphify graph (785 in-vault nodes / 108 named communities), reachable at `app.7ei.ai/vault-graph.html` **without login or `GITHUB_VAULT_TOKEN`** (the Memory-tab graph stays token-gated). `build-vault-graph-preview.mjs` precomputes the d3-force layout at build time and bakes positioned nodes/edges inline (no CDN/d3 at runtime → survives any CSP, works offline). Normalization mirrors `parseGraphifyGraph`; Okabe–Ito colorblind-safe, label-first; served public because `middleware.ts` excludes `.html`. | ✅ done | #196 |
+| **B2** (web) · Cockpit voice panel | `web/app/dashboard/cockpit/VoiceSection.tsx` — push-to-talk default + "Arturita" wake-word opt-in (S5); browser Web Speech capture with an always-present typed fallback; routes the recognized command through `POST …/arturita/voice` (B1 endpoint + B3 ask/execute); spoken reply via the configured mode (provider TTS bytes → else local `SpeechSynthesis`); approval-aware action feed (destructive execute flagged ⛔ needs-approval) + live approvals rendered inline with the tri-state controls; colorblind-safe (icon+text+shape, red never lone CTA), design tokens only. Pure decision logic (`voicePanel.logic.ts`) + **15 web tests** via the Node 22 built-in runner (zero new deps). Live raw-audio STT engine = go-live. | ✅ done | #197 |
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |

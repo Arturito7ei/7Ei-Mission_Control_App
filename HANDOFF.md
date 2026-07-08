@@ -6,7 +6,9 @@ _Last updated: 2026-07-08 — **all four Paperclip-gap-bridge v2 epics complete*
 
 You're taking over the **7Ei Mission Control App** — an AI-agent "virtual office" control plane (our flagship). Read `HANDOFF.md`, `STATUS.md`, `CLAUDE.md` (layered — subsystem guides load on demand), `GO-LIVE.md`, and `docs/DESIGN_SYSTEM.md` (v2 — binding design rules incl. the red-green colorblind constraint). Run the verification commands at the foot of this doc and flag any divergence.
 
-**Where things stand:** all four filed gap-bridge v2 epics are **shipped and merged to `main`** — MCA-82 Theme (T1/T2/T3 ✅), MCA-83 Work surface (W1–W5 ✅), MCA-84 Visibility (V1–V3 ✅), MCA-85 DX (D1/D2 ✅) — plus two unplanned security PRs (auth-scoping hardening #165, per-org webhook signing #166). Invariant is green: **750 backend tests · 11/11 evals · web build green**. Backend healthy at v1.3.0.
+**Where things stand:** all four filed gap-bridge v2 epics are **shipped and merged to `main`** — MCA-82 Theme (T1/T2/T3 ✅), MCA-83 Work surface (W1–W5 ✅), MCA-84 Visibility (V1–V3 ✅), MCA-85 DX (D1/D2 ✅) — plus two unplanned security PRs (auth-scoping hardening #165, per-org webhook signing #166). Invariant is green: **769 backend tests · 11/11 evals · web build green · 15 web tests**. Backend healthy at v1.3.0.
+
+> **Latest session (2026-07-08) — 2 PRs, main green (769 backend tests · web build · 15 web tests):** **#196** a **zero-auth static vault-graph preview** at `https://app.7ei.ai/vault-graph.html` (self-contained render of the enriched graph, 785 nodes / 108 named communities — an operator can inspect the Memory graph *without* connecting `GITHUB_VAULT_TOKEN`; the in-app Memory-tab graph stays token-gated); **#197** **B2** Cockpit voice panel (`VoiceSection.tsx` — push-to-talk + "Arturita" wake-word, routes recognized commands through `/arturita/voice`, TTS reply via B1 `local|provider`, approval-aware feed + inline tri-state approvals, colorblind-safe, 15 pure-logic tests). Voice go-live still pends a live raw-audio STT *engine* server-side (B2 captures client-side via the Web Speech API). See `docs/PLAN-arturita.md` §0.
 
 **This is a checkpoint before a major update.** No feature epic is currently in flight. Read the **State of the app** section below to orient, then the **Incoming major update** placeholder for the plan the operator will drop in. Do **not** start new feature work off the old open-candidates list (R4 vault RAG / R6 Sync-Registry / MCA-81 follow-ups / `app/` archive) unless the operator directs it — the major-update plan supersedes it.
 
@@ -21,7 +23,7 @@ Monorepo (npm workspaces), all merged to `main`, auto-deploys on merge.
 
 | Workspace | Stack | Deploy | Notes |
 |---|---|---|---|
-| **backend/** | Node 22 · TypeScript · Fastify · Drizzle · Turso/libSQL | Fly `7ei-backend` (fra) | 44 services, ~158 API paths / 26 tag groups, 750 tests. Live: https://7ei-backend.fly.dev |
+| **backend/** | Node 22 · TypeScript · Fastify · Drizzle · Turso/libSQL | Fly `7ei-backend` (fra) | 44 services, ~158 API paths / 26 tag groups, 769 tests. Live: https://7ei-backend.fly.dev |
 | **web/** | Next.js 15 App Router · Clerk (dev instance) | Vercel `app.7ei.ai` | **PRIMARY UI.** Dashboard = `web/app/dashboard/` + 15 `cockpit/` section components |
 | **adapters/** | Python OpenClaw runtime, mac-mini installer, presets | self-hosted | External BYO-agent execution. **Live adapter is off-limits without asking.** |
 | **cli/** | `7ei-mc` zero-dep Node CLI over the agent API | npm `@7ei/mc` | `openapi`, `onboard`, task/agent verbs |
@@ -104,7 +106,7 @@ Canonical Obsidian vault: `/Users/artutito/7Ei-MC_TARCO` (repo `Arturito7ei/7Ei-
 ```bash
 cd /Users/artutito/Developer/7Ei-Mission_Control_App
 git log --oneline -15
-cd backend && npm test && npm run evals   # expect 750 tests + 11/11
+cd backend && npm test && npm run evals   # expect 769 tests + 11/11
 cd ../web && npm run build
 curl -s https://7ei-backend.fly.dev/api/health   # expect 200, db: connected, scheduler: running
 ```
