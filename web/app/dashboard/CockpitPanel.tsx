@@ -10,6 +10,7 @@ import { Button, Card, SectionLabel, Skeleton } from './ui'
 import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Preflight, type Secret, type Timeline, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
+import VoiceSection from './cockpit/VoiceSection'
 import AgentFleet from './cockpit/AgentFleet'
 import TimelineSection from './cockpit/TimelineSection'
 import OrgChart from './cockpit/OrgChart'
@@ -153,6 +154,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
       ) : (
         <>
           <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} />
+          <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} />
           <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} />
           <TimelineSection timeline={timeline} />
           <OrgChart chart={chart} />
