@@ -34,6 +34,7 @@ import { webhookRoutes } from '../routes/webhooks'
 import { telegramWebhookRoutes } from '../routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
+import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
@@ -84,6 +85,7 @@ async function bootLikeIndex() {
     await secured.register(skillRoutes)
     await secured.register(arturitaRoutes)
     await secured.register(arturitaWalletRoutes)
+    await secured.register(arturitaVoiceRoutes)
   })
 
   await app.register(commsWebhookRoutes)
