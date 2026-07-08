@@ -23,7 +23,7 @@ import { buildArturitaAgent } from '../services/arturita-session'
 import { decideConverseMode, buildConverseSystemPrompt } from '../services/arturita-converse'
 import { routeVoiceCommand } from '../services/voice-routing'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
-import { parseFallbackChain } from '../services/llm-fallback'
+import { parseLlmChain, usableLlmChain } from '../services/arturita-pipeline'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
 
 const ConverseBody = z.object({
@@ -114,8 +114,21 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
 
     const provider = agent.llmProvider ?? 'anthropic'
     const model = agent.llmModel ?? 'claude-sonnet-4-20250514'
-    const fbChain = parseFallbackChain(org?.deployConfig as any, agent.id)
-    const chain = fbChain.length > 0 ? fbChain : [{ provider, model }]
+    // J2 — free-first LLM chain (Ollama-local first, free-tier cloud, …), pruned
+    // to usable hops with the agent's own model guaranteed as the last resort so
+    // the live path never breaks when local Ollama / free-tier keys are absent.
+    const deployCfg = (org?.deployConfig ?? {}) as Record<string, any>
+    const keyAvailable = (p: string) =>
+      !!deployCfg[`${p}_api_key`] ||
+      (p === 'anthropic' && !!process.env.ANTHROPIC_API_KEY) ||
+      (p === 'openai' && !!process.env.OPENAI_API_KEY) ||
+      (p === 'google' && !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) ||
+      (p === 'groq' && !!process.env.GROQ_API_KEY)
+    const chain = usableLlmChain({
+      entries: parseLlmChain(deployCfg),
+      keyAvailable,
+      guaranteed: { provider, model },
+    })
     const capUsd = parseCapUsd(org?.deployConfig as any, agent.id)
     const inputTokens = estimateInputTokens([system, ...messages.map(m => m.content)])
 

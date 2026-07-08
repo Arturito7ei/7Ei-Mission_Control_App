@@ -1,0 +1,132 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  parseLlmChain, parseSttChain, parseTtsChain, filterForContext,
+  usableLlmChain, resolvePipeline, validatePipelineConfig,
+  DEFAULT_LLM_CHAIN, DEFAULT_STT_CHAIN, DEFAULT_TTS_CHAIN, PIPELINE_KEYS,
+} from '../services/arturita-pipeline'
+
+// ─── Free-first defaults when unconfigured ───────────────────────────────────
+
+test('[J2] unconfigured org gets the free-first defaults (local Ollama/whisper/Piper first)', () => {
+  assert.deepEqual(parseLlmChain(null), DEFAULT_LLM_CHAIN)
+  assert.deepEqual(parseSttChain(undefined), DEFAULT_STT_CHAIN)
+  assert.deepEqual(parseTtsChain({}), DEFAULT_TTS_CHAIN)
+  assert.equal(DEFAULT_LLM_CHAIN[0].provider, 'ollama')
+  assert.equal(DEFAULT_STT_CHAIN[0].engine, 'whisper_cpp')
+  assert.equal(DEFAULT_TTS_CHAIN[0].engine, 'piper')
+})
+
+// ─── Parsing configured chains (array or JSON string) ────────────────────────
+
+test('[J2] parses a configured LLM chain and infers mode from provider', () => {
+  const cfg = { [PIPELINE_KEYS.llm]: [
+    { provider: 'ollama', model: 'qwen3:8b' },              // → local (inferred)
+    { provider: 'anthropic', model: 'claude-sonnet-4' },   // → provider (inferred)
+    { provider: 'groq', model: 'llama-3.3-70b', mode: 'provider' },
+  ] }
+  const chain = parseLlmChain(cfg)
+  assert.equal(chain.length, 3)
+  assert.equal(chain[0].mode, 'local')
+  assert.equal(chain[1].mode, 'provider')
+})
+
+test('[J2] accepts a JSON-string chain too', () => {
+  const cfg = { [PIPELINE_KEYS.stt]: JSON.stringify([{ engine: 'whisper_cpp', model: 'base', mode: 'local' }]) }
+  const chain = parseSttChain(cfg)
+  assert.equal(chain.length, 1)
+  assert.equal(chain[0].model, 'base')
+})
+
+test('[J2] LLM back-compat: falls through to the shipped arturita_fallback_chain', () => {
+  const cfg = { arturita_fallback_chain: 'ollama/llama3.2:3b, anthropic/claude-sonnet-4' }
+  const chain = parseLlmChain(cfg)
+  assert.equal(chain[0].provider, 'ollama')
+  assert.equal(chain[0].mode, 'local')
+  assert.equal(chain[1].provider, 'anthropic')
+  assert.equal(chain[1].mode, 'provider')
+})
+
+test('[J2] malformed entries are dropped; empty result → defaults', () => {
+  assert.deepEqual(parseLlmChain({ [PIPELINE_KEYS.llm]: [{ provider: 'ollama' }] }), DEFAULT_LLM_CHAIN) // no model → dropped → default
+  assert.deepEqual(parseTtsChain({ [PIPELINE_KEYS.tts]: 'not json' }), DEFAULT_TTS_CHAIN)
+})
+
+// ─── Privacy filter (S1) ─────────────────────────────────────────────────────
+
+test('[J2] a sensitive context drops every provider (cloud) entry', () => {
+  const llm = filterForContext(DEFAULT_LLM_CHAIN, { sensitive: true })
+  assert.ok(llm.every(e => e.mode === 'local'))
+  assert.ok(llm.length >= 1)                       // the Ollama locals survive
+  const stt = filterForContext(DEFAULT_STT_CHAIN, { sensitive: true })
+  assert.ok(stt.every(e => e.mode === 'local'))    // web_speech (provider) dropped
+  const notSensitive = filterForContext(DEFAULT_LLM_CHAIN, { sensitive: false })
+  assert.equal(notSensitive.length, DEFAULT_LLM_CHAIN.length)
+})
+
+test('[J2] resolvePipeline applies the privacy filter across all layers', () => {
+  const r = resolvePipeline(null, { sensitive: true })
+  assert.ok(r.llm.every(e => e.mode === 'local'))
+  assert.ok(r.stt.every(e => e.mode === 'local'))
+  assert.ok(r.tts.every(e => e.mode === 'local'))
+})
+
+// ─── usableLlmChain: prune unusable cloud hops, guarantee a last resort ──────
+
+test('[J2] usableLlmChain keeps local/ollama, drops keyless cloud, appends the guarantee', () => {
+  const chain = usableLlmChain({
+    entries: DEFAULT_LLM_CHAIN,                       // ollama, ollama, groq, google
+    keyAvailable: () => false,                        // no cloud keys (Fly w/o free-tier keys)
+    guaranteed: { provider: 'anthropic', model: 'claude-sonnet-4' },
+  })
+  // ollama hops kept (keyless), groq/google dropped (no key), anthropic appended
+  assert.deepEqual(chain, [
+    { provider: 'ollama', model: 'llama3.2:3b' },
+    { provider: 'ollama', model: 'qwen3:8b' },
+    { provider: 'anthropic', model: 'claude-sonnet-4' },
+  ])
+})
+
+test('[J2] usableLlmChain keeps a cloud hop when its key is available, dedups the guarantee', () => {
+  const chain = usableLlmChain({
+    entries: [{ provider: 'groq', model: 'llama-3.3-70b', mode: 'provider' }, { provider: 'anthropic', model: 'claude-sonnet-4', mode: 'provider' }],
+    keyAvailable: (p) => p === 'groq' || p === 'anthropic',
+    guaranteed: { provider: 'anthropic', model: 'claude-sonnet-4' },
+  })
+  assert.deepEqual(chain, [
+    { provider: 'groq', model: 'llama-3.3-70b' },
+    { provider: 'anthropic', model: 'claude-sonnet-4' },   // guarantee already present → not duplicated
+  ])
+})
+
+test('[J2] usableLlmChain never returns empty when a guarantee is given', () => {
+  const chain = usableLlmChain({ entries: [{ provider: 'groq', model: 'x', mode: 'provider' }], keyAvailable: () => false, guaranteed: { provider: 'anthropic', model: 'claude' } })
+  assert.equal(chain.length, 1)
+  assert.equal(chain[0].provider, 'anthropic')
+})
+
+// ─── validatePipelineConfig ──────────────────────────────────────────────────
+
+test('[J2] validate accepts well-formed layers and cleans them', () => {
+  const v = validatePipelineConfig({
+    [PIPELINE_KEYS.llm]: [{ provider: 'ollama', model: 'llama3.2:3b', mode: 'local' }],
+    [PIPELINE_KEYS.tts]: [{ engine: 'piper', voice: 'en_US-amy' }],
+  })
+  assert.equal(v.ok, true)
+  assert.equal(v.value.llm?.length, 1)
+  assert.equal(v.value.tts?.[0].engine, 'piper')
+})
+
+test('[J2] validate flags malformed entries and non-arrays', () => {
+  const v = validatePipelineConfig({ [PIPELINE_KEYS.llm]: [{ provider: 'ollama' }], [PIPELINE_KEYS.stt]: 'nope' })
+  assert.equal(v.ok, false)
+  assert.ok(v.errors.length >= 2)
+})
+
+test('[J2] validate ignores absent layers (partial update)', () => {
+  const v = validatePipelineConfig({ [PIPELINE_KEYS.tts]: [{ engine: 'speech_synth' }] })
+  assert.equal(v.ok, true)
+  assert.equal(v.value.llm, undefined)
+  assert.equal(v.value.stt, undefined)
+  assert.equal(v.value.tts?.length, 1)
+})
