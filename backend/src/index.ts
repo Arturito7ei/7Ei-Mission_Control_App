@@ -21,6 +21,7 @@ import { modelRoutes } from './routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from './routes/scheduled'
 import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
+import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
@@ -96,6 +97,7 @@ async function start() {
     await secured.register(webhookRoutes)         // outbound webhook config (SSRF-sensitive)
     await secured.register(usageRoutes)           // /orgs/:orgId/usage, /limits
     await secured.register(skillRoutes)           // skill library read + write/sync
+    await secured.register(arturitaRoutes)        // Arturita persona/session/binding (A1)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
@@ -106,6 +108,7 @@ async function start() {
   // reads or writes tenant data lives in the secured scope above.
   await app.register(commsWebhookRoutes)   // POST /telegram/webhook/:orgId (receiver)
   await app.register(jiraWebhookRoutes)    // POST /jira/webhook/:orgId (receiver)
+  await app.register(arturitaPublicRoutes) // POST /orgs/:orgId/arturita/panic (owner-authed via session token)
   await app.register(modelRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent

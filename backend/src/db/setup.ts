@@ -123,6 +123,18 @@ export async function setupDatabase() {
     `CREATE INDEX IF NOT EXISTS idx_task_watchdogs_enabled ON task_watchdogs(enabled)`,
     // MCA-83 W5: ask-mode — per-task work mode (execute = full loop | ask = single-turn answer to thread)
     `ALTER TABLE tasks ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute'`,
+    // Arturita A1: command sessions + single-operator binding (safety spine).
+    // Sessions are short-lived, individually revocable; only the token HASH is
+    // stored. Binding ties remote control to one operator (Telegram + Cockpit).
+    `CREATE TABLE IF NOT EXISTS arturita_sessions (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, token_hash TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'desk', created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, last_stepup_at INTEGER, revoked_at INTEGER)`,
+    `CREATE INDEX IF NOT EXISTS idx_arturita_sessions_org ON arturita_sessions(org_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_arturita_sessions_hash ON arturita_sessions(token_hash)`,
+    `CREATE TABLE IF NOT EXISTS arturita_bindings (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, operator_user_id TEXT NOT NULL, telegram_chat_id TEXT, bind_code_hash TEXT, bind_code_expires_at INTEGER, bound_at INTEGER, revoked_at INTEGER, created_at INTEGER NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_arturita_bindings_org ON arturita_bindings(org_id)`,
+    // Arturita A1: command nonce ledger — replay guard for Telegram redelivery /
+    // captured voice-note replay (enforced fully in D1; table lands with A1).
+    `CREATE TABLE IF NOT EXISTS arturita_nonces (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, nonce TEXT NOT NULL, seen_at INTEGER NOT NULL)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_arturita_nonces_uniq ON arturita_nonces(org_id, nonce)`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

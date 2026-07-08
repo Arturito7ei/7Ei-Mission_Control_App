@@ -55,7 +55,7 @@
 | FR-25 | Operator controls Arturita remotely via Telegram voice notes and text, from the bound chat only. | D1 | `[ ]` |
 | FR-26 | Operator can send/receive files over Telegram (upload → in-root/document-ingest; download). | D2 | `[ ]` |
 | FR-27 | Approvals surface in Telegram as distinct inline buttons (✅ Approve / ✕ Reject / ↩ Changes) mapped to the tri-state flow. | D2, A2 | `[ ]` |
-| FR-28 | `/panic` kill switch is available by voice and Telegram: pauses Arturita, cancels in-flight runs, revokes sessions. | A1 | `[ ]` |
+| FR-28 | `/panic` kill switch is available by voice and Telegram: pauses Arturita, cancels in-flight runs, revokes sessions. | A1 | `[~]` (A1: `POST /api/orgs/:orgId/arturita/panic` mechanism done — pauses persona, cancels runs, revokes all sessions, owner-authed via session token; voice/Telegram surfaces wire in B/D) |
 
 ### Resilience & LLM
 | ID | Requirement | Story | Status |
@@ -68,9 +68,9 @@
 ### Session, auth & orchestration
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-33 | Arturita exists as an owner-scoped agent persona per org. | A1 | `[ ]` |
-| FR-34 | Remote control is bound to the single operator (Telegram chat id + Cockpit identity) via a one-time Cockpit code. | A1 | `[ ]` |
-| FR-35 | Command sessions are short-lived and individually revocable; dangerous actions require a fresh session / step-up. | A1, A2 | `[ ]` |
+| FR-33 | Arturita exists as an owner-scoped agent persona per org. | A1 | `[x]` (A1: `agentType='arturita'`, idempotently ensured per org) |
+| FR-34 | Remote control is bound to the single operator (Telegram chat id + Cockpit identity) via a one-time Cockpit code. | A1 | `[~]` (A1: begin/confirm/revoke binding + one-time hashed code with TTL, single-use; primary Telegram-driven confirm path lands in D1) |
+| FR-35 | Command sessions are short-lived and individually revocable; dangerous actions require a fresh session / step-up. | A1, A2 | `[~]` (A1: short-lived + individually revocable sessions + `isFresh`/`needsStepUp` helpers done; step-up *enforcement* on approvals lands in A2) |
 | FR-36 | Destructive intents are classified and always produce a preview + explicit distinct confirmation (two-phase). | A3 | `[ ]` |
 | FR-37 | New endpoints are self-described via `/api/openapi.json`; CLI `7ei-mc` gains `arturita bind|panic|host-status`. | G1 | `[ ]` |
 
@@ -94,9 +94,9 @@
 | ID | Requirement | Story | Status |
 |---|---|---|---|
 | NFR-9 | Every inbound Telegram webhook is HMAC-verified (403 before DB work); `WEBHOOK_SIGNING_SECRET` required to enable remote control. | D1 (existing webhook-auth) | `[ ]` |
-| NFR-10 | Commands carry a nonce; duplicate/replayed commands are rejected (Telegram redelivery + captured-voice replay). | A1, D1 | `[ ]` |
+| NFR-10 | Commands carry a nonce; duplicate/replayed commands are rejected (Telegram redelivery + captured-voice replay). | A1, D1 | `[~]` (A1: `isFreshNonce` helper + `arturita_nonces` unique-index ledger; enforcement on the command path lands in D1) |
 | NFR-11 | Secrets (provider keys, RPC keys, bindings, host creds) live in the scoped AES-256-GCM store; injected into execution, never into prompts/transcripts/logs/vault. | A1, E1 (existing secrets.ts) | `[ ]` |
-| NFR-12 | Unbound identities and forged commands are refused and logged. | A1 | `[ ]` |
+| NFR-12 | Unbound identities and forged commands are refused and logged. | A1 | `[x]` (A1: `isBoundChat`/`isBoundOperator` fail closed; `/panic` refuses + logs an invalid/absent session token) |
 
 ### Reliability & performance
 | ID | Requirement | Story | Status |

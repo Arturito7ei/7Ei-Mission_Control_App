@@ -251,6 +251,45 @@ export const approvalRequests = sqliteTable('approval_requests', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Arturita A1: short-lived, revocable command sessions. Only the token HASH is
+// stored (the plaintext is returned once at mint). `lastStepupAt` drives the
+// step-up freshness check for dangerous actions; `revokedAt` is set on /panic,
+// explicit revoke, or DELETE session.
+export const arturitaSessions = sqliteTable('arturita_sessions', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  source: text('source').notNull().default('desk'),   // desk | telegram
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  lastStepupAt: integer('last_stepup_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+})
+
+// Arturita A1: single-operator binding — one row per org ties remote control to
+// exactly one operator (Cockpit Clerk identity + Telegram chat id). The bind
+// code is stored as a hash with a short TTL and cleared (single-use) on confirm.
+export const arturitaBindings = sqliteTable('arturita_bindings', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  operatorUserId: text('operator_user_id').notNull(),
+  telegramChatId: text('telegram_chat_id'),
+  bindCodeHash: text('bind_code_hash'),
+  bindCodeExpiresAt: integer('bind_code_expires_at', { mode: 'timestamp' }),
+  boundAt: integer('bound_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+// Arturita A1: command nonce ledger — replay guard (Telegram redelivery /
+// captured-voice replay). Unique (org, nonce); a repeat insert is a replay.
+export const arturitaNonces = sqliteTable('arturita_nonces', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  nonce: text('nonce').notNull(),
+  seenAt: integer('seen_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const goals = sqliteTable('goals', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
