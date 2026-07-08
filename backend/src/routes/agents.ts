@@ -13,6 +13,8 @@ import { nextUp } from '../services/worksurface'
 import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../services/timeline'
 import { unreadTaskIds } from '../services/receipts'
 import { validateRoster, parseCapUsd, CHEAP_OUTPUT_RATE } from '../services/preflight'
+import { parseTrustMode, parseBoundary, serializeBoundary, TRUST_MODES } from '../services/review'
+import { requireOrgRole } from '../middleware/rbac'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -92,6 +94,38 @@ export async function agentRoutes(app: FastifyInstance) {
     await db.update(schema.agents).set({ permissions: JSON.stringify(caps) }).where(eq(schema.agents.id, agentId))
     if (before) await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId: before.orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify({ ...before, permissions: JSON.stringify(caps) }), actor: (req as any).userId ?? 'human', createdAt: new Date() })
     return { ok: true, permissions: caps }
+  })
+
+  // ─── Epic P / P1 — low-trust review mode (per-agent trust + boundary) ─────
+  // Owner-gated: flipping an agent into a contained trust level (or widening its
+  // boundary) is a safety-critical control, so it requires the org OWNER role,
+  // not just any member. Every change is snapshotted to config_revisions.
+  app.get('/api/orgs/:orgId/agents/:agentId/trust', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent || agent.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    return {
+      agentId,
+      trustMode: parseTrustMode((agent as any).trustMode),
+      boundary: parseBoundary((agent as any).trustBoundary),
+    }
+  })
+  app.put('/api/orgs/:orgId/agents/:agentId/trust', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    const b = (req.body ?? {}) as any
+    if (b.trustMode != null && !(TRUST_MODES as readonly string[]).includes(String(b.trustMode))) {
+      return reply.code(400).send({ error: `trustMode must be one of ${TRUST_MODES.join(' | ')}` })
+    }
+    const before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!before || before.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    const patch: Record<string, any> = {}
+    if (b.trustMode != null) patch.trustMode = parseTrustMode(b.trustMode)
+    if (b.boundary != null) patch.trustBoundary = serializeBoundary(parseBoundary(b.boundary))
+    if (Object.keys(patch).length === 0) return reply.code(400).send({ error: 'nothing to update (trustMode and/or boundary required)' })
+    await db.update(schema.agents).set(patch).where(eq(schema.agents.id, agentId))
+    const after = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify(after), actor: (req as any).userId ?? (req as any).auth?.userId ?? 'human', createdAt: new Date() })
+    return { agentId, trustMode: parseTrustMode((after as any).trustMode), boundary: parseBoundary((after as any).trustBoundary) }
   })
 
   // MCA-GOV2 S4.1 — execution policies (action → requires approval).

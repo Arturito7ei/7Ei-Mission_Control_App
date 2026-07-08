@@ -12,6 +12,7 @@ import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { fireWebhook } from './outbound-webhooks'
+import { evaluateLowTrustAction, buildReviewCaseRow, isLowTrust } from './review'
 
 export interface DelegateDirective {
   targetName: string    // Agent name or role keyword
@@ -75,6 +76,28 @@ export async function executeDelegations(
       if (!agent) {
         console.warn(`Orchestrator: could not find agent '${directive.targetName}' in org ${orgId}`)
         return
+      }
+
+      // Epic P / P1 — low-trust containment. If the ORCHESTRATOR is a low-trust
+      // agent, delegating work (a `task_assign`) to a target outside its boundary
+      // is refused, and an in-boundary delegation is HELD in the review queue
+      // (never executed) until a human approves it. Fail-closed.
+      const orchestrator = await db.query.agents.findFirst({ where: eq(schema.agents.id, orchestratorAgentId) })
+      if (orchestrator && isLowTrust((orchestrator as any).trustMode)) {
+        const evaluation = evaluateLowTrustAction({
+          trustMode: (orchestrator as any).trustMode,
+          boundary: (orchestrator as any).trustBoundary,
+          action: { type: 'task_assign', resources: [{ kind: 'agent', id: agent.id }], payload: { targetName: agent.name, agentId: agent.id, task: directive.task } },
+        })
+        if (evaluation.decision !== 'allow') {
+          if (evaluation.decision === 'quarantine') {
+            const row = buildReviewCaseRow({ id: randomUUID(), orgId, agentId: orchestratorAgentId, action: { type: 'task_assign', resources: [{ kind: 'agent', id: agent.id }], payload: { targetName: agent.name, agentId: agent.id, task: directive.task } }, evaluation, now: new Date() })
+            await db.insert(schema.approvalRequests).values(row as any)
+          }
+          console.warn(`Orchestrator: low-trust delegation ${evaluation.decision} — ${evaluation.reason}`)
+          results.push({ agentId: agent.id, agentName: agent.name, output: `[held: ${evaluation.decision}] ${evaluation.reason}`, taskId: '' })
+          return
+        }
       }
 
       const taskId = randomUUID()

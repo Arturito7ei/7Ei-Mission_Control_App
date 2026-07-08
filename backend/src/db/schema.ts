@@ -70,6 +70,11 @@ export const agents = sqliteTable('agents', {
   // Heartbeat engine (MCA-PC C1)
   heartbeatEverySec: integer('heartbeat_every_sec'),  // wake cadence; null = no auto-wake
   nextWakeAt: integer('next_wake_at', { mode: 'timestamp' }),
+  // Epic P / P1 — low-trust review mode. `standard` (default → nothing changes
+  // for existing agents) or `low_trust_review` (contained: bounded to its
+  // `trustBoundary` resource set, gated actions quarantined for human review).
+  trustMode: text('trust_mode').notNull().default('standard'),
+  trustBoundary: text('trust_boundary'),              // JSON { projects, tasks, agents } — allowlist a low-trust agent may touch
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

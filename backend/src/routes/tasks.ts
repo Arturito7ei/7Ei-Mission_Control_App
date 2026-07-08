@@ -23,6 +23,7 @@ import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
 import { isDangerousType, renderActionSummary } from '../services/dangerous-approvals'
+import { evaluateLowTrustAction, buildReviewCaseRow, REVIEW_CASE_TYPE } from '../services/review'
 import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
@@ -144,6 +145,47 @@ export async function taskRoutes(app: FastifyInstance) {
     const approval = { id: randomUUID(), orgId, type: b.type, summary, payload, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
     await db.insert(schema.approvalRequests).values(approval as any)
     reply.code(201); return { approval, warnings }
+  })
+
+  // ─── Epic P / P1 — low-trust review queue + evaluation chokepoint ─────────
+  // The quarantine queue is just the pending `low_trust_review` approvals (we
+  // reuse approval_requests + the tri-state decide loop, no parallel store). This
+  // is a convenience filter for the operator's review surface.
+  app.get('/api/orgs/:orgId/review-queue', async (req) => {
+    const { orgId } = req.params as any
+    const status = (req.query as any)?.status ?? 'pending'
+    const conds = [eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.type, REVIEW_CASE_TYPE)]
+    if (status && status !== 'all') conds.push(eq(schema.approvalRequests.status, status))
+    return { cases: await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100) }
+  })
+
+  // Server-side enforcement chokepoint: an action-producer asks whether a
+  // low-trust agent's action may take effect. `allow` → proceed; `refuse` →
+  // dropped (boundary escape, logged); `quarantine` → a pending review case is
+  // FILED and the action must NOT execute until a human approves it. Fail-closed:
+  // an unknown agent or missing action → refuse.
+  app.post('/api/orgs/:orgId/agents/:agentId/review-evaluate', async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    const b = (req.body ?? {}) as any
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent || agent.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    const action = b.action
+    const evaluation = evaluateLowTrustAction({
+      trustMode: (agent as any).trustMode,
+      boundary: (agent as any).trustBoundary,
+      action,
+    })
+    if (evaluation.decision === 'quarantine') {
+      const row = buildReviewCaseRow({ id: randomUUID(), orgId, agentId, action, evaluation, now: new Date() })
+      await db.insert(schema.approvalRequests).values(row as any)
+      reply.code(202) // Accepted-but-held
+      return { decision: 'quarantine', reason: evaluation.reason, approval: row }
+    }
+    if (evaluation.decision === 'refuse') {
+      reply.code(403)
+      return { decision: 'refuse', reason: evaluation.reason }
+    }
+    return { decision: 'allow', reason: evaluation.reason }
   })
   // Heartbeat engine (MCA-PC C1): run a sweep on demand (orphan recovery + wakes).
   app.post('/api/orgs/:orgId/heartbeat/sweep', async (req) => {
@@ -407,7 +449,10 @@ export async function taskRoutes(app: FastifyInstance) {
     const approval = await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) })
     if (!approval) return reply.code(404).send({ error: 'approval not found' })
 
-    const requireStepUp = isDangerousType(approval.type)
+    // Step-up is required for a direct dangerous type OR for a low-trust review
+    // case wrapping a dangerous action (payload.requiresStepUp) — the review gate
+    // never becomes a cheaper path to a dangerous action than a direct A2 approval.
+    const requireStepUp = isDangerousType(approval.type) || (approval.payload as any)?.requiresStepUp === true
     let stepUpSatisfied = false
     if (requireStepUp && decision === 'approved') {
       const token = (req.headers['x-arturita-session'] as string) || (req.body as any)?.sessionToken
