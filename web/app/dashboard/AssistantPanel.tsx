@@ -18,6 +18,7 @@ import { api } from '@/lib/api'
 import { tk, text, space, ui } from './tokens'
 import { Button, Card, TextInput } from './ui'
 import AssistantOrb from './AssistantOrb'
+import AssistantPipelineConfig from './AssistantPipelineConfig'
 import {
   resolveVoiceState, toConverseRequest, toArturitaMessage,
   revealStepFor, routingBadge, type Message, type ConverseResponse,
@@ -243,6 +244,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
           <span>▸ Delegate this to the office <span style={{ color: tk.muted }}>(instead of a direct answer)</span></span>
         </label>
       </Card>
+
+      {/* ── Free-first pipeline config (LLM/STT/TTS chains, switchable) ─────── */}
+      <AssistantPipelineConfig orgId={orgId} getToken={getToken} />
     </div>
   )
 }
