@@ -38,9 +38,9 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **H3** | Auto-update channel | `todo` (design/plan this wave) | — | — |
 | **H4** | Fresh-machine config/secret bootstrap | `todo` (design/plan this wave) | — | — |
 | **H5** | iPhone remote surface (v1 Telegram, v2 native/PWA) | `todo` (v1 = D-epic; v2 native design/plan this wave) | — | S2 ✅ |
-| **M1** | Vault-graph backend + picker persistence | `in-progress` (pure `vault-graph.ts` [native + Graphify normalizer] + `/memory/graph` endpoint + 17 tests; docs) | #TBD-backend | — |
-| **M2** | Graphify integration + build/status | `in-progress` (endpoint prefers `graphify-out/graph.json`; initial `graph.json` built from TARCO vault — **structural pass only, no LLM cost**; rebuild command surfaced; **semantic pass = operator decision, see QUESTIONS Q-M1**) | #TBD-backend | S-M1 (semantic-pass cost) |
-| **M3** | Web vault picker + d3-force graph map | `in-progress` (MemoryPanel upgrade — picker + graph view) | #TBD-web | — |
+| **M1** | Vault-graph backend + picker persistence | `done` (pure `vault-graph.ts` [native + Graphify normalizer] + `/memory/graph` endpoint + 17 tests) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192) | — |
+| **M2** | Graphify integration + build/status | `done` (endpoint prefers `graphify-out/graph.json`; initial `graph.json` built from TARCO vault [786 nodes/964 edges] — **structural pass only, no LLM cost** — committed to `vault/graphify-out/`; rebuild command surfaced; **semantic pass = operator decision, see QUESTIONS Q-M1**) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192) | S-M1 (semantic-pass cost, open) |
+| **M3** | Web vault picker + d3-force graph map | `done` (MemoryPanel picker + Reader⇄Graph toggle + `VaultGraph.tsx` d3-force map, colorblind-safe) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192) | — |
 
 **Overnight build (2026-07-08) landed the entire safe spine + safe non-blocked work:** A1 #174, A2 #175, A3 #176, F1 #177, E1 #178, C1 planner #179, B1 helpers #180, B3 #181, F2 #182 — all squash-merged to `main`, invariant green (707 backend tests · 11/11 evals · web build).
 
