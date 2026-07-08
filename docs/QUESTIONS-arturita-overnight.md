@@ -44,9 +44,23 @@ Scaffolded on the PROVISIONAL decisions in `DECISIONS-arturita.md`; none of thes
 
 ---
 
-## Deferred / smaller questions
+## Decision-lock build wave (2026-07-08 pm) — what shipped + new deferrals
 
-- **F1 executor wiring (follow-up, not a blocker).** F1 shipped the full pure decision layer (fallback chain + circuit breaker + cost-bounded planning) with tests, but I deliberately did **not** wire it into the live `agent-executor`/`streamLLM` retry loop overnight — that changes the LLM hot path and I'd want you to validate real failover behavior (and confirm the fallback-chain values in `deployConfig`) before it goes live. Follow-up story: catch `streamLLM` errors → `classifyLlmError` → `planFallback` → retry, holding a module-level breaker registry, plus surface breaker health on `/health` + Cockpit. **Q:** confirm the desired default `arturita_fallback_chain` (e.g. `claude-sonnet-4-20250514, gpt-4o, gemini-2.0-flash, deepseek-chat, ollama/llama3.3`).
+**Shipped this wave (5 PRs, main green throughout — 750 backend tests · 11/11 evals):**
+- **#185** docs — decision-lock S1–S6 + wallet-model change (S4) + Epic H packaging, cascaded across PRD/PLAN/REQUIREMENTS.
+- **#186 E2 wallet policy engine** — `wallet-policy.ts` (autonomous_sign/require_approval/refuse, per-tx $100 threshold/per-day/allowlist, fail-closed signing gate keeping mainnet OFF), `wallet_policy` table, policy/evaluate endpoints, `docs/WALLET-KEYSTORE-arturita.md`. **No signing, no key in code.**
+- **#187 F1 executor wiring** — `llm-fallback-runtime.ts` wraps the live `streamLLM`; breaker registry; `/health` breaker surface. Identical to bare call when no chain set.
+- **#188 B1 voice** — `voice-config.ts` (local|provider per-context, sensitive→forced local), `voice-provider.ts` (Chatterbox/NVIDIA TTS, degrades to text), `POST …/arturita/voice`.
+- **#189 C1 host daemon** — `adapters/arturita-host/` real read/preview/undo, fail-closed destructive behind `approved`, S3 whole-machine root + self-protection denylist; verified over HTTP.
+
+**New deferrals / go-live items from this wave:**
+- **NVIDIA voice key — load into the encrypted store.** Verified NOT committed to git (tree + history clean). `.env.example` has the `NVIDIA_API_KEY=` placeholder. Operator loads the real value via **Cockpit → Secrets** (or agent-secrets injection) — I can't write the live encrypted store from a build session.
+- **E2 live testnet signer (go-live).** Policy engine + fail-closed gate + keystore design shipped; the actual burner keystore/session-key + testnet signing lib is go-live wiring (needs a funded testnet wallet + the signer-library choice). **Mainnet stays off** (`WALLET_MAINNET_ENABLED`/`WALLET_AUTONOMOUS_SIGNING_ENABLED` default false).
+- **C2 backend→daemon proxy.** The daemon is real; the backend `/api/orgs/:orgId/arturita/host/*` proxy + `host_actions` audit table + A2-approval→`/apply` wiring is the C2 follow-up. Also: install the daemon on the Mac (`adapters/arturita-host/setup.sh`) + grant TCC (Epic H wizard).
+- **B1 raw-audio STT + local engine.** The `/voice` endpoint takes a transcript; STT-of-audio-bytes + a server-side local TTS engine wire at go-live (needs the loaded key + local models).
+- **F1 default chain confirmed** as `claude-sonnet → gpt-4o → gemini-2.0-flash → deepseek → local llama` (set in `deployConfig.arturita_fallback_chain`).
+
+## Deferred / smaller questions (still open from overnight)
 - **A1 panic auth model.** `/panic` is public-scope but owner-authed via a valid command-session token. The Cockpit panic button therefore needs a live session token to call it. **Q:** OK that the button mints/uses a command session, or do you want a Clerk-only panic variant too? (Telegram-driven panic lands in D1 via the HMAC receiver.)
 - **A1 bind confirm path.** A1 exposes `POST …/arturita/bind/confirm` in the Clerk scope so you can confirm a binding from the Cockpit. In D1 the *primary* confirm path moves to the HMAC Telegram receiver (operator types the code in Telegram). Confirm that's the intended UX.
 - **NFR-2 CI secret-scan (needs a workflow change — I did not touch `.github/workflows`).** E1 enforces the no-key-custody **design invariant** in code (`assertNoKeyMaterial` guards every persisted `wallet_intents` field; `UnsignedTx` has no key fields; there is no signing endpoint). The **CI secret-scan** half of NFR-2 needs a `.github/workflows` addition (e.g. gitleaks/trufflehog + a grep gate for private-key/seed patterns), which the CLAUDE.md convention says not to touch without an explicit task. **Q:** want me to add that workflow in a dedicated PR?
