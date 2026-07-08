@@ -16,8 +16,8 @@ This table is the source of truth for per-story status. Update the **Status** + 
 
 | Story | Title | Status | PR | Gating decision |
 |---|---|---|---|---|
-| **A1** | Persona, sessions & `/panic` kill switch | `in-progress` | PR pending | — |
-| **A2** | Dangerous-action approval types + step-up | `todo` | — | — |
+| **A1** | Persona, sessions & `/panic` kill switch | `done` | [#174](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/174) | — |
+| **A2** | Dangerous-action approval types + step-up | `in-progress` | PR pending | — |
 | **A3** | Intent classifier + two-phase destructive confirm | `todo` | — | — |
 | **B1** | Voice Gateway (STT/TTS) | `todo` | — | S1 |
 | **B2** | Cockpit voice panel | `todo` | — | S5 |

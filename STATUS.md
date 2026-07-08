@@ -23,9 +23,10 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 ### Arturita build — story tracker (live)
 | Story | What | Status | PR |
 |---|---|---|---|
-| **A1** · Persona, sessions & `/panic` | `services/arturita-session.ts` (pure: session mint/verify/revoke + TTL/step-up freshness, single-operator binding, nonce guard, panic plan); `arturita_sessions`/`arturita_bindings`/`arturita_nonces` tables (idempotent); owner-scoped Arturita persona seed; `POST/DELETE session`, `POST/DELETE bind` (+confirm), **`POST panic`** (owner-authed via session token, public so voice/Telegram can reach it). | in progress | PR pending |
+| **A1** · Persona, sessions & `/panic` | `services/arturita-session.ts` (pure: session mint/verify/revoke + TTL/step-up freshness, single-operator binding, nonce guard, panic plan); `arturita_sessions`/`arturita_bindings`/`arturita_nonces` tables; owner-scoped Arturita persona seed; session/bind routes + **`POST panic`** (owner-authed via session token). | ✅ done | #174 |
+| **A2** · Dangerous approval types + step-up | `services/dangerous-approvals.ts` (pure: `file_destructive`/`wallet_tx`/`email_send`/`machine_exec` classification, **machine-rendered verbatim** action summaries + scam/danger warnings, step-up evaluation); `decideApproval` gains a step-up gate (approve a dangerous type ⇒ needs a fresh command session, else 403); approvals POST regenerates the summary from a structured `action` (ignores model prose). | in progress | PR pending |
 
-Safety gate: **no dangerous surface (B/C/D/E) merges before A2** (approval-type gate) is on `main`. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded.
+Safety gate: **A2 is the mechanical approval-type gate** every dangerous surface depends on — **no B/C/D/E dangerous surface merges before A2 is on `main`**. `machine_exec` (C3) + wallet signing (E2) are last + most-guarded.
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |
