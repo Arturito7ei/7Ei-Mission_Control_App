@@ -290,6 +290,28 @@ export const arturitaNonces = sqliteTable('arturita_nonces', {
   seenAt: integer('seen_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Arturita E1: prepared UNSIGNED wallet transactions. Read + prepare + simulate
+// only — Arturita never signs and never holds keys. `signedTxhash` is recorded
+// AFTER the operator signs in the wallet UI (E2). NEVER any key/seed material
+// (enforced by assertNoKeyMaterial + CI secret-scan).
+export const walletIntents = sqliteTable('wallet_intents', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  chain: text('chain').notNull(),
+  kind: text('kind'),                                  // transfer | approve | swap | contract_call | …
+  toAddress: text('to_address'),
+  valueWei: text('value_wei'),
+  decodedSummary: text('decoded_summary'),
+  unsignedTx: text('unsigned_tx', { mode: 'json' }).$type<Record<string, unknown>>(),
+  simResult: text('sim_result', { mode: 'json' }).$type<Record<string, unknown>>(),
+  capsCheck: text('caps_check', { mode: 'json' }).$type<Record<string, unknown>>(),
+  warnings: text('warnings', { mode: 'json' }).$type<string[]>(),
+  status: text('status').notNull().default('prepared'), // prepared | simulated | approved | signed | rejected
+  approvalId: text('approval_id'),                     // set when E2 raises the wallet_tx approval
+  signedTxhash: text('signed_txhash'),                 // recorded post-sign (E2) — operator signed in the wallet
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 export const goals = sqliteTable('goals', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
