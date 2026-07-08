@@ -25,9 +25,12 @@ has ANTHROPIC_API_KEY
 has DATABASE_URL
 has DATABASE_AUTH_TOKEN
 has PUBLIC_URL
+has SECRETS_ENC_KEY      # at-rest secret-store key — falls back to a PUBLIC default if unset (GO-LIVE §5)
 
 echo ""
 echo "Recommended:"
+opt RUN_TOKEN_SECRET        # per-run HMAC key; else falls back to SECRETS_ENC_KEY, then a public default
+opt WEBHOOK_SIGNING_SECRET  # inbound jira/telegram webhook auth; if unset, receivers accept UNSIGNED events (fail-open)
 opt PINECONE_API_KEY
 opt PINECONE_PROJECT_ID
 opt REDIS_URL

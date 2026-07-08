@@ -25,6 +25,8 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--brand-red': '#D4001A',
     '--ok': '#1f7a1f', '--ok-bg': '#eef4e8',
     '--warn': '#6b6100', '--warn-bg': '#fff9c2',
+    '--warning-text': '#b45309',             // amber-700 — warning body text on light (≥4.5:1 on card)
+    '--warning-dim': 'rgba(180,83,9,.08)',   // warning tag/row wash
     '--info': '#3500ff', '--info-bg': '#eceafd',
     '--danger-text': '#D4001A',
     '--purple-1': '#893BFF',                 // Aztec — agent identity, mode-stable
@@ -60,6 +62,8 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--brand-red': '#D4001A',
     '--ok': '#33c333', '--ok-bg': '#0e2a0e',
     '--warn': '#c9b800', '--warn-bg': '#33300a',
+    '--warning-text': '#f0a44a',             // amber lifted for dark (≥4.5:1 on card)
+    '--warning-dim': 'rgba(240,164,74,.12)', // warning tag/row wash
     '--info': '#7b6dff', '--info-bg': '#14104a',
     '--danger-text': '#ff3b52',              // red text lifted for dark
     '--purple-1': '#893BFF',

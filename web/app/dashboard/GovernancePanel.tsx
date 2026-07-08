@@ -203,7 +203,7 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
                     <label style={s.bLabel}>Agents<TextInput placeholder="a1, a2" value={e.agents} onChange={ev => setTrust(ag.id, { agents: ev.target.value })} /></label>
                   </div>
                 )}
-                {stranded && <div style={{ ...s.hint, color: 'var(--warning-text, #b45309)', paddingLeft: 150, margin: 0 }}>⚠ Empty boundary — this agent can touch nothing (fully contained).</div>}
+                {stranded && <div style={{ ...s.hint, color: 'var(--warning-text)', paddingLeft: 150, margin: 0 }}>⚠ Empty boundary — this agent can touch nothing (fully contained).</div>}
               </div>
             )
           })}
@@ -254,7 +254,7 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
                 </div>
                 <div style={{ ...s.hint, paddingLeft: 150, margin: 0 }}>{routingSummary(e)}</div>
                 {e.cheapModelEnabled && !e.cheapModel.trim() && (
-                  <div style={{ ...s.hint, color: 'var(--warning-text, #b45309)', paddingLeft: 150, margin: 0 }}>⚠ Cheap routing on but no cheap model set — every turn still uses the primary.</div>
+                  <div style={{ ...s.hint, color: 'var(--warning-text)', paddingLeft: 150, margin: 0 }}>⚠ Cheap routing on but no cheap model set — every turn still uses the primary.</div>
                 )}
               </div>
             )
