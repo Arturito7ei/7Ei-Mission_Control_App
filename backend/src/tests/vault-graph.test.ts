@@ -138,6 +138,32 @@ test('[M1] parseGraphifyGraph normalizes nodes/links and scopes to the vault roo
   assert.equal(g.edges[0].relation, 'contains')
 })
 
+test('[M2] parseGraphifyGraph surfaces semantic community id + name', () => {
+  const json = {
+    nodes: [
+      { id: 'a', label: 'A.md', source_file: 'vault/01-Projects/A.md', source_location: 'L1', community: 3, community_name: 'Mission Control Status' },
+      { id: 'b', label: 'B.md', source_file: 'vault/01-Projects/B.md', source_location: 'L1', community: 3, community_name: 'Mission Control Status' },
+      // placeholder name is treated as absent (unlabeled community)
+      { id: 'c', label: 'C.md', source_file: 'vault/07-Agents/C.md', source_location: 'L1', community: 9, community_name: 'Community 9' },
+    ],
+    links: [{ source: 'a', target: 'b', relation: 'references' }],
+  }
+  const g = parseGraphifyGraph(json, 'vault')
+  const a = g.nodes.find(n => n.id === 'a')!
+  assert.equal(a.community, 3)
+  assert.equal(a.communityName, 'Mission Control Status')
+  const c = g.nodes.find(n => n.id === 'c')!
+  assert.equal(c.community, 9)
+  assert.equal(c.communityName, undefined)          // placeholder dropped
+  assert.equal(g.stats.communities, 1)               // one distinct named community
+})
+
+test('[M2] native graph leaves community fields undefined', () => {
+  const g = buildNativeGraph(FILES, 'vault')
+  assert.ok(g.nodes.every(n => n.community === undefined && n.communityName === undefined))
+  assert.equal(g.stats.communities, undefined)
+})
+
 test('[M1] parseGraphifyGraph tolerates an empty/garbage payload', () => {
   const g = parseGraphifyGraph({}, 'vault')
   assert.equal(g.nodes.length, 0)
