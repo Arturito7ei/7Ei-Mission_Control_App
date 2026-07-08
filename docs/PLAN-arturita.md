@@ -6,6 +6,36 @@
 
 **Before writing any code, resolve the pre-build decisions/spikes in §3.** Two of them (STT/TTS provider, mac-control adapter approach) block the first stories of Epics B and C respectively. Epic A has no external blockers and can start immediately.
 
+**Companion docs:** `docs/PRD-arturita.md` (intent) · `docs/DECISIONS-arturita.md` (S1–S6) · `docs/REQUIREMENTS-arturita.md` (FR/NFR acceptance checklist) · `docs/ONBOARDING-arturita.md` (cold-start) · `HANDOFF.md` (current story).
+
+---
+
+## 0. Status tracker (living — update on every merge)
+
+This table is the source of truth for per-story status. Update the **Status** + **PR** cells in the same PR that lands the story (`todo` → `in-progress` → `done`). HANDOFF stays the "current story" pointer; this is the full board.
+
+| Story | Title | Status | PR | Gating decision |
+|---|---|---|---|---|
+| **A1** | Persona, sessions & `/panic` kill switch | `todo` | — | — |
+| **A2** | Dangerous-action approval types + step-up | `todo` | — | — |
+| **A3** | Intent classifier + two-phase destructive confirm | `todo` | — | — |
+| **B1** | Voice Gateway (STT/TTS) | `todo` | — | S1 |
+| **B2** | Cockpit voice panel | `todo` | — | S5 |
+| **B3** | Ask-vs-execute routing from voice | `todo` | — | — |
+| **C1** | Local Host daemon | `todo` | — | **S3** |
+| **C2** | File ops + preview + undo | `todo` | — | S3 |
+| **C3** | `machine_exec` allowlist + doc editing | `todo` | — | **S6** |
+| **D1** | Telegram voice notes + text + auth | `todo` | — | S2 |
+| **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 |
+| **E1** | Wallet read + prepare + simulate | `todo` | — | — |
+| **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
+| **F1** | LLM fallback chain + circuit breaker | `todo` | — | — |
+| **F2** | Degraded/offline + watchdogs | `todo` | — | — |
+| **G1** | Self-description + CLI | `todo` | — | — |
+| **G2** | Go-live gates + runbook | `todo` | — | — |
+
+**Next story:** **A1** (no blockers). See `HANDOFF.md`. Bold gating decisions (**S3/S4/S6**) are safety-critical — the dependent story must not merge until that decision is `CONFIRMED` in `docs/DECISIONS-arturita.md`.
+
 ---
 
 ## 1. Story map (Epics A–G)
@@ -91,6 +121,8 @@ A1 ─┬─ A2 ─┬───────────────────�
 ---
 
 ## 3. Pre-build decisions & spikes (resolve before the blocked stories)
+
+> **Recorded as a decision log in `docs/DECISIONS-arturita.md`** with per-item status (`PROVISIONAL — pending operator confirm` / `CONFIRMED`). The table below is the at-a-glance reference; DECISIONS is where status flips when the operator signs off.
 
 These need an operator decision or a short timeboxed spike **before** the dependent stories start. None require writing feature code — they're decisions + throwaway proofs.
 
