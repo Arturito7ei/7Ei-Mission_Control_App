@@ -29,14 +29,21 @@ export interface DecisionResult {
  * - `revision_requested` REQUIRES a non-empty note — the loop is pointless
  *   without telling the requester what to change.
  * - `approved`/`rejected` may carry an optional note (trimmed, or null).
- * Returns `{ ok:false, error }` for an invalid decision or a missing note so
- * the route can 400 without duplicating the rules.
+ * - **Step-up (Arturita A2):** when `requireStepUp` is set (the route sets it for
+ *   the dangerous approval types — `file_destructive`/`wallet_tx`/`email_send`/
+ *   `machine_exec`), *approving* additionally requires `stepUpSatisfied` (a fresh
+ *   command session). Reject / revision-requested are never step-up-gated. When
+ *   `requireStepUp` is absent the behavior is unchanged (backward compatible).
+ * Returns `{ ok:false, error }` for an invalid decision, a missing note, or a
+ * failed step-up so the route can 400/403 without duplicating the rules.
  */
 export function decideApproval(input: {
   decision: unknown
   note?: unknown
   actor: string
   now?: Date
+  requireStepUp?: boolean
+  stepUpSatisfied?: boolean
 }): DecisionResult {
   const { decision, actor } = input
   if (typeof decision !== 'string' || !APPROVAL_DECISIONS.includes(decision as ApprovalDecision)) {
@@ -46,6 +53,12 @@ export function decideApproval(input: {
   const note = typeof input.note === 'string' ? input.note.trim() : ''
   if (d === 'revision_requested' && !note) {
     return { ok: false, error: 'revision_requested requires a note describing the changes' }
+  }
+  if (d === 'approved' && input.requireStepUp && !input.stepUpSatisfied) {
+    return {
+      ok: false,
+      error: 'step-up required: approving this dangerous action needs a fresh command session — re-authenticate and retry',
+    }
   }
   return {
     ok: true,

@@ -17,6 +17,8 @@ import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../serv
 import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
+import { isDangerousType, renderActionSummary } from '../services/dangerous-approvals'
+import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
@@ -117,10 +119,26 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/approvals', async (req, reply) => {
     const { orgId } = req.params as any
     const b = (req.body ?? {}) as any
-    if (!b.type || !b.summary) return reply.code(400).send({ error: 'type and summary are required' })
-    const approval = { id: randomUUID(), orgId, type: b.type, summary: b.summary, payload: b.payload ?? null, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
+    if (!b.type) return reply.code(400).send({ error: 'type is required' })
+    // Arturita A2: a dangerous approval's summary is MACHINE-regenerated from the
+    // structured `action` payload (verbatim, never model prose). The action is
+    // persisted so the card + audit show exactly what will run; any client-
+    // supplied `summary` is ignored for these types.
+    let summary = b.summary
+    let payload = b.payload ?? null
+    let warnings: string[] | undefined
+    if (isDangerousType(b.type)) {
+      const rendered = renderActionSummary(b.type, b.action)
+      if (!rendered.ok) return reply.code(400).send({ error: `dangerous approval: ${rendered.error}` })
+      summary = rendered.summary
+      warnings = rendered.warnings
+      payload = { action: b.action, warnings: rendered.warnings ?? [], requiresStepUp: true }
+    } else if (!summary) {
+      return reply.code(400).send({ error: 'type and summary are required' })
+    }
+    const approval = { id: randomUUID(), orgId, type: b.type, summary, payload, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
     await db.insert(schema.approvalRequests).values(approval as any)
-    reply.code(201); return { approval }
+    reply.code(201); return { approval, warnings }
   })
   // Heartbeat engine (MCA-PC C1): run a sweep on demand (orphan recovery + wakes).
   app.post('/api/orgs/:orgId/heartbeat/sweep', async (req) => {
@@ -317,11 +335,34 @@ export async function taskRoutes(app: FastifyInstance) {
     return { orgId: newOrgId, counts: { agents: r.agents.length, goals: r.goals.length, budgets: r.budgets.length, routines: r.routines.length } }
   })
   // V2 tri-state: approved | rejected | revision_requested (+ reviewer note).
+  // Arturita A2: approving a dangerous type (file_destructive/wallet_tx/
+  // email_send/machine_exec) requires STEP-UP — a fresh Arturita command session
+  // (A1's isFresh), presented as a token via `x-arturita-session` or body
+  // `sessionToken`. Reject / revision-requested are never step-up-gated.
   app.post('/api/approvals/:id/decide', async (req, reply) => {
     const { id } = req.params as any
     const { decision, note } = (req.body ?? {}) as any
-    const result = decideApproval({ decision, note, actor: (req as any).userId ?? 'human' })
-    if (!result.ok) return reply.code(400).send({ error: result.error })
+    const approval = await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) })
+    if (!approval) return reply.code(404).send({ error: 'approval not found' })
+
+    const requireStepUp = isDangerousType(approval.type)
+    let stepUpSatisfied = false
+    if (requireStepUp && decision === 'approved') {
+      const token = (req.headers['x-arturita-session'] as string) || (req.body as any)?.sessionToken
+      if (typeof token === 'string' && token.trim()) {
+        const session = await db.query.arturitaSessions.findFirst({
+          where: and(eq(schema.arturitaSessions.orgId, approval.orgId), eq(schema.arturitaSessions.tokenHash, hashToken(token.trim()))),
+        })
+        stepUpSatisfied = isFresh(session as any)
+      }
+    }
+
+    const result = decideApproval({ decision, note, actor: (req as any).userId ?? 'human', requireStepUp, stepUpSatisfied })
+    if (!result.ok) {
+      // A failed step-up is an auth problem (403); other validation errors 400.
+      const code = /step-up required/.test(result.error ?? '') ? 403 : 400
+      return reply.code(code).send({ error: result.error })
+    }
     await db.update(schema.approvalRequests).set(result.patch!).where(eq(schema.approvalRequests.id, id))
     return { approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }) }
   })
