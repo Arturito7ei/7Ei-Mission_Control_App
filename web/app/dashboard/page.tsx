@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, API } from '@/lib/api'
 import CockpitPanel from './CockpitPanel'
+import AssistantPanel from './AssistantPanel'
 import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
 import TaskDrawer from './TaskDrawer'
@@ -36,7 +37,7 @@ type UsageStats = { requestsThisMinute: number; tokensToday: number; costToday: 
 // rendered next to the color).
 const PROVIDER_LABELS: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', moonshot: 'Kimi / Moonshot', qwen: 'Qwen', minimax: 'MiniMax', ollama: 'Ollama (local)' }
 
-type Tab = 'overview' | 'cockpit' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'governance' | 'usage' | 'settings'
+type Tab = 'overview' | 'cockpit' | 'assistant' | 'memory' | 'agents' | 'tasks' | 'projects' | 'skills' | 'costs' | 'comms' | 'connectors' | 'governance' | 'usage' | 'settings'
 
 export default function DashboardPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth()
@@ -287,6 +288,7 @@ export default function DashboardPage() {
   const NAV: { id: Tab; icon: string; label: string }[] = [
     { id: 'overview', icon: '🏠', label: 'Overview' },
     { id: 'cockpit', icon: '🛰️', label: 'Cockpit' },
+    { id: 'assistant', icon: '🌸', label: 'Arturita' },
     { id: 'memory', icon: '🧠', label: 'Memory' },
     { id: 'agents', icon: '🤖', label: 'Agents' },
     { id: 'tasks', icon: '📋', label: 'Tasks' },
@@ -340,6 +342,8 @@ export default function DashboardPage() {
       <main className="mc-main" style={s.main}>
 
         {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} />}
+
+        {tab === 'assistant' && <AssistantPanel orgId={org.id} getToken={getToken} />}
 
         {tab === 'memory' && <MemoryPanel orgId={org.id} getToken={getToken} />}
 

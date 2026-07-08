@@ -41,6 +41,14 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **M1** | Vault-graph backend + picker persistence | `done` (pure `vault-graph.ts` [native + Graphify normalizer] + `/memory/graph` endpoint + 17 tests) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192) | — |
 | **M2** | Graphify integration + build/status | `done` (endpoint prefers `graphify-out/graph.json`; graph built from TARCO vault + **semantic pass via local Ollama `qwen2.5:14b`** — **110 communities / 109 named concepts / god-node hubs / GRAPH_REPORT.md**, 786 nodes/747 edges, $0/no key/nothing external; committed to `vault/graphify-out/`; `parseGraphifyGraph` surfaces `community`/`communityName`) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192), [#194](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/194) | **S-M1 ✅ resolved (local Ollama)** |
 | **M3** | Web vault picker + d3-force graph map | `done` (MemoryPanel picker + Reader⇄Graph toggle + `VaultGraph.tsx` d3-force map, colorblind-safe) | [#192](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/192) | — |
+| **J1** | Jarvis "Arturita" Assistant tab v1 (glass hero + reactive orb + streamed conversation; answer-directly default, explicit-only delegation) | `done` (pure `arturita-converse.decideConverseMode` + `buildConverseSystemPrompt` [backend, 12 tests]; `POST /arturita/converse` — answer via F1 `streamLLMWithFallback`, delegate via B3 routing; web `assistant.logic` [12 tests] + `AssistantOrb`/`AssistantPanel` glass tab wired into the dashboard nav; placeholder logo `web/public/arturita-logo.svg`; **no dangerous surface** — chat turns take no actions, delegated destructive work lands at the A2 gate) | see `docs/PRD-jarvis-tab.md` | — |
+| **J2** | True token streaming (SSE) | `todo` (v1 streams client-side) | — | — |
+| **J3** | Deep context awareness (calendar/vault/activity + durable memory) | `todo` | — | — |
+| **J4** | Barge-in + wake-word polish + in-tab provider TTS | `todo` | — | — |
+| **J5** | HUD depth (level meter, audio-reactive orb, awareness chips) | `todo` | — | — |
+| **J6** | Inline A2 approvals in the tab | `todo` | — | — |
+
+**Epic J — Jarvis Cockpit** (`docs/PRD-jarvis-tab.md`): a Cockpit "Arturita" tab — a Jarvis-style conversational surface with a reactive HUD orb — that **reuses** the Arturita spine (F1 fallback, B1/B2 voice, B3 routing, A1 sessions, A2 approvals, A3 intent) rather than forking it. The load-bearing behaviour: **Arturita answers directly by default; delegation to the agent swarm is opt-in per request** (routed through B3 ask-vs-execute + A3 intent). J1 shipped; J2–J6 phased.
 
 **Overnight build (2026-07-08) landed the entire safe spine + safe non-blocked work:** A1 #174, A2 #175, A3 #176, F1 #177, E1 #178, C1 planner #179, B1 helpers #180, B3 #181, F2 #182 — all squash-merged to `main`, invariant green (707 backend tests · 11/11 evals · web build).
 
