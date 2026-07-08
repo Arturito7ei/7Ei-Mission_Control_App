@@ -32,7 +32,9 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 
 | **E1** · Wallet read + prepare + simulate | `services/wallet.ts` (pure: `buildUnsignedTx` key-free assembly; `decodeCalldata` ABI-layout decode of a curated selector table; `summarizeSimulation` gas/revert; `checkCaps` per-tx/per-day/allowlist; `detectScamSignals` new-address/setApprovalForAll/unlimited/drain/unknown-contract; `weiToEth`/`weiToGwei`; **`assertNoKeyMaterial` no-key-custody invariant**). `wallet_intents` table (no key material). Routes `POST …/wallet/prepare` + `…/:id/simulate` + `GET …/wallet/intents` — **no signing endpoint by design**. | in progress | PR pending |
 
-Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) are last + most-guarded and stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody, ever.**
+| **C1** (pure planner) · Host safety logic | `services/host-planner.ts` (pure, **fail-closed**: `HOST_EXECUTION_ENABLED=false` + `assertExecutionEnabled()` throw until S3; `canonicalizePath`/`isWithinRoot` no-escape prefix check; `hitsDenylist` catastrophic-target hard-deny; `classifyBlastRadius` auto-safe/needs-approval/refuse with destructive-never-auto-safe; `decideAccess`; `planHostOp` combined plan → `file_destructive` approval; undo-journal `buildUndoEntry`/`isReversible`). **No daemon, no routes, NO filesystem execution** — the write/destructive path stays blocked on **S3**. | in progress | PR pending |
+
+Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) + host filesystem writes (C1/C2 daemon) stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody; no real destructive machine op ships until S3.**
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |

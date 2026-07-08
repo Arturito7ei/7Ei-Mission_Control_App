@@ -86,9 +86,9 @@
 | NFR-3 | No dangerous surface (B/C/D/E) merges before A2 (the approval-type gate) is on `main`. | sequencing | `[ ]` |
 | NFR-4 | Destructive voice commands are never one-shot: ≥99% require an explicit confirmation utterance/tap; ambiguous/low-confidence → reject + re-prompt. | A3, B1 | `[~]` (A3: two-phase confirm logic — bare affirmative rejected, action-verb restatement or tap required, sub-threshold STT re-prompts; end-to-end voice wiring in B1) |
 | NFR-5 | Voice never authorizes an address or amount alone — entities echoed visually before wallet/email approval. | A3, E2 | `[ ]` |
-| NFR-6 | Machine ops cannot escape the allowlist root (canonicalize + prefix check; no `..`/symlink escape); denylist hard-refused for read + write. | C1 | `[ ]` |
-| NFR-7 | Blast-radius caps: over-cap ops require approval; over hard-ceiling refused outright. | C1, C2 | `[ ]` |
-| NFR-8 | Local host is fail-closed — acts only on an authenticated, approved backend command; runs as operator user, no sudo. | C1 | `[ ]` |
+| NFR-6 | Machine ops cannot escape the allowlist root (canonicalize + prefix check; no `..`/symlink escape); denylist hard-refused for read + write. | C1 | `[~]` (C1 planner: `canonicalizePath`/`isWithinRoot`/`hitsDenylist`/`decideAccess` logic done + tested (incl. `..`, symlink-escape flag, prefix-not-boundary); the daemon that resolves real symlinks + enforces this is blocked on **S3**) |
+| NFR-7 | Blast-radius caps: over-cap ops require approval; over hard-ceiling refused outright. | C1, C2 | `[~]` (C1 planner: `classifyBlastRadius` — auto-safe / needs-approval / refuse, destructive never auto-safe — done + tested; execution wiring blocked on S3) |
+| NFR-8 | Local host is fail-closed — acts only on an authenticated, approved backend command; runs as operator user, no sudo. | C1 | `[~]` (C1 planner: `HOST_EXECUTION_ENABLED=false` + `assertExecutionEnabled()` throw — nothing can execute until S3 confirmed + the daemon ships; daemon itself is the S3-gated deliverable) |
 
 ### Security
 | ID | Requirement | Story | Status |

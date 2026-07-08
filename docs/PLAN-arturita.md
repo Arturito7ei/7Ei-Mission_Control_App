@@ -22,12 +22,12 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **B1** | Voice Gateway (STT/TTS) | `todo` | — | S1 |
 | **B2** | Cockpit voice panel | `todo` | — | S5 |
 | **B3** | Ask-vs-execute routing from voice | `todo` | — | — |
-| **C1** | Local Host daemon | `todo` | — | **S3** |
+| **C1** | Local Host daemon | `in-progress` (pure planner only — daemon blocked on **S3**) | PR pending | **S3** |
 | **C2** | File ops + preview + undo | `todo` | — | S3 |
 | **C3** | `machine_exec` allowlist + doc editing | `todo` | — | **S6** |
 | **D1** | Telegram voice notes + text + auth | `todo` | — | S2 |
 | **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 |
-| **E1** | Wallet read + prepare + simulate | `in-progress` | PR pending | — |
+| **E1** | Wallet read + prepare + simulate | `done` | [#178](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/178) | — |
 | **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
 | **F1** | LLM fallback chain + circuit breaker | `done` | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) (pure layer; executor wiring follow-up) | — |
 | **F2** | Degraded/offline + watchdogs | `todo` | — | — |
