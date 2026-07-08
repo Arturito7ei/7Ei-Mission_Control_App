@@ -21,7 +21,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **A3** | Intent classifier + two-phase destructive confirm | `in-progress` | PR pending | — |
 | **B1** | Voice Gateway (STT/TTS) | `in-progress` (pure helpers done [#180]; provider layer + endpoint pending S1 keys) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 |
 | **B2** | Cockpit voice panel | `todo` | — | S5 |
-| **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done; endpoint wiring pends B1-full) | PR pending | — |
+| **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done [#181]; endpoint wiring pends B1-full) | [#181](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/181) | — |
 | **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon blocked on **S3**) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | **S3** |
 | **C2** | File ops + preview + undo | `todo` | — | S3 |
 | **C3** | `machine_exec` allowlist + doc editing | `todo` | — | **S6** |
@@ -30,7 +30,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **E1** | Wallet read + prepare + simulate | `done` | [#178](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/178) | — |
 | **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
 | **F1** | LLM fallback chain + circuit breaker | `done` | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) (pure layer; executor wiring follow-up) | — |
-| **F2** | Degraded/offline + watchdogs | `todo` | — | — |
+| **F2** | Degraded/offline + watchdogs | `in-progress` (pure helpers; queue/host wiring pends B1/C1 execution) | PR pending | — |
 | **G1** | Self-description + CLI | `todo` | — | — |
 | **G2** | Go-live gates + runbook | `todo` | — | — |
 
