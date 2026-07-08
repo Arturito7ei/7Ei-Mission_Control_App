@@ -32,6 +32,7 @@ import { usageRoutes } from '../middleware/ratelimit'
 import { scheduledRoutes, routineTriggerRoutes } from '../routes/scheduled'
 import { webhookRoutes } from '../routes/webhooks'
 import { telegramWebhookRoutes } from '../routes/telegram-webhook'
+import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { agentApiRoutes } from '../routes/agent-api'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
@@ -45,6 +46,11 @@ const PUBLIC_TENANT_ALLOWLIST = new Set([
   'POST /api/telegram/webhook/:orgId',   // Telegram posts updates here
   'GET /api/orgs/:orgId/auth/google',    // returns the Google consent URL
   'GET /api/orgs/:orgId/auth/google/status', // connection status for the OAuth UI
+  // Arturita /panic kill switch — reachable off-session (voice/Telegram in D1);
+  // owner-authed INSIDE the handler via a valid command-session token (minting
+  // one requires Clerk). It only ever removes capability, so being public+authed
+  // is safe by design, and must stay reachable even when a Clerk session isn't.
+  'POST /api/orgs/:orgId/arturita/panic',
 ])
 
 // Mirror src/index.ts wiring: baseline 'none' hook for all routes, a Clerk-tagged
@@ -75,10 +81,12 @@ async function bootLikeIndex() {
     await secured.register(webhookRoutes)
     await secured.register(usageRoutes)
     await secured.register(skillRoutes)
+    await secured.register(arturitaRoutes)
   })
 
   await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
+  await app.register(arturitaPublicRoutes)
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)

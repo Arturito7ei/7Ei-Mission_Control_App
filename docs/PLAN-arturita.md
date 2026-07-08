@@ -16,7 +16,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 
 | Story | Title | Status | PR | Gating decision |
 |---|---|---|---|---|
-| **A1** | Persona, sessions & `/panic` kill switch | `todo` | — | — |
+| **A1** | Persona, sessions & `/panic` kill switch | `in-progress` | PR pending | — |
 | **A2** | Dangerous-action approval types + step-up | `todo` | — | — |
 | **A3** | Intent classifier + two-phase destructive confirm | `todo` | — | — |
 | **B1** | Voice Gateway (STT/TTS) | `todo` | — | S1 |

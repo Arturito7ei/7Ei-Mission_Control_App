@@ -26,6 +26,7 @@ import { modelRoutes } from '../routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from '../routes/scheduled'
 import { webhookRoutes } from '../routes/webhooks'
 import { telegramWebhookRoutes } from '../routes/telegram-webhook'
+import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { agentApiRoutes } from '../routes/agent-api'
 
 test('app boots: all route groups register without collision', async () => {
@@ -53,11 +54,13 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(webhookRoutes)
     await secured.register(usageRoutes)
     await secured.register(skillRoutes)
+    await secured.register(arturitaRoutes)
   })
 
   // Public / externally-called route groups.
   await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
+  await app.register(arturitaPublicRoutes)
   await app.register(modelRoutes)
   await app.register(telegramWebhookRoutes)
   await app.register(agentApiRoutes)
