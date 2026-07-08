@@ -86,6 +86,14 @@
 | FR-41 | A fresh machine can be **bootstrapped from zero**: encrypted secret-store init, secrets/keystore load (NVIDIA key, Telegram token, RPC, burner keystore), `deployConfig`, and the one-time bind — no plaintext secret on disk, nothing committed. | H4 | `[ ]` |
 | FR-42 | The iPhone remote surface is delivered as **v1 Telegram** (Epic D) and a **v2 dedicated native/PWA client** (design/plan only this wave). | H5, D1/D2 | `[ ]` |
 
+### Jarvis Cockpit tab (Epic J — new 2026-07-08; `docs/PRD-jarvis-tab.md`)
+| ID | Requirement | Story | Status |
+|---|---|---|---|
+| FR-43 | Arturita **answers the operator directly by default** (one conversational LLM turn via the F1 fallback chain); she routes into the task/agent flow **only** on an explicit build/do/delegate request or a destructive intent. | J1 | `[x]` (J1: pure `decideConverseMode` — destructive→delegate(gated); explicit flag/phrase/build-order→delegate; else answer; 12 tests. `/converse` answer mode calls `streamLLMWithFallback`, takes no actions) |
+| FR-44 | The **routing decision** (answer vs delegate, and why) is surfaced to the operator on every turn. | J1 | `[x]` (J1: `routing` on the `/converse` response + `routingBadge`/reason rendered on each Arturita message) |
+| FR-45 | The Assistant tab presents a **reactive HUD orb** reflecting voice state (idle/listening/thinking/speaking), colorblind-safe (color + icon + label + motion), motion disabled under `prefers-reduced-motion`. | J1 | `[x]` (J1: `AssistantOrb` + `orbVisual`/`resolveVoiceState`; per-state icon+label+motion in the purple/blue family — no red/green-only; reduced-motion CSS guard) |
+| FR-46 | Conversational replies are **streamed** (v1 client-side reveal; J2 server SSE). | J1, J2 | `[~]` (J1: client-side typewriter reveal over the full chain answer; server token-streaming/SSE = J2) |
+
 ### Memory & vault graph (Epic M — new 2026-07-08; operator request)
 | ID | Requirement | Story | Status |
 |---|---|---|---|
@@ -156,6 +164,12 @@
 |---|---|---|---|
 | NFR-28 | The Graphify **semantic pass costs money (AI API + key)** and is **never run unprompted**: the graph is built with the **structural/AST pass only** (`graphify update --no-cluster`, no LLM); running the semantic pass is an explicit operator decision (which provider/key + rough cost), logged in DECISIONS/QUESTIONS. **No API key is ever committed.** | M2 | `[x]` (structural pass only; no key present in env; semantic pass deferred to operator — QUESTIONS Q-M1) |
 | NFR-29 | The graph endpoint is **read-cheap**: Graphify graph.json is one fetch; the native fallback is capped (≤120 notes) + TTL-cached + flags truncation; colorblind-safe clustering (folder hues, never red/green-only). | M1, M3 | `[x]` (backend: cap+cache+`hasGraphify`/`truncated`; UI CVD ramp = M3) |
+
+### Jarvis Cockpit tab (Epic J — non-functional)
+| ID | Requirement | Story | Status |
+|---|---|---|---|
+| NFR-30 | The Jarvis tab ships **no new dangerous surface**: `answer` mode takes no actions; `delegate` mode only creates a `pending` task; every destructive/irreversible/outward action still flows through the **A2 approval gate**. | J1 | `[x]` (J1: `/converse` answer mode is read-only LLM; delegate mode inserts a `pending` task via B3 routing — destructive→execute-mode→A2; verified: no file/send/sign/exec path) |
+| NFR-31 | Glassmorphism uses **design tokens only** (no raw hex); the glass hero is a floating chrome panel (DESIGN_SYSTEM v2), not a content list card; light+dark. | J1 | `[x]` (J1: `.mc-hero`/`.mc-orb` consume theme CSS vars only; hero is a floating panel; orb colors from `--accent`/`--info`/`--accent-2`/`--muted`) |
 
 ---
 

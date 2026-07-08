@@ -1,10 +1,12 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-08 (Arturita B2 Cockpit voice panel + zero-auth vault-graph preview shipped) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-08 (Arturita **J1 — Jarvis "Arturita" Assistant tab v1** shipped; then B2 voice panel + zero-auth vault-graph preview) · auto-maintained by the build agent (bumped at each story/phase)._
+
+**Latest (2026-07-08) — Arturita J1, the Jarvis tab (Epic J):** a new Cockpit **"Arturita"** tab (🌸) — a Glassmorphism conversational surface with a **reactive HUD orb** (idle/listening/thinking/speaking, colorblind-safe). Default behaviour: **Arturita answers directly**; she only routes into the task/agent flow when the operator **explicitly** asks to build/do/delegate (or the intent is destructive) — the routing decision is shown on every turn. Backend: pure `arturita-converse.decideConverseMode` + `POST /arturita/converse` (answer via the **F1 fallback chain** `streamLLMWithFallback`; delegate via B3 routing → a `pending` task at the **A2 gate**). Web: `assistant.logic` + `AssistantOrb`/`AssistantPanel`, push-to-talk + wake-word + typed, streamed replies, glass hero (tokens only, light+dark). **No dangerous surface** — chat turns take no actions. Placeholder logo at `web/public/arturita-logo.svg` (one-file swap; see `ARTURITA_LOGO_SRC`). Spec: `docs/PRD-jarvis-tab.md`. **+24 tests (12 backend · 12 web).**
 
 **Live:** backend on Fly (`7ei-backend`, v1.3.0), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
 **Zero-auth vault-graph preview:** https://app.7ei.ai/vault-graph.html — self-contained render of the enriched graph (785 nodes / 108 named communities), no login, no `GITHUB_VAULT_TOKEN` needed (#196).
-Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **769 backend tests · 11/11 evals · web build green · 15 web tests**.
+Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **781 backend tests · 11/11 evals · web build green · 27 web tests**.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`.
 
 ## Paperclip gap-bridge v2 — 4 / 4 epics complete
