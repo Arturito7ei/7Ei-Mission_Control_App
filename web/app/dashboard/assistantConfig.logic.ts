@@ -5,7 +5,9 @@
 export type LayerMode = 'local' | 'provider'
 export type PipelineLayer = 'llm' | 'stt' | 'tts'
 
-export interface LlmEntry { provider: string; model: string; mode: LayerMode }
+// Custom operator-defined models carry a display `label` + their own `baseUrl`
+// and are flagged `custom` (the API key lives encrypted server-side, never here).
+export interface LlmEntry { provider: string; model: string; mode: LayerMode; label?: string; baseUrl?: string; custom?: boolean }
 export interface SttEntry { engine: string; model?: string; mode: LayerMode }
 export interface TtsEntry { engine: string; voice?: string; mode: LayerMode }
 export type Entry = LlmEntry | SttEntry | TtsEntry
@@ -38,7 +40,7 @@ export const PRESETS: Record<PipelineLayer, Entry[]> = {
 
 /** Human label for an entry (provider/model or engine[·voice/model]). */
 export function entryLabel(layer: PipelineLayer, e: Entry): string {
-  if (layer === 'llm') { const x = e as LlmEntry; return `${x.provider} · ${x.model}` }
+  if (layer === 'llm') { const x = e as LlmEntry; return x.custom && x.label ? `${x.label} · ${x.model}` : `${x.provider} · ${x.model}` }
   const x = e as SttEntry & TtsEntry
   const detail = x.model ?? x.voice
   return detail ? `${x.engine} · ${detail}` : x.engine

@@ -14,7 +14,11 @@ import { ChainLink, parseFallbackChain } from './llm-fallback'
 export type PipelineLayer = 'llm' | 'stt' | 'tts'
 export type LayerMode = 'local' | 'provider'
 
-export interface LlmEntry { provider: string; model: string; mode: LayerMode }
+// A custom operator-defined model carries a human `label` and its own OpenAI-
+// compatible `baseUrl`; built-in entries leave both undefined. `custom: true`
+// marks an operator-added entry (for the UI + delete). The API key is NEVER on
+// the entry — it lives encrypted in deployConfig (`<provider>_api_key_enc`).
+export interface LlmEntry { provider: string; model: string; mode: LayerMode; label?: string; baseUrl?: string; custom?: boolean }
 export interface SttEntry { engine: string; model?: string; mode: LayerMode }
 export interface TtsEntry { engine: string; voice?: string; mode: LayerMode }
 
@@ -58,6 +62,18 @@ function normMode(raw: unknown, isLocalDefault: boolean): LayerMode {
   return isLocalDefault ? 'local' : 'provider'
 }
 
+/** Preserve the optional custom-model fields (label / baseUrl / custom flag) on
+ *  an LLM entry, dropping anything empty. Never carries key material. Pure. */
+function customFields(e: any): Partial<Pick<LlmEntry, 'label' | 'baseUrl' | 'custom'>> {
+  const out: Partial<Pick<LlmEntry, 'label' | 'baseUrl' | 'custom'>> = {}
+  const label = e?.label != null ? String(e.label).trim() : ''
+  const baseUrl = e?.baseUrl != null ? String(e.baseUrl).trim() : ''
+  if (label) out.label = label
+  if (baseUrl) out.baseUrl = baseUrl
+  if (e?.custom === true || label || baseUrl) out.custom = true
+  return out
+}
+
 function readArray(deployConfig: Record<string, unknown> | null | undefined, key: string): any[] | null {
   const raw = (deployConfig ?? {})[key]
   if (Array.isArray(raw)) return raw
@@ -77,7 +93,8 @@ export function parseLlmChain(deployConfig: Record<string, unknown> | null | und
         const provider = String(e?.provider ?? '').trim()
         const model = String(e?.model ?? '').trim()
         if (!provider || !model) return null
-        return { provider, model, mode: normMode(e?.mode, LOCAL_LLM_PROVIDERS.has(provider)) }
+        const extra = customFields(e)
+        return { provider, model, mode: normMode(e?.mode, LOCAL_LLM_PROVIDERS.has(provider)), ...extra }
       })
       .filter((e): e is LlmEntry => e !== null)
     if (entries.length) return entries
@@ -195,7 +212,7 @@ export function validatePipelineConfig(body: any): PipelineValidation {
   }
   const llm = checkArray('llm')
   if (llm) {
-    const clean = llm.filter((e: any) => e?.provider && e?.model).map((e: any) => ({ provider: String(e.provider), model: String(e.model), mode: normMode(e.mode, LOCAL_LLM_PROVIDERS.has(String(e.provider))) }))
+    const clean = llm.filter((e: any) => e?.provider && e?.model).map((e: any) => ({ provider: String(e.provider), model: String(e.model), mode: normMode(e.mode, LOCAL_LLM_PROVIDERS.has(String(e.provider))), ...customFields(e) }))
     if (clean.length !== llm.length) errors.push('llm: every entry needs provider + model')
     if (clean.length) value.llm = clean
   }

@@ -150,7 +150,10 @@ async function streamOpenAICompatible(opts: LLMStreamOpts, provider: string): Pr
   const baseURL = resolveBaseURL(opts)
   // OpenAI keeps its env fallback; other hosted providers rely on the per-org key.
   const apiKey = opts.orgApiKey ?? (provider === 'openai' ? process.env.OPENAI_API_KEY : undefined)
-  if (!apiKey && provider !== 'ollama') throw new Error(`No API key configured for provider "${provider}"`)
+  // Ollama and any custom/local endpoint driven by an explicit base URL may be
+  // keyless (the endpoint 401s if it actually needs one); only a known hosted
+  // provider with no base URL is a hard "no key configured" error.
+  if (!apiKey && provider !== 'ollama' && !opts.baseURL) throw new Error(`No API key configured for provider "${provider}"`)
 
   const body = {
     model: opts.model,
