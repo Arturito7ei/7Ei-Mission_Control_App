@@ -92,7 +92,9 @@
 | FR-43 | Arturita **answers the operator directly by default** (one conversational LLM turn via the F1 fallback chain); she routes into the task/agent flow **only** on an explicit build/do/delegate request or a destructive intent. | J1 | `[x]` (J1: pure `decideConverseMode` — destructive→delegate(gated); explicit flag/phrase/build-order→delegate; else answer; 12 tests. `/converse` answer mode calls `streamLLMWithFallback`, takes no actions) |
 | FR-44 | The **routing decision** (answer vs delegate, and why) is surfaced to the operator on every turn. | J1 | `[x]` (J1: `routing` on the `/converse` response + `routingBadge`/reason rendered on each Arturita message) |
 | FR-45 | The Assistant tab presents a **reactive HUD orb** reflecting voice state (idle/listening/thinking/speaking), colorblind-safe (color + icon + label + motion), motion disabled under `prefers-reduced-motion`. | J1 | `[x]` (J1: `AssistantOrb` + `orbVisual`/`resolveVoiceState`; per-state icon+label+motion in the purple/blue family — no red/green-only; reduced-motion CSS guard) |
-| FR-46 | Conversational replies are **streamed** (v1 client-side reveal; J2 server SSE). | J1, J2 | `[~]` (J1: client-side typewriter reveal over the full chain answer; server token-streaming/SSE = J2) |
+| FR-46 | Conversational replies are **streamed** (v1 client-side reveal; J4 server SSE). | J1, J4 | `[~]` (J1: client-side typewriter reveal over the full chain answer; server token-streaming/SSE = J4) |
+| FR-47 | Every pipeline layer (**LLM · STT · TTS**) **defaults to a free/self-hosted option, has a configured fallback chain, and is switchable from the Config panel** (extends S1 `local\|provider`; reuses the F1 circuit breaker on all three layers). Defaults: LLM local Ollama→free-tier cloud; STT whisper.cpp→Web Speech; TTS Piper/local-Chatterbox→browser. | J2, J3 | `[ ]` (research + comparison tables + config schema in `docs/PRD-jarvis-tab.md` §2; DECISIONS S7) |
+| FR-48 | The tab is a **brainstorm/conversation partner by default**; delegation to builder/executor agents is **explicit + confirmed** (delegation phrase / build order / toggle / destructive intent), routed through B3 ask-vs-execute + A3 intent into the task flow, gated by A2 approvals. | J1, J6 | `[x]` (J1: `decideConverseMode` — answer-by-default, explicit-only delegate; interaction model in PRD §1; inline approvals = J6) |
 
 ### Memory & vault graph (Epic M — new 2026-07-08; operator request)
 | ID | Requirement | Story | Status |
@@ -170,6 +172,7 @@
 |---|---|---|---|
 | NFR-30 | The Jarvis tab ships **no new dangerous surface**: `answer` mode takes no actions; `delegate` mode only creates a `pending` task; every destructive/irreversible/outward action still flows through the **A2 approval gate**. | J1 | `[x]` (J1: `/converse` answer mode is read-only LLM; delegate mode inserts a `pending` task via B3 routing — destructive→execute-mode→A2; verified: no file/send/sign/exec path) |
 | NFR-31 | Glassmorphism uses **design tokens only** (no raw hex); the glass hero is a floating chrome panel (DESIGN_SYSTEM v2), not a content list card; light+dark. | J1 | `[x]` (J1: `.mc-hero`/`.mc-orb` consume theme CSS vars only; hero is a floating panel; orb colors from `--accent`/`--info`/`--accent-2`/`--muted`) |
+| NFR-32 | The **default pipeline is fully on-device** (local LLM + STT + TTS) so a brainstorm session need not leave the machine; a `local`/sensitive context **never** falls back to a cloud entry (S1 privacy); LLM fallbacks stay within the preflight per-wake cap (D-g). | J2, J3 | `[ ]` (design: PRD §2.4 resolution rules + S7; enforced when the resolvers land in J2) |
 
 ---
 

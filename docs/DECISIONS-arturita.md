@@ -72,6 +72,17 @@
 **Unblocks:** C3 (`machine_exec` + doc editing).
 **Needs from operator:** none to launch broad exec; optionally provide a *denylist* of commands to always-gate beyond the destructive-intent classifier.
 
+## S7 — Jarvis pipeline: free-first / self-hosted-first defaults + per-layer fallback chains + config schema
+**Status:** `CONFIRMED (2026-07-08)` — operator direction: every model/service defaults free/self-hosted, has a configured fallback chain, all switchable from the Config panel. Extends **S1** (`local|provider`) to *every* layer and reuses **F1**/**D-g** for the failover + cost bound. Full research + comparison tables + config schema in `docs/PRD-jarvis-tab.md` §2.
+**Decision (per layer):**
+- **LLM** — primary = **local Ollama** (already installed on this M4/16GB machine: `llama3.2:3b` default → `qwen3:8b` → `gemma3:4b` → `qwen2.5:14b`); free-tier cloud fallbacks **Groq** (sub-200ms TTFT; 30 RPM/~1k req-day) then **Google AI Studio Gemini** (1,500 req-day/1M TPM); paid (Anthropic/OpenAI) opt-in only. Config key `arturita_llm_chain` (generalizes the shipped `arturita_fallback_chain`).
+- **STT** — primary = **whisper.cpp** (self-hosted, Metal-accelerated on Apple Silicon; `small` sweet spot / `base` for speed; MIT); zero-install fallback = **browser Web Speech API** (non-sensitive only — audio leaves device). `faster-whisper` is the non-Mac fallback. Config key `arturita_stt_chain`.
+- **TTS** — primary = **Piper** (self-hosted, ~30–50ms first audio; GPL-3.0 fork) or **local Chatterbox** (MIT, quality, GPU); zero-install fallback = **browser SpeechSynthesis** (current tab default). **Chatterbox resolved:** Resemble AI **open-source MIT** model that runs **both** self-hosted-local **and** NVIDIA-hosted (build.nvidia.com/NIM — the variant our B1 `NVIDIA_API_KEY` targets); free-first flips the default to **local**, NVIDIA-hosted becomes an opt-in `provider`. **Coqui XTTS-v2 flagged non-commercial (CPML)** — not a default. Config key `arturita_tts_chain`.
+**Fallback triggers (reuse F1 circuit breaker for all three layers):** out-of-credits/429, timeout, 5xx, auth error (skip+alert), context-overflow (LLM down-shift), refusal (retry next). A `local`/sensitive context **never** falls back to a cloud entry (S1 privacy); LLM fallbacks re-run the preflight per-wake cap (D-g). Exhaustion fails safe (text/typed fallback + W1 notice), never silent-drop.
+**Rationale:** $0 by default, private by default (a brainstorm session need not leave the machine), resilient (always a fallback), and operator-controlled (all switchable, no redeploy).
+**Unblocks:** J2 (config + resolvers), J3 (self-hosted engines).
+**Needs from operator:** optional — free-tier cloud keys (Groq/Google) to enable the cloud fallbacks; otherwise the local chain runs at $0.
+
 ---
 
 ## Standing decisions
