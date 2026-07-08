@@ -24,7 +24,14 @@ import TaskBoard from './cockpit/TaskBoard'
 import AddAgentWizard from './cockpit/AddAgentWizard'
 import HireDialog from './cockpit/HireDialog'
 
-export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void }) {
+// P0b — the same composition root can render either the full operator stack
+// (Operations) or a single promoted area. `only` filters which sections render
+// (by key); `title` labels a focused area. Absent → the full stack, as before.
+export type CockpitSectionKey =
+  | 'inbox' | 'voice' | 'agents' | 'activity' | 'org' | 'goals'
+  | 'budgets' | 'secrets' | 'workspaces' | 'plugins' | 'tasks'
+
+export default function CockpitPanel({ orgId, getToken, onOpenTask, only, title }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void; only?: CockpitSectionKey[]; title?: string }) {
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [timeline, setTimeline] = useState<Timeline | null>(null)
@@ -120,28 +127,50 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
   const agentName = (id: string) => data?.agents.find(a => a.id === id)?.name ?? '—'
   const inboxCount = inbox.length + approvals.length
   const initialLoading = !data && !err // MCA-81 — skeletons until the first payload lands
+  const focused = !!only // P0b — rendering a single promoted area, not the full stack
+
+  // Keyed section registry — the same nodes power the full Operations stack and
+  // the focused single-area views (P0b). Each section self-titles (SectionLabel),
+  // so a focused area needs no extra heading beyond the toolbar.
+  const sections: { key: CockpitSectionKey; node: React.ReactNode }[] = [
+    { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} /> },
+    { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
+    { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} /> },
+    { key: 'activity', node: <TimelineSection timeline={timeline} /> },
+    { key: 'org', node: <OrgChart chart={chart} /> },
+    { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },
+    { key: 'budgets', node: <><BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} /><PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} /></> },
+    { key: 'secrets', node: <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} /> },
+    { key: 'workspaces', node: <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} /> },
+    { key: 'plugins', node: <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} /> },
+    { key: 'tasks', node: <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} onOpen={openTask} /> },
+  ]
+  const shown = only ? sections.filter(s => only.includes(s.key)) : sections
 
   return (
     <div style={{ ...ui.page, maxWidth: 1200, gap: space.xl }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.md }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: space.md }}>
-          <h1 style={ui.h1}>Mission Control</h1>
-          {inboxCount > 0 && <span style={{ ...sx.tag, background: 'var(--accent-dim)', color: tk.accent }}>📥 {inboxCount}</span>}
+          <h1 style={ui.h1}>{focused ? (title ?? 'Operations') : 'Mission Control'}</h1>
+          {!focused && inboxCount > 0 && <span style={{ ...sx.tag, background: 'var(--accent-dim)', color: tk.accent }}>📥 {inboxCount}</span>}
         </div>
         <div style={{ display: 'flex', gap: space.md, flexWrap: 'wrap' }}>
           <Button style={{ color: tk.accent }} onClick={load}>↻ Refresh</Button>
-          <Button style={{ color: tk.accent }} onClick={sweep} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</Button>
-          <Button style={{ color: tk.accent }} onClick={() => setHire(true)}>✨ Hire with a prompt</Button>
-          <Button variant="primary" onClick={() => setWizard(true)}>＋ Add agent</Button>
+          {/* Full-stack-only actions — a focused area keeps just Refresh. */}
+          {!focused && <>
+            <Button style={{ color: tk.accent }} onClick={sweep} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</Button>
+            <Button style={{ color: tk.accent }} onClick={() => setHire(true)}>✨ Hire with a prompt</Button>
+            <Button variant="primary" onClick={() => setWizard(true)}>＋ Add agent</Button>
+          </>}
         </div>
       </div>
 
       {err && <div style={ui.err}>⚠ {err}</div>}
 
-      <StatsRow sum={data?.summary ?? {}} agents={data?.agents ?? null} budgets={budgets} approvalsPending={approvals.length} loading={initialLoading} />
+      {!focused && <StatsRow sum={data?.summary ?? {}} agents={data?.agents ?? null} budgets={budgets} approvalsPending={approvals.length} loading={initialLoading} />}
       {initialLoading ? (
         // MCA-81 — skeleton rows in place of the sections while the first load is in flight.
-        ['Inbox', 'Agent fleet', 'Heartbeat · last 24h', 'Goals', 'Budgets', 'Task board'].map(l => (
+        (focused ? [title ?? 'Loading'] : ['Inbox', 'Agent fleet', 'Heartbeat · last 24h', 'Goals', 'Budgets', 'Task board']).map(l => (
           <div key={l}>
             <SectionLabel>{l}</SectionLabel>
             <Card style={{ display: 'flex', flexDirection: 'column', gap: space.md }}>
@@ -152,20 +181,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask }: { orgId: s
           </div>
         ))
       ) : (
-        <>
-          <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} />
-          <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} />
-          <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} />
-          <TimelineSection timeline={timeline} />
-          <OrgChart chart={chart} />
-          <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} />
-          <BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} />
-          <PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} />
-          <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} />
-          <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} />
-          <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} />
-          <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} onOpen={openTask} />
-        </>
+        <>{shown.map(s => <div key={s.key}>{s.node}</div>)}</>
       )}
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}

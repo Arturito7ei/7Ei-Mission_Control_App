@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, API } from '@/lib/api'
-import CockpitPanel from './CockpitPanel'
+import CockpitPanel, { type CockpitSectionKey } from './CockpitPanel'
 import AssistantPanel from './AssistantPanel'
 import MemoryPanel from './MemoryPanel'
 import ConnectorsPanel from './ConnectorsPanel'
@@ -10,7 +10,7 @@ import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
 import Sidebar from './Sidebar'
 import PlaceholderView from './PlaceholderView'
-import { allNavItems, isPlaceholder } from '@/lib/navModel'
+import { allNavItems, isPlaceholder, isSection, navSectionKey, findNavItem } from '@/lib/navModel'
 import { useTheme } from '../theme'
 import { CommandPalette, type Command } from './CommandPalette'
 import { statusColor, statusIcon } from './status'
@@ -305,6 +305,13 @@ export default function DashboardPage() {
 
         {/* P0a — Paperclip areas not yet built land on an honest "coming soon" view. */}
         {isPlaceholder(tab) && <PlaceholderView id={tab} />}
+
+        {/* P0b — a promoted Cockpit section renders as its own focused area,
+            reusing the CockpitPanel composition root (no rebuild). */}
+        {isSection(tab) && (
+          <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId}
+            only={[navSectionKey(tab) as CockpitSectionKey]} title={findNavItem(tab)?.label} />
+        )}
 
         {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} />}
 

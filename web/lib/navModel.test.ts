@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   NAV_GROUPS, allNavItems, navTabIds, findNavItem, isPlaceholder,
+  isSection, navSectionKey,
   parseCollapsed, serializeCollapsed, toggleCollapsed, type NavGroupId,
 } from './navModel.ts'
 
@@ -54,6 +55,27 @@ test('[P0-web] placeholders are flagged and explain themselves (no faked feature
   // A real tab is never mistaken for a placeholder.
   assert.equal(isPlaceholder('governance'), false)
   assert.equal(isPlaceholder('nope'), false)
+})
+
+test('[P0b-web] promoted Cockpit sections are first-class areas with valid keys', () => {
+  // Keys CockpitPanel knows how to render focused (CockpitSectionKey union).
+  const COCKPIT_KEYS = new Set(['inbox', 'voice', 'agents', 'activity', 'org', 'goals', 'budgets', 'secrets', 'workspaces', 'plugins', 'tasks'])
+  const sections = allNavItems().filter(i => i.kind === 'section')
+  // The 8 Cockpit sections we promote out of the Operations stack.
+  assert.deepEqual(
+    sections.map(i => i.id).sort(),
+    ['activity', 'budgets', 'goals', 'inbox', 'org', 'plugins', 'secrets', 'workspaces'].sort(),
+  )
+  for (const sroot of sections) {
+    assert.equal(isSection(sroot.id), true)
+    assert.ok(sroot.section, `${sroot.id} needs a section key`)
+    assert.equal(navSectionKey(sroot.id), sroot.section)
+    assert.ok(COCKPIT_KEYS.has(sroot.section!), `${sroot.id} → ${sroot.section} must be a CockpitPanel key`)
+  }
+  // A tab is never a section, and navSectionKey is undefined for non-sections.
+  assert.equal(isSection('governance'), false)
+  assert.equal(navSectionKey('governance'), undefined)
+  assert.equal(navSectionKey('nope'), undefined)
 })
 
 test('[P0-web] beyond-Paperclip surfaces are tabs, not placeholders', () => {
