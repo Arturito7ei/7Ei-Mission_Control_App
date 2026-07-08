@@ -19,9 +19,9 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **A1** | Persona, sessions & `/panic` kill switch | `done` | [#174](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/174) | — |
 | **A2** | Dangerous-action approval types + step-up | `done` | [#175](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/175) | — |
 | **A3** | Intent classifier + two-phase destructive confirm | `in-progress` | PR pending | — |
-| **B1** | Voice Gateway (STT/TTS) | `in-progress` (pure helpers; provider layer + endpoint pending S1 keys) | PR pending | S1 |
+| **B1** | Voice Gateway (STT/TTS) | `in-progress` (pure helpers done [#180]; provider layer + endpoint pending S1 keys) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 |
 | **B2** | Cockpit voice panel | `todo` | — | S5 |
-| **B3** | Ask-vs-execute routing from voice | `todo` | — | — |
+| **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done; endpoint wiring pends B1-full) | PR pending | — |
 | **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon blocked on **S3**) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | **S3** |
 | **C2** | File ops + preview + undo | `todo` | — | S3 |
 | **C3** | `machine_exec` allowlist + doc editing | `todo` | — | **S6** |
