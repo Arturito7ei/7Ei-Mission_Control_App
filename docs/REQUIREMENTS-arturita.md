@@ -63,10 +63,10 @@
 ### Resilience & LLM
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-29 | Arturita swaps LLM providers per task and fails over across an ordered fallback chain on provider failure. | F1 | `[~]` (F1: `parseFallbackChain` + `planFallback` pure ordered-chain logic done; wiring into the live `agent-executor`/`streamLLM` retry loop is a follow-up — kept off the LLM hot path overnight) |
+| FR-29 | Arturita swaps LLM providers per task and fails over across an ordered fallback chain on provider failure. | F1 | `[x]` (F1 #187: `streamLLMWithFallback` wraps the live executor `streamLLM` call — walks `arturita_fallback_chain` from deployConfig on failure; identical to a bare call when no chain is set) |
 | FR-30 | Failover handles 5xx/timeout/429/auth/context-overflow/refusal; a circuit breaker skips unhealthy providers. | F1 | `[~]` (F1: `classifyLlmError` covers all six classes + `recordFailure`/`isProviderHealthy` circuit breaker with cooldown/re-probe, all tested; live wiring is the follow-up) |
 | FR-31 | Offline/degraded: local LLM + local STT/TTS keep Arturita conversational; cloud-dependent actions queue and replay idempotently on reconnect. | F2 | `[~]` (F2: `routeForConnectivity` (local run / cloud queue-offline / host fail-closed) + `planReplay` idempotent nonce-guarded exactly-once replay — pure logic done; queue store + host-health wiring pends B1/C1 execution) |
-| FR-32 | Provider/model health is visible on `/health` + the Cockpit. | F1 | `[ ]` |
+| FR-32 | Provider/model health is visible on `/health` + the Cockpit. | F1 | `[~]` (F1 #187: `/health` now returns `llm.providers` (breaker state per provider) + `llm.unhealthy`; a Cockpit surface can render it) |
 
 ### Session, auth & orchestration
 | ID | Requirement | Story | Status |
@@ -114,7 +114,7 @@
 ### Reliability & performance
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| NFR-13 | LLM failover completes the task on a fallback in ≥95% of primary-provider outages, within the per-wake cost cap. | F1 | `[ ]` |
+| NFR-13 | LLM failover completes the task on a fallback in ≥95% of primary-provider outages, within the per-wake cost cap. | F1 | `[~]` (F1 #187: live wiring done — failover engages on the executor hot path; the ≥95% figure is an operational metric to validate once a chain is configured with real providers) |
 | NFR-14 | Failover retries are cost-bounded — cannot exceed the preflight per-wake cap; exhausted chain parks the task with a plain-language `system_notice`. | F1 | `[~]` (F1: `planFallback` drops hops over the per-wake cap (reuses `estimateWakeCost`) and emits a plain-language park reason when exhausted; posting the `system_notice` wires with the executor follow-up) |
 | NFR-15 | Desk voice → first action ≤ 3s p50; Telegram voice note → acknowledged ≤ 5s p50. | B1/B2/D1 | `[ ]` |
 | NFR-16 | Long/expensive Arturita runs carry watchdogs (runtime/cost/no_activity), edge-triggered (fire once on transition). | F2 | `[~]` (F2: `defaultArturitaWatchdogs` builds runtime/cost/no_activity specs via the shipped `watchdogs.ts` (edge-triggered W4 sweep unchanged); attaching them on task creation wires with the voice endpoint) |
