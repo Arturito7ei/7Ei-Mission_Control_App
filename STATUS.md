@@ -3,7 +3,7 @@
 _Last updated: 2026-07-07 (W5 wrap-up — all four Paperclip-gap-bridge v2 epics complete) · auto-maintained by the build agent (bumped at each story/phase)._
 
 **Live:** backend on Fly (`7ei-backend`, v1.3.0), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
-Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **750 backend tests · 11/11 evals · web build green**.
+Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **767 backend tests · 11/11 evals · web build green**.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`.
 
 ## Paperclip gap-bridge v2 — 4 / 4 epics complete
@@ -52,6 +52,12 @@ Full planning/tracking layer filed: **PRD** `docs/PRD-arturita.md` (intent) · *
 | **E2** (policy engine) · Wallet bounded-signing policy *(S4 model change)* | `services/wallet-policy.ts` (pure: `evaluateWalletPolicy` → `autonomous_sign\|require_approval\|refuse` with per-tx threshold (default **$100**)/per-day cap/allowlist/scam/simulate-before-sign; fail-closed `checkSigningGate`/`assertSigningAllowed` keeping **mainnet signing off** unless both switches on; `classifyNetwork`; `SIGNER_MODELS` — WalletConnect can't do unattended signing). `wallet_policy` table (both switches default 0). Routes `GET/PUT …/wallet/policy` + `POST …/wallet/:id/evaluate` (no signing — real testnet signer is go-live). Keystore design: `docs/WALLET-KEYSTORE-arturita.md`. **No key material anywhere; no mainnet signing.** | ✅ done | #186 |
 
 Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. **S1–S6 CONFIRMED (2026-07-08).** Wallet mainnet autonomous signing stays behind `WALLET_MAINNET_ENABLED`/`WALLET_AUTONOMOUS_SIGNING_ENABLED` (both default off) + a final operator go; real destructive host ops route through A2 with two-phase confirm. **No mainnet wallet signing; no irreversible action without the operator.**
+
+### Epic M — Memory & Vault Graph (operator request 2026-07-08)
+| Story | What | Status | PR |
+|---|---|---|---|
+| **M1/M2** (backend) · Vault graph + Graphify | `services/vault-graph.ts` (pure: `buildNativeGraph` from markdown — [[wikilinks]]/#tags/frontmatter, folder clusters, degree, unresolved-count, file cap; `parseGraphifyGraph` normalizes a Graphify `graph.json` into the same node/edge model, scoped to the vault root, dropping `.obsidian/`+out-of-root leaks). `GET …/memory/graph` (Graphify-first: prefers `<root>/graphify-out/graph.json`, native fallback, TTL-cached, `?rebuild=1`/`?tags=0`, `hasGraphify`+`rebuildCommand`). `vaultTree` (1-call recursive listing). **Initial graph built from the TARCO vault — structural/AST pass only, no LLM cost — committed to `vault/graphify-out/graph.json` (786 nodes/964 edges).** Semantic pass = operator decision (QUESTIONS Q-M1 / DECISIONS S-M1). 17 unit tests. | ✅ done | this PR |
+| **M3** (web) · Vault picker + d3-force graph map | MemoryPanel upgrade — vault picker at top + interactive force-directed graph (folder-clustered, colorblind-safe, zoom/pan/search/click-to-open). | 🚧 next | next PR |
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped
 | Epic | Phase | Status |

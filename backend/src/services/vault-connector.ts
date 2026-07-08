@@ -82,6 +82,19 @@ export async function vaultRead(token: string, cfg: VaultConfig, path: string): 
   return { ok: true, status: 200, markdown: decodeFileContent(await res.json() as any) }
 }
 
+/** Recursively list markdown blob paths under the vault root in ONE Git Trees
+ *  API call (vs one Contents call per directory) — feeds the native graph build. */
+export async function vaultTree(token: string, cfg: VaultConfig): Promise<{ ok: boolean; status: number; paths?: string[] }> {
+  const res = await fetch(`https://api.github.com/repos/${cfg.repo}/git/trees/${encodeURIComponent(cfg.branch)}?recursive=1`, { headers: ghHeaders(token) })
+  if (!res.ok) return { ok: false, status: res.status }
+  const j = await res.json() as any
+  const root = String(cfg.root ?? '').replace(/^\/+|\/+$/g, '')
+  const paths = (Array.isArray(j?.tree) ? j.tree : [])
+    .filter((t: any) => t?.type === 'blob' && /\.(md|markdown)$/i.test(t.path) && (!root || t.path === root || t.path.startsWith(root + '/')))
+    .map((t: any) => t.path as string)
+  return { ok: true, status: 200, paths }
+}
+
 export async function vaultWrite(
   token: string, cfg: VaultConfig, path: string, markdown: string, message: string,
   committer?: { name: string; email: string },

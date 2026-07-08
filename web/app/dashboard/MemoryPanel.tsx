@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, text, space } from './tokens'
-import { Button, Skeleton } from './ui'
+import { Button, Skeleton, TextInput } from './ui'
+import VaultGraph from './VaultGraph'
 
 // Memory tab — browses the shared Obsidian vault (the 7Ei-MC_TARCO repo) through
 // the backend vault connector. Left: folder tree. Right: rendered markdown.
@@ -40,7 +41,14 @@ function mdToHtml(md: string): string {
 
 type Entry = { name: string; path: string; type: 'dir' | 'file' }
 
+type VaultCfg = { repo: string; root: string; branch: string }
+
 export default function MemoryPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
+  const [view, setView] = useState<'reader' | 'graph'>('reader')
+  const [cfg, setCfg] = useState<VaultCfg>({ repo: 'Arturito7ei/7Ei-MC_TARCO', root: 'vault', branch: 'main' })
+  const [editingCfg, setEditingCfg] = useState(false)
+  const [draft, setDraft] = useState<VaultCfg | null>(null)
+  const [savingCfg, setSavingCfg] = useState(false)
   const [path, setPath] = useState('vault')
   const [entries, setEntries] = useState<Entry[]>([])
   const [file, setFile] = useState<{ path: string; html: string } | null>(null)
@@ -61,6 +69,37 @@ export default function MemoryPanel({ orgId, getToken }: { orgId: string; getTok
     setLoading(false)
   }
 
+  // Vault picker — reads/writes the shared VAULT_CONFIG (the same secret the
+  // Connectors → Obsidian card manages; the GitHub token stays there).
+  const loadCfg = useCallback(async () => {
+    try {
+      const r = await api<{ config: VaultCfg }>(`/api/orgs/${orgId}/connectors/obsidian/config`, { token: await getToken() })
+      if (r.config) { setCfg(r.config); setPath(r.config.root) }
+    } catch { /* keep defaults */ }
+  }, [orgId, getToken])
+
+  const saveCfg = async () => {
+    if (!draft) return
+    setSavingCfg(true); setErr(null)
+    try {
+      const r = await api<{ config: VaultCfg }>(`/api/orgs/${orgId}/connectors/obsidian/config`, {
+        method: 'PUT', token: await getToken(),
+        body: JSON.stringify({ repo: draft.repo.trim(), root: draft.root.trim() || 'vault', branch: draft.branch.trim() || 'main' }),
+      })
+      setCfg(r.config); setEditingCfg(false); setFile(null)
+      await loadDir(r.config.root)
+    } catch (e: any) { setErr(e?.message ?? 'Failed to save vault') }
+    setSavingCfg(false)
+  }
+
+  // Open a note from the graph → jump to the reader and load its folder + content.
+  const openNote = useCallback((p: string) => {
+    setView('reader')
+    const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : cfg.root
+    loadDir(dir); openFile(p)
+  }, [loadDir, cfg.root]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadCfg() }, [loadCfg])
   useEffect(() => { loadDir('vault') }, [loadDir])
 
   const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : null
@@ -69,12 +108,47 @@ export default function MemoryPanel({ orgId, getToken }: { orgId: string; getTok
   return (
     <div style={s.page}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h1 style={s.h1}>Memory <span style={s.pill}>Obsidian vault · 7Ei-MC_TARCO</span></h1>
-        <Button style={{ color: tk.accent }} onClick={() => { setFile(null); loadDir(path) }}>↻ Refresh</Button>
+        <h1 style={s.h1}>Memory <span style={s.pill}>Obsidian vault</span></h1>
+        <div style={{ display: 'flex', gap: space.sm, alignItems: 'center' }}>
+          {/* Reader ⇄ Graph toggle */}
+          <div style={s.seg} role="tablist" aria-label="Memory view">
+            <button style={{ ...s.segBtn, ...(view === 'reader' ? s.segOn : {}) }} aria-selected={view === 'reader'} onClick={() => setView('reader')}>📄 Reader</button>
+            <button style={{ ...s.segBtn, ...(view === 'graph' ? s.segOn : {}) }} aria-selected={view === 'graph'} onClick={() => setView('graph')}>⬡ Graph</button>
+          </div>
+          {view === 'reader' && <Button style={{ color: tk.accent }} onClick={() => { setFile(null); loadDir(path) }}>↻ Refresh</Button>}
+        </div>
       </div>
+
+      {/* Vault picker — always at the top of the tab */}
+      <div style={s.picker}>
+        {!editingCfg ? (
+          <>
+            <span style={s.pickerLabel}>Vault</span>
+            <code style={s.pickerVal}>{cfg.repo}</code>
+            <span style={s.pickerSep}>·</span>
+            <code style={s.pickerVal}>{cfg.root}/</code>
+            <span style={s.pickerSep}>·</span>
+            <code style={s.pickerVal}>{cfg.branch}</code>
+            <div style={{ flex: 1 }} />
+            <a style={s.crumb} onClick={() => { setDraft(cfg); setEditingCfg(true) }}>Change vault…</a>
+          </>
+        ) : (
+          <>
+            <TextInput aria-label="Vault repo (owner/name)" placeholder="owner/name" value={draft?.repo ?? ''} onChange={e => setDraft(d => ({ ...(d ?? cfg), repo: e.target.value }))} style={{ width: 220 }} />
+            <TextInput aria-label="Vault root folder" placeholder="root (vault)" value={draft?.root ?? ''} onChange={e => setDraft(d => ({ ...(d ?? cfg), root: e.target.value }))} style={{ width: 110 }} />
+            <TextInput aria-label="Vault branch" placeholder="branch (main)" value={draft?.branch ?? ''} onChange={e => setDraft(d => ({ ...(d ?? cfg), branch: e.target.value }))} style={{ width: 110 }} />
+            <Button variant="primary" onClick={saveCfg} disabled={savingCfg || !draft?.repo?.trim()}>{savingCfg ? 'Saving…' : 'Save'}</Button>
+            <Button onClick={() => setEditingCfg(false)}>Cancel</Button>
+            <span style={{ ...s.pickerSep, fontSize: text.xs.fontSize }}>Token stays in <b>Connectors → Obsidian</b></span>
+          </>
+        )}
+      </div>
+
       {err && <div style={s.err}>⚠ {err}{/vault token/i.test(err) && <div style={{ marginTop: 6, color: tk.muted }}>Add a company secret <code style={s.code}>GITHUB_VAULT_TOKEN</code> in the Cockpit → Secrets panel (a GitHub PAT with read access to the vault repo).</div>}</div>}
 
-      <div style={s.split}>
+      {view === 'graph' && <VaultGraph orgId={orgId} getToken={getToken} onOpenNote={openNote} />}
+
+      {view === 'reader' && <div style={s.split}>
         <div style={s.tree}>
           <div style={s.crumbs}>
             {crumbs.map((c, i) => <span key={i}><a style={s.crumb} onClick={() => { setFile(null); loadDir(crumbs.slice(0, i + 1).join('/')) }}>{c}</a>{i < crumbs.length - 1 ? ' / ' : ''}</span>)}
@@ -102,10 +176,10 @@ export default function MemoryPanel({ orgId, getToken }: { orgId: string; getTok
               <Skeleton h={13} w="64%" />
             </div>
           )}
-          {!file && !loading && <div style={{ color: tk.muted, fontSize: text.md.fontSize }}>Pick a note on the left to read it. Protocols, memory, agent registry, and company docs all live in the shared vault.</div>}
+          {!file && !loading && <div style={{ color: tk.muted, fontSize: text.md.fontSize }}>Pick a note on the left to read it — or switch to <b>⬡ Graph</b> to explore the vault visually. Protocols, memory, agent registry, and company docs all live in the shared vault.</div>}
           {file && <div style={s.md} dangerouslySetInnerHTML={{ __html: file.html }} />}
         </div>
-      </div>
+      </div>}
     </div>
   )
 }
@@ -124,4 +198,13 @@ const s: Record<string, React.CSSProperties> = {
   rowSel: { background: 'var(--accent-dim)', color: tk.accent },
   viewer: { background: tk.surfaceHigh, border: `1px solid ${tk.line}`, borderRadius: tk.r.lg, padding: `${space.lg}px ${space.xl}px`, minHeight: '40vh', maxHeight: '70vh', overflow: 'auto' },
   md: { fontSize: text.lg.fontSize, lineHeight: 1.6, color: tk.textDim },
+  // view toggle
+  seg: { display: 'inline-flex', border: `1px solid ${tk.line}`, borderRadius: tk.r.md, overflow: 'hidden' },
+  segBtn: { border: 'none', background: 'transparent', color: tk.textDim, padding: `${space.xs}px ${space.md}px`, fontSize: text.sm.fontSize, cursor: 'pointer' },
+  segOn: { background: 'var(--accent-dim)', color: tk.accent },
+  // vault picker
+  picker: { display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap', background: tk.surface, border: `1px solid ${tk.line}`, borderRadius: tk.r.md, padding: `${space.sm}px ${space.md}px` },
+  pickerLabel: { fontSize: text.xs.fontSize, fontWeight: 600, color: tk.muted, textTransform: 'uppercase', letterSpacing: '.04em' },
+  pickerVal: { fontSize: text.sm.fontSize, color: tk.textDim },
+  pickerSep: { color: tk.mutedSoft },
 }

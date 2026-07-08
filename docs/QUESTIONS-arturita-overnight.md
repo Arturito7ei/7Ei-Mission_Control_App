@@ -22,6 +22,7 @@ The operator confirmed all six S-decisions at their desk and added two new requi
 **New requirements (2026-07-08):** distributable packaging + iPhone app → **Epic H** (PLAN) + FR-38..42 / NFR-25..27 (REQUIREMENTS).
 
 ### Still needed from the operator (go-live, not build blockers)
+- **Q-M1 — Graphify semantic pass (Memory-graph, Epic M):** the vault graph shipped from the **free structural pass** (786 nodes/964 edges, committed to `vault/graphify-out/`). The **semantic pass costs money + needs an AI key** — **no LLM key is set** in this environment, so I **stopped before it** (guardrail). Pick: **(1)** leave structural-only ($0, recommended); **(2)** local **Ollama** naming ($0, name the model — Ollama is running); or **(3)** a cloud key (`GEMINI_API_KEY` — cents for this vault) and I'll run `graphify cluster-only`/`label`. Details + rationale in `docs/DECISIONS-arturita.md` → **S-M1**. No key committed; nothing run unprompted.
 - **Telegram bot token** + set `WEBHOOK_SIGNING_SECRET` (enables D-epic remote control).
 - **Wallet:** fund + name the **burner** (separate from main wallet), testnet + RPC, confirm per-tx threshold ($100 default)/per-day cap/allowlist, and the **final explicit go** before any mainnet autonomous signing.
 - **F1 default fallback chain** confirmed: `claude-sonnet → gpt-4o → gemini-2.0-flash → deepseek → local llama`.
