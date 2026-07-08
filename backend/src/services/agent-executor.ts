@@ -19,6 +19,7 @@ import { parseFallbackChain } from './llm-fallback'
 import { streamLLMWithFallback } from './llm-fallback-runtime'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
+import { planWakeModel, parseTierOverrideConfig } from './model-profile'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -71,19 +72,36 @@ export async function executeAgentTask(opts: {
     return r
   }
 
+  // Epic P / P2 — model-profile routing. Pick the tier (cheap vs primary) for
+  // THIS turn up front, so the preflight cap prices the model that will actually
+  // run and the same model becomes the F1 fallback-chain head below. Signals:
+  // task workMode (ask → cheap) + an explicit deployConfig override
+  // (`modelTierOverride[:agentId]`). `isOrchestrator` is only ever a *primary*
+  // signal, so computing the plan here (before it's known) never diverges from
+  // the model finally used on an execute turn. Cheap tier stays off for every
+  // agent that hasn't configured one → behaviour unchanged.
+  const orgCfg = await db.query.organisations.findFirst({
+    where: eq(schema.organisations.id, agent.orgId), columns: { deployConfig: true },
+  })
+  const taskWorkMode = (await db.query.tasks.findFirst({
+    where: eq(schema.tasks.id, taskId), columns: { workMode: true },
+  }))?.workMode
+  const wakePlan = planWakeModel(agent as any, {
+    workMode: taskWorkMode,
+    override: parseTierOverrideConfig(orgCfg?.deployConfig as any, agent.id),
+  })
+
   // MCA-84 V3: per-wake preflight cap — bound the worst-case cost of THIS wake
   // (input context + a full completion at the model's rates) and skip it if it
   // would blow the configured per-wake ceiling. Runs before any expensive setup
   // (RAG/Drive/memory fetches) so a capped wake costs nothing. Distinct from the
   // cumulative scoped budgets above; opt-in via deployConfig.maxCostPerWakeUsd.
+  // Prices the ROUTED model (P2) so a cheap-tier turn is bounded by its own rate.
   {
-    const orgCfg = await db.query.organisations.findFirst({
-      where: eq(schema.organisations.id, agent.orgId), columns: { deployConfig: true },
-    })
     const capUsd = parseCapUsd(orgCfg?.deployConfig as any, agent.id)
     if (capUsd != null) {
       const inputTokens = estimateInputTokens([input, ...conversationHistory.map(m => m.content)])
-      const pf = preflightWake(agent.llmModel ?? 'claude-sonnet-4-20250514', { inputTokens, capUsd })
+      const pf = preflightWake(wakePlan.model, { inputTokens, capUsd })
       if (!pf.allowed) {
         await db.update(schema.tasks).set({ status: 'blocked', inboxState: 'needs_attention', output: pf.reason } as any).where(eq(schema.tasks.id, taskId))
         await db.insert(schema.taskComments).values({
@@ -101,11 +119,8 @@ export async function executeAgentTask(opts: {
   // delegation or tool side-effects); the answer is posted to the ticket thread.
   // The governance / scoped-budget / preflight guards above still apply. External
   // runtimes never reach here (they returned above), so this is internal-only.
-  {
-    const t = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId), columns: { workMode: true } })
-    if (isAskMode(t?.workMode)) {
-      return answerAskTask({ agent, taskId, input, conversationHistory, onToken, onDone })
-    }
+  if (isAskMode(taskWorkMode)) {
+    return answerAskTask({ agent, taskId, input, conversationHistory, onToken, onDone })
   }
 
   const budget = checkDailyBudget(agent.orgId, 2000)
@@ -206,8 +221,13 @@ export async function executeAgentTask(opts: {
     } catch { /* non-critical */ }
 
     const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory)
-    const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
-    const provider = agent.llmProvider ?? 'anthropic'
+    // P2 — the routed tier (computed above) is the model for this wake. For an
+    // execute turn this is the profile's primary; a cheap-tier turn only happens
+    // via ask-mode (handled earlier) or an explicit override. reasoningEffort
+    // flows through the fallback `base` opts to the live LLM call.
+    const model    = wakePlan.model
+    const provider = wakePlan.provider
+    const reasoningEffort = wakePlan.reasoningEffort ?? undefined
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
     const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
     const messages = [...conversationHistory, { role: 'user' as const, content: input }]
@@ -224,7 +244,7 @@ export async function executeAgentTask(opts: {
     const wakeCapUsd = parseCapUsd(org?.deployConfig as any, agent.id)
     const wakeInputTokens = estimateInputTokens([systemPrompt, ...messages.map(m => m.content)])
     const fb = await streamLLMWithFallback({
-      base: { system: systemPrompt, messages, onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) } },
+      base: { system: systemPrompt, messages, reasoningEffort, onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) } },
       chain: effectiveChain,
       resolveCreds: (prov) => ({
         orgApiKey: org?.deployConfig?.[`${prov}_api_key`] as string | undefined,
@@ -264,7 +284,7 @@ export async function executeAgentTask(opts: {
           const synthesisInput = buildSynthesisPrompt(input, cleanedOutput, delegations)
           const synthResult = await streamLLM({
             provider, model, system: systemPrompt, messages: [{ role: 'user', content: synthesisInput }],
-            orgApiKey, baseURL, onToken: (chunk) => onToken?.(chunk),
+            orgApiKey, baseURL, reasoningEffort, onToken: (chunk) => onToken?.(chunk),
           })
           cleanedOutput = synthResult.output
         }
@@ -360,8 +380,16 @@ export async function answerAskTask(opts: {
     }
 
     const systemPrompt = buildAskSystemPrompt(agent, { org, memoryBlock, hierarchy })
-    const model    = agent.llmModel    ?? 'claude-sonnet-4-20250514'
-    const provider = agent.llmProvider ?? 'anthropic'
+    // P2 — ask-mode is a lightweight Q&A turn: route to the cheap tier when the
+    // agent has one enabled (an explicit override still wins). Falls back to the
+    // profile's primary otherwise, so nothing changes for agents without a cheap
+    // profile. reasoningEffort flows to the call.
+    const wakePlan = planWakeModel(agent as any, {
+      workMode: 'ask',
+      override: parseTierOverrideConfig(org?.deployConfig as any, agent.id),
+    })
+    const model    = wakePlan.model
+    const provider = wakePlan.provider
     const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
     const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
     const messages  = [...conversationHistory, { role: 'user' as const, content: input }]
@@ -369,6 +397,7 @@ export async function answerAskTask(opts: {
 
     const result = await streamLLM({
       provider, model, system: systemPrompt, messages, orgApiKey, baseURL,
+      reasoningEffort: wakePlan.reasoningEffort ?? undefined,
       onToken: (chunk) => onToken?.(chunk),
     })
 

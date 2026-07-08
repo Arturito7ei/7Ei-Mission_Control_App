@@ -151,6 +151,14 @@ export async function setupDatabase() {
     // allowlist { projects, tasks, agents } a low-trust agent may touch.
     `ALTER TABLE agents ADD COLUMN trust_mode TEXT NOT NULL DEFAULT 'standard'`,
     `ALTER TABLE agents ADD COLUMN trust_boundary TEXT`,
+    // Epic P / P2 — model profiles. `primary_model` (null → `llm_model` stays the
+    // effective primary, so existing agents are unchanged); `cheap_model` +
+    // `cheap_model_enabled` (default 0 = off) add the cheaper auto-routed tier;
+    // `reasoning_effort` (null = provider default) maps per-provider at call time.
+    `ALTER TABLE agents ADD COLUMN primary_model TEXT`,
+    `ALTER TABLE agents ADD COLUMN cheap_model TEXT`,
+    `ALTER TABLE agents ADD COLUMN cheap_model_enabled INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE agents ADD COLUMN reasoning_effort TEXT`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

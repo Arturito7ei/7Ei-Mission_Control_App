@@ -75,6 +75,16 @@ export const agents = sqliteTable('agents', {
   // `trustBoundary` resource set, gated actions quarantined for human review).
   trustMode: text('trust_mode').notNull().default('standard'),
   trustBoundary: text('trust_boundary'),              // JSON { projects, tasks, agents } — allowlist a low-trust agent may touch
+  // Epic P / P2 — model profiles (Paperclip `modelProfiles` parity). `primaryModel`
+  // is an OPTIONAL explicit primary override; when null the agent's `llmModel`
+  // stays the effective primary, so existing agents are unchanged. `cheapModel` +
+  // `cheapModelEnabled` add a cheaper tier the router auto-picks for low-stakes /
+  // ask-mode turns (cost lever). `reasoningEffort` (low|medium|high; null =
+  // provider default) maps per-provider at the LLM call. See services/model-profile.ts.
+  primaryModel: text('primary_model'),
+  cheapModel: text('cheap_model'),
+  cheapModelEnabled: integer('cheap_model_enabled', { mode: 'boolean' }).notNull().default(false),
+  reasoningEffort: text('reasoning_effort'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

@@ -6,6 +6,7 @@
 // and base URL come from org.deployConfig ('<provider>_api_key' / '<provider>_base_url').
 
 import Anthropic from '@anthropic-ai/sdk'
+import { mapReasoningEffort } from './model-profile'
 
 export interface LLMMessage { role: 'user' | 'assistant'; content: string }
 export interface LLMStreamOpts {
@@ -17,6 +18,12 @@ export interface LLMStreamOpts {
   onToken: (chunk: string) => void
   orgApiKey?: string
   baseURL?: string   // override base URL for OpenAI-compatible / custom providers
+  // Epic P / P2 — per-agent reasoning effort (low|medium|high). Optional and
+  // ADDITIVE: when unset the request is byte-identical to before, so every
+  // existing agent is unaffected. Mapped per provider in each stream fn below
+  // (Anthropic extended-thinking budget · OpenAI-compatible reasoning_effort ·
+  // Gemini thinkingBudget) — see services/model-profile.mapReasoningEffort.
+  reasoningEffort?: 'low' | 'medium' | 'high'
 }
 
 export interface LLMUsage { inputTokens: number; outputTokens: number }
@@ -119,12 +126,19 @@ export const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
 // ─ Anthropic stream ────────────────────────────────────────────────────
 async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
   const client = new Anthropic({ apiKey: opts.orgApiKey ?? process.env.ANTHROPIC_API_KEY })
+  // P2 reasoning effort → extended thinking. Only when set; budget_tokens must be
+  // < max_tokens, so bump max_tokens to fit. We already ignore thinking deltas in
+  // the loop below (we capture text_delta only), and finalMessage() is unchanged.
+  const think = mapReasoningEffort('anthropic', opts.reasoningEffort)
+  const budget = think.anthropicThinkingBudget
+  const maxTokens = budget ? Math.max(opts.maxTokens ?? 4096, budget + 1024) : (opts.maxTokens ?? 4096)
   const stream = client.messages.stream({
     model: opts.model,
-    max_tokens: opts.maxTokens ?? 4096,
+    max_tokens: maxTokens,
     system: opts.system,
     messages: opts.messages,
-  })
+    ...(budget ? { thinking: { type: 'enabled', budget_tokens: budget } } : {}),
+  } as any)
   let output = ''
   for await (const event of stream) {
     if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
@@ -155,6 +169,9 @@ async function streamOpenAICompatible(opts: LLMStreamOpts, provider: string): Pr
   // provider with no base URL is a hard "no key configured" error.
   if (!apiKey && provider !== 'ollama' && !opts.baseURL) throw new Error(`No API key configured for provider "${provider}"`)
 
+  // P2 reasoning effort → `reasoning_effort` (OpenAI reasoning models + most
+  // OpenAI-compatible hosts; non-reasoning models ignore it). Additive, only when set.
+  const reason = mapReasoningEffort(provider, opts.reasoningEffort)
   const body = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 4096,
@@ -164,6 +181,7 @@ async function streamOpenAICompatible(opts: LLMStreamOpts, provider: string): Pr
       { role: 'system', content: opts.system },
       ...opts.messages,
     ],
+    ...(reason.openaiReasoningEffort ? { reasoning_effort: reason.openaiReasoningEffort } : {}),
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -212,10 +230,16 @@ async function streamGemini(opts: LLMStreamOpts): Promise<LLMResult> {
     parts: [{ text: m.content }],
   }))
 
+  // P2 reasoning effort → Gemini thinkingConfig.thinkingBudget (2.5-class models;
+  // ignored by others). Additive, only when set.
+  const gThink = mapReasoningEffort('google', opts.reasoningEffort)
   const body = {
     system_instruction: { parts: [{ text: opts.system }] },
     contents,
-    generationConfig: { maxOutputTokens: opts.maxTokens ?? 4096 },
+    generationConfig: {
+      maxOutputTokens: opts.maxTokens ?? 4096,
+      ...(gThink.geminiThinkingBudget ? { thinkingConfig: { thinkingBudget: gThink.geminiThinkingBudget } } : {}),
+    },
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:streamGenerateContent?alt=sse&key=${apiKey}`

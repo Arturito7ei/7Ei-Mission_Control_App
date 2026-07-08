@@ -14,6 +14,8 @@ import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../se
 import { unreadTaskIds } from '../services/receipts'
 import { validateRoster, parseCapUsd, CHEAP_OUTPUT_RATE } from '../services/preflight'
 import { parseTrustMode, parseBoundary, serializeBoundary, TRUST_MODES } from '../services/review'
+import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parseReasoningEffort } from '../services/model-profile'
+import { parseLlmChain } from '../services/arturita-pipeline'
 import { requireOrgRole } from '../middleware/rbac'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
@@ -126,6 +128,60 @@ export async function agentRoutes(app: FastifyInstance) {
     const after = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify(after), actor: (req as any).userId ?? (req as any).auth?.userId ?? 'human', createdAt: new Date() })
     return { agentId, trustMode: parseTrustMode((after as any).trustMode), boundary: parseBoundary((after as any).trustBoundary) }
+  })
+
+  // ─── Epic P / P2 — model profiles (per-agent primary/cheap + reasoning effort) ─
+  // Owner-gated, same as trust: a model swap changes spend + capability, so it's
+  // an owner control. Every change is snapshotted to config_revisions. The routing
+  // decision (cheap vs primary) is pure in services/model-profile.ts and wired
+  // into the executor; these routes only read/write the profile fields.
+  app.get('/api/orgs/:orgId/agents/:agentId/model-profile', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!agent || agent.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    const a = agent as any
+    return {
+      agentId,
+      profile: {
+        primaryModel: a.primaryModel ?? null,
+        cheapModel: a.cheapModel ?? null,
+        cheapModelEnabled: !!a.cheapModelEnabled,
+        reasoningEffort: parseReasoningEffort(a.reasoningEffort),
+      },
+      // `resolved` shows the effective primary (falls back to llmModel) so the UI
+      // can display what actually runs even when no explicit override is set.
+      resolved: resolveModelProfile(a),
+    }
+  })
+  app.put('/api/orgs/:orgId/agents/:agentId/model-profile', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    const before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    if (!before || before.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    const patch = buildModelProfilePatch((req.body ?? {}) as any)
+    if (patch.ok !== true) return reply.code(400).send({ error: patch.error })
+    if (Object.keys(patch.set).length === 0) return reply.code(400).send({ error: 'nothing to update (primaryModel / cheapModel / cheapModelEnabled / reasoningEffort)' })
+    await db.update(schema.agents).set(patch.set as any).where(eq(schema.agents.id, agentId))
+    const after = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify(after), actor: (req as any).userId ?? (req as any).auth?.userId ?? 'human', createdAt: new Date() })
+    const a = after as any
+    return {
+      agentId,
+      profile: {
+        primaryModel: a.primaryModel ?? null,
+        cheapModel: a.cheapModel ?? null,
+        cheapModelEnabled: !!a.cheapModelEnabled,
+        reasoningEffort: parseReasoningEffort(a.reasoningEffort),
+      },
+      resolved: resolveModelProfile(a),
+    }
+  })
+  // Selectable model list for the config UI: the built-in catalogue + operator
+  // custom-model entries (S8 `arturita_llm_chain`). Read-only; org-scoped (Clerk).
+  app.get('/api/orgs/:orgId/available-models', async (req) => {
+    const { orgId } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId), columns: { deployConfig: true } })
+    const custom = parseLlmChain(org?.deployConfig as any).filter((e: any) => e.custom)
+    return { models: flattenModelOptions(custom.map((e: any) => ({ provider: e.provider, model: e.model, label: e.label }))) }
   })
 
   // MCA-GOV2 S4.1 — execution policies (action → requires approval).
