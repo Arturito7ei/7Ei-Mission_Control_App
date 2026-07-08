@@ -89,15 +89,12 @@
 
 ---
 
-## S-M1 — Graphify semantic pass: run it, and with which provider/key? `[OPEN — operator decision]`
-**Status:** `OPEN (2026-07-08)` — **needs operator sign-off before any spend.**
-**Context:** Graphify builds the vault graph in two passes. The **structural/AST pass** (tree-sitter, `graphify update <root> --no-cluster`) is **local and free** — this is what shipped: it produced **786 nodes / 964 edges** from the 128-note TARCO vault (`vault/graphify-out/graph.json`), rendering fully in the Memory tab. The **semantic pass** (community naming / richer relations) calls an **AI API and costs money + needs a key**.
-**What I found:** **no standalone LLM API key** is present in the build environment (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_API_KEY` all unset — only the Claude Code OAuth proxy, not usable by Graphify as a plain key). A **local Ollama** is running (free, no external key) and could name communities at zero API cost, but *which* local model + whether that quality is wanted is an operator preference.
-**Decision needed from operator (pick one):**
-1. **Leave structural-only** (default, $0) — the graph already works; skip semantic naming. *(Recommended for now.)*
-2. **Local Ollama** (`graphify cluster-only <root> --backend=ollama --model=<name>`) — $0 API cost, local only; name the model.
-3. **Cloud provider** — supply/confirm a key (`GEMINI_API_KEY` cheapest) and I'll run `graphify cluster-only`/`label`. Rough cost: a 128-note / ~30k-word vault is a **single small pass — cents, not dollars** on Gemini Flash.
-**Guardrail honored:** no key was committed; no semantic pass was run unprompted. See `docs/REQUIREMENTS-arturita.md` NFR-28.
+## S-M1 — Graphify semantic pass: run it, and with which provider/key? `[RESOLVED — local Ollama]`
+**Status:** `RESOLVED (2026-07-08)` — **operator chose option 2: local Ollama (`qwen2.5:14b`), $0, nothing leaves the machine.**
+**Decision:** ran the semantic **community-detection + LLM-naming pass** on the existing structural graph (incremental, no rebuild): `graphify cluster-only vault --no-label` (algorithmic Louvain) then `graphify label vault --backend=ollama --model=qwen2.5:14b --batch-size=20`. Enrichment: **110 communities**, **109 LLM-named "concepts"** (0 placeholders), named god-node/community hubs, and a regenerated `GRAPH_REPORT.md`. Graph is now **786 nodes / 747 edges** (parallel same-endpoint edges collapsed by clustering) with per-node `community` + `community_name`. Committed with the report to `vault/graphify-out/`.
+**Backend wiring:** `parseGraphifyGraph` now surfaces `community` + `communityName` (placeholder "Community N" treated as absent) + a `communities` stat; the Memory-tab graph shows the concept on hover, in search, and in the meta bar. Tests added (`[M2]`).
+**Cost / privacy:** **$0 — no external API, no key.** The only network use was `pip`-installing the `openai` client library (an HTTP client, used here against `http://localhost:11434` Ollama only). No key committed; no data left the machine. Model used: **`qwen2.5:14b`** (already pulled locally; ~2 min to label all communities).
+**Original context (kept):** the structural/AST pass is local + free (`graphify update <root> --no-cluster`); the semantic pass needs an LLM — no cloud key was present, so it was deferred to the operator, who picked local Ollama. See `docs/REQUIREMENTS-arturita.md` NFR-28.
 
 ---
 

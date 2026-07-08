@@ -15,12 +15,12 @@ import { Button, TextInput, Skeleton } from './ui'
 
 type Getter = () => Promise<string | null>
 
-type GNode = { id: string; label: string; kind: 'note' | 'tag' | 'heading'; path?: string; group: string; degree: number; tags?: string[] }
+type GNode = { id: string; label: string; kind: 'note' | 'tag' | 'heading'; path?: string; group: string; degree: number; tags?: string[]; community?: number; communityName?: string }
 type GEdge = { source: string; target: string; relation: string; weight: number }
 type GraphResp = {
   source: 'graphify' | 'native'
   nodes: GNode[]; edges: GEdge[]
-  stats: { notes: number; tags: number; links: number; unresolved: number; truncated?: boolean }
+  stats: { notes: number; tags: number; links: number; unresolved: number; communities?: number; truncated?: boolean }
   repo: string; root: string; branch: string
   hasGraphify: boolean; graphPath?: string; rebuildCommand: string; cached?: boolean
 }
@@ -125,7 +125,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   }, [filtered])
 
   const q = query.trim().toLowerCase()
-  const matches = useCallback((n: GNode) => q !== '' && n.label.toLowerCase().includes(q), [q])
+  const matches = useCallback((n: GNode) => q !== '' && (n.label.toLowerCase().includes(q) || !!n.communityName?.toLowerCase().includes(q)), [q])
 
   const applyTransform = useCallback(() => {
     const v = view.current
@@ -189,7 +189,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
         <div style={{ flex: 1 }} />
         {data && <span style={s.meta}>
           {data.source === 'graphify'
-            ? <span title={data.graphPath}>⬡ Graphify · {data.stats.notes} notes · {data.stats.links} links</span>
+            ? <span title={data.graphPath}>⬡ Graphify · {data.stats.notes} notes · {data.stats.links} links{data.stats.communities ? ` · ${data.stats.communities} concepts` : ''}</span>
             : <span>◇ Native parse · {data.stats.notes} notes · {data.stats.links} links{data.stats.unresolved ? ` · ${data.stats.unresolved} unresolved` : ''}{data.stats.truncated ? ' · truncated' : ''}</span>}
         </span>}
         <Button onClick={() => load(true)} disabled={loading} style={{ fontSize: text.sm.fontSize }}>↻ Rebuild</Button>
@@ -221,6 +221,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
                     onPointerDown={(e) => { e.stopPropagation(); drag.current = { id: n.id, panning: false, sx: e.clientX, sy: e.clientY, ox: 0, oy: 0 }; (e.target as Element).setPointerCapture?.(e.pointerId) }}
                     onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(h => h === n.id ? null : h)}
                     onClick={() => { if (n.path) onOpenNote(n.path) }}>
+                    <title>{n.label}{n.communityName ? ` — ${n.communityName}` : ''}</title>
                     <circle r={r} fill={colorOf(n)} stroke={hot ? tk.accent : 'var(--s1)'} strokeWidth={hot ? 2 : 1} />
                     {(n.kind !== 'tag') && (n.degree >= 4 || n.id === hover || hot) &&
                       <text x={r + 3} y={3} fontSize={9} fill={tk.text} style={{ pointerEvents: 'none', paintOrder: 'stroke' }} stroke="var(--s1)" strokeWidth={2.5}>{n.label}</text>}
