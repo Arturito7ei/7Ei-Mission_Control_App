@@ -4,7 +4,7 @@
 > **Status:** Draft for review · **Date:** 2026-07-08 · **Owner:** operator (arturito@7ei.ai)
 > **Convention:** one PR per story, squash-merged with `--admin`; pure-helper services + `node --test`; idempotent migrations; colorblind-safe UI (DESIGN_SYSTEM v2); docs bump per PR; invariant green each merge (**backend tests · 11/11 evals · web build**).
 
-**Before writing any code, resolve the pre-build decisions/spikes in §3.** Two of them (STT/TTS provider, mac-control adapter approach) block the first stories of Epics B and C respectively. Epic A has no external blockers and can start immediately.
+**Decision lock 2026-07-08: S1–S6 are all CONFIRMED (§3).** The pre-build decisions are resolved; the wave is unblocked. Epic A (safety spine) shipped. Note two 2026-07-08 changes: **Epic E** wallet model changed to bounded autonomous signing from a capped burner (S4), and **Epic H — Packaging & Distribution** is added (S2/D-h). See `docs/DECISIONS-arturita.md` for the confirmed answers + the wallet-model-change rationale.
 
 **Companion docs:** `docs/PRD-arturita.md` (intent) · `docs/DECISIONS-arturita.md` (S1–S6) · `docs/REQUIREMENTS-arturita.md` (FR/NFR acceptance checklist) · `docs/ONBOARDING-arturita.md` (cold-start) · `HANDOFF.md` (current story).
 
@@ -19,24 +19,29 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **A1** | Persona, sessions & `/panic` kill switch | `done` | [#174](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/174) | — |
 | **A2** | Dangerous-action approval types + step-up | `done` | [#175](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/175) | — |
 | **A3** | Intent classifier + two-phase destructive confirm | `done` | [#176](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/176) | — |
-| **B1** | Voice Gateway (STT/TTS) | `in-progress` (pure helpers done [#180]; provider layer + endpoint pending S1 keys) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 |
-| **B2** | Cockpit voice panel | `todo` | — | S5 |
+| **B1** | Voice Gateway (`local|provider` config + Chatterbox/NVIDIA adapter + `/voice`) | `in-progress` (pure helpers done [#180]; config + provider adapter + endpoint = this wave) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 ✅ |
+| **B2** | Cockpit voice panel | `todo` | — | S5 ✅ |
 | **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done [#181]; endpoint wiring pends B1-full) | [#181](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/181) | — |
-| **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon blocked on **S3**) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | **S3** |
-| **C2** | File ops + preview + undo | `todo` | — | S3 |
-| **C3** | `machine_exec` allowlist + doc editing | `todo` | — | **S6** |
-| **D1** | Telegram voice notes + text + auth | `todo` | — | S2 |
-| **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 |
+| **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon scaffold + read/preview/undo = this wave, destructive/exec behind A2) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | S3 ✅ |
+| **C2** | File ops + preview + undo | `todo` (read/preview/undo path this wave; destructive gated) | — | S3 ✅ |
+| **C3** | `machine_exec` (broad) + doc editing | `todo` (destructive subset A2-gated) | — | S6 ✅ |
+| **D1** | Telegram voice notes + text + auth | `todo` | — | S2 ✅ (needs bot token + `WEBHOOK_SIGNING_SECRET`) |
+| **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 ✅ |
 | **E1** | Wallet read + prepare + simulate | `done` | [#178](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/178) | — |
-| **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
-| **F1** | LLM fallback chain + circuit breaker | `done` | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) (pure layer; executor wiring follow-up) | — |
+| **E2** | **Wallet policy engine + burner keystore + testnet signing + `wallet_tx` card** *(model changed — S4)* | `todo` (policy engine + testnet path this wave; **mainnet behind explicit go flag**) | — | S4 ✅ |
+| **F1** | LLM fallback chain + circuit breaker | `done` (pure layer [#177]); **executor/`streamLLM` wiring + `/health` breaker surface = this wave** | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) | — |
 | **F2** | Degraded/offline + watchdogs | `done` (pure helpers; queue/host wiring pends B1/C1 execution) | [#182](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/182) | — |
 | **G1** | Self-description + CLI | `todo` | — | — |
 | **G2** | Go-live gates + runbook | `todo` | — | — |
+| **H1** | macOS installable bundle (sign + notarize) | `todo` (design/plan this wave) | — | — |
+| **H2** | First-run TCC permission wizard | `todo` (design/plan this wave) | — | — |
+| **H3** | Auto-update channel | `todo` (design/plan this wave) | — | — |
+| **H4** | Fresh-machine config/secret bootstrap | `todo` (design/plan this wave) | — | — |
+| **H5** | iPhone remote surface (v1 Telegram, v2 native/PWA) | `todo` (v1 = D-epic; v2 native design/plan this wave) | — | S2 ✅ |
 
 **Overnight build (2026-07-08) landed the entire safe spine + safe non-blocked work:** A1 #174, A2 #175, A3 #176, F1 #177, E1 #178, C1 planner #179, B1 helpers #180, B3 #181, F2 #182 — all squash-merged to `main`, invariant green (707 backend tests · 11/11 evals · web build).
 
-**Next story (needs operator input first):** the remaining stories are all gated on a `PROVISIONAL` S-decision or a live surface: **B1-full/B3-endpoint** need S1 (STT/TTS keys); **B2** needs S5 + a voice provider; **C2/C3** need **S3**/**S6** CONFIRMED before any real host write/exec; **D1/D2** need S2 + `WEBHOOK_SIGNING_SECRET`; **E2** needs **S4** (WalletConnect id + test wallet). **G1/G2** (self-description + go-live) can proceed once the above land. Confirm S1–S6 in `docs/DECISIONS-arturita.md` to unblock. Bold gating decisions (**S3/S4/S6**) are safety-critical.
+**Decision lock (2026-07-08): S1–S6 all CONFIRMED** (`docs/DECISIONS-arturita.md`). The wave is unblocked. This wave's build slice: **B1** (`local|provider` config + Chatterbox/NVIDIA provider adapter + `/voice` endpoint), **F1** (wire fallback into the live `agent-executor`/`streamLLM` retry loop + breaker registry + `/health`/Cockpit breaker health), **C1/C2** (host-daemon scaffold + real file-read/preview/undo; **destructive/exec stays behind the A2 gate + two-phase confirm**), and **E2** (wallet **policy engine** + burner-keystore design + **testnet-only** signing path — **NO mainnet autonomous signing**). Still operator-gated for go-live (not build): Telegram bot token + `WEBHOOK_SIGNING_SECRET` (D), funded burner + final mainnet go (E2 mainnet), TCC grants (H). **Safety rule holds:** every destructive/irreversible/≥-threshold action routes through A2; mainnet wallet signing and any irreversible action need the operator.
 
 ---
 
@@ -63,13 +68,13 @@ The dangerous surfaces (B/C/D/E) must not ship before this epic. A is the gate.
 | **B2** · Cockpit voice panel | New `web/app/dashboard/cockpit/` voice section: push-to-talk (wake-word opt-in), live transcript, spoken replies, approval-aware action feed. | Colorblind-safe (icon+text+shape, never color-only; red never lone CTA — DESIGN_SYSTEM v2). Push-to-talk default; wake-word opt-in. Approvals render inline with the tri-state controls. Web build green. | B1, A2 |
 | **B3** · Ask-vs-execute routing from voice | Route voice through the executor: questions → `ask` `work_mode` single-turn (reuse `askmode.ts`); work orders → `execute`. Follow-up voice notes re-enter the same thread (reuse `thread.ts` wake-on-comment). | "What's on my calendar" answers single-turn without a workspace/checkout; a work order runs the execute loop; a follow-up utterance continues the same task thread. Reuses existing helpers (no new loop). Tests cover the routing decision. | B1 |
 
-### Epic C — Machine control `[C1 needs Spike S3: adapter approach]`
+### Epic C — Machine control `[S3 CONFIRMED — whole-machine access + self-protection denylist]`
 
 | Story | Scope | Acceptance criteria | Deps |
 |---|---|---|---|
-| **C1** · Local Host daemon | New `adapters/arturita-host/` daemon (sibling to `adapters/mac-mini/`; launchd keep-alive, `setup.sh`). Capability API (list/read/write/move/delete within root); allowlist root + hard denylist + blast-radius caps + path canonicalization; authenticated channel to backend (agent token + mTLS/signed socket); **fail-closed** (acts only on an authenticated, approved backend command). | Anything outside the allowlist root or matching the denylist (`~/.ssh`, keychains, `.env`, wallet vaults, host's own config) is refused for read *and* write. Path traversal (`..`, symlink escape) blocked via canonicalize-then-prefix-check. Runs as operator user, no sudo. No backend command → no action. Host action-layer has its own tests (language TBD by S3). | A1, **S3** |
-| **C2** · File ops + preview + undo | File list/read/write/move/delete via the capability API, each producing a **preview manifest** (N files, size, destination) and an **undo journal** (originals staged, not purged). Gated by `file_destructive` approval when destructive or over threshold; in-root + under-threshold edits are auto-safe. New `host_actions` audit table. | A move/delete shows the exact manifest before executing; execution is reversible ("undo that") within the window; every op is a task+thread+heartbeat entry (nothing invisible). Blast-radius over cap → approval; over hard ceiling → refuse + ask to narrow. | C1, A2, A3 |
-| **C3** · `machine_exec` allowlist + doc editing | Allowlisted command execution (no free-form shell from the model); each exec is an approval-gated `machine_exec` showing exact argv. Document editing with diff preview. | Only allowlisted (or explicitly one-off-approved) commands run; argv shown verbatim in the approval. Doc edits show a diff before write. Default allowlist empty (opt-in per command — see S6). | C1, A2 |
+| **C1** · Local Host daemon | New `adapters/arturita-host/` daemon (sibling to `adapters/mac-mini/`; launchd keep-alive, `setup.sh`). Capability API (list/read/write/move/delete/exec); **whole-machine root** + **minimal self-protection denylist** (own secret store, burner keystore, daemon config, OS system-integrity paths) + blast-radius caps + path canonicalization; authenticated channel to backend (agent token + mTLS/signed socket); **fail-closed** (acts only on an authenticated, approved backend command). **This wave: scaffold + real file read/list/preview + undo path; destructive write/move/delete + exec stay behind the A2 gate.** | Denylist targets (own secret store, burner keystore, daemon config, SIP/system paths) refused for read *and* write. Path traversal (`..`, symlink escape) blocked via canonicalize-then-denylist-check. Runs as operator user, no sudo. No backend command → no action. Host action-layer has its own tests. | A1, S3 ✅ |
+| **C2** · File ops + preview + undo | File list/read/write/move/delete via the capability API, each producing a **preview manifest** (N files, size, destination) and an **undo journal** (originals staged, not purged). Gated by `file_destructive` approval + two-phase confirm when destructive or over the blast-radius cap; in-root + under-threshold edits are auto-safe. New `host_actions` audit table. | A move/delete shows the exact manifest before executing; execution is reversible ("undo that") within the window; every op is a task+thread+heartbeat entry (nothing invisible). Blast-radius over cap → approval; over hard ceiling → refuse + ask to narrow. **Verified end-to-end with tests; fail closed on ambiguity.** | C1, A2, A3 |
+| **C3** · `machine_exec` (broad) + doc editing | Broad command execution (full control assumed — S6); the **destructive/irreversible subset is approval-gated `machine_exec` showing exact argv verbatim** + two-phase confirm; non-destructive commands run without a per-command approval. Document editing with diff preview. | Destructive/irreversible commands can't run without an A2 approval showing argv verbatim; doc edits show a diff before write; the destructive-intent classifier + denylist bound what runs unattended. Optional operator command-denylist honored. | C1, A2 |
 
 ### Epic D — Remote (Telegram) `[D depends on the operator's surface choice, Spike S2]`
 
@@ -78,12 +83,12 @@ The dangerous surfaces (B/C/D/E) must not ship before this epic. A is the gate.
 | **D1** · Voice notes + text + auth | Extend the existing Telegram receiver (`telegram-bot.ts` + `webhook-auth.ts` HMAC): voice notes → STT, text commands, from the **bound chat id** only; nonce/replay guard; short session + step-up for dangerous. | Only the bound operator chat controls Arturita; forged/misrouted updates 403 before DB work (HMAC); duplicate/replayed updates rejected (nonce). Voice notes transcribed via B1; audio not retained. Requires `WEBHOOK_SIGNING_SECRET` set (go-live gate). | A1, B1, D-surface (**S2**) |
 | **D2** · Files + inline approvals + voice replies | Telegram file up/download (→ local host / document-ingest); inline-button approvals (✅ Approve / ✕ Reject / ↩ Changes) mapped to the tri-state flow; spoken replies as Telegram voice messages (TTS). | A remote destructive action surfaces distinct inline buttons (not one bared tap) mapped to approve/reject/revision; an uploaded file lands in-root (auto-safe if in-root+under-threshold) and can be summarized; replies come back as voice + text. | D1, C2, A2 |
 
-### Epic E — Wallet (read + prepare, never sign) `[WalletConnect decided; E2 needs Spike S4 integration proof]`
+### Epic E — Wallet (read + prepare + policy-gated bounded signing) `[S4 CONFIRMED — model changed: capped burner, autonomous < $100, testnet this wave]`
 
 | Story | Scope | Acceptance criteria | Deps |
 |---|---|---|---|
-| **E1** · Read + prepare + simulate | New `services/wallet.ts`: read balances/positions via RPC; build **unsigned** tx; **simulate** (gas, slippage, expected output, revert); decode calldata to a human-readable summary. RPC keys in `secrets.ts`. New `wallet_intents` table (decoded summary, sim result, caps checked — **no key material**). | Reads work with no key custody; unsigned tx + simulation produced; calldata decoded to plain language + contract label; **CI secret-scan + design invariant forbid any private-key/seed material in the process.** Helper tests over decode/simulate/cap logic. | A1 |
-| **E2** · Approval card + WalletConnect handoff + caps | `wallet_tx` approval card (decoded summary, per-tx/per-day caps, address allowlist, scam guards: new-address/`setApprovalForAll`/unlimited-approval/drain-pattern warnings). On approval, hand the **unsigned** tx to MetaMask/Brave via **WalletConnect** (per §12 decision); the operator signs in the wallet UI. Record `signed_txhash` after the fact. | Two independent confirmations (Arturita's card + the wallet's native prompt); Arturita never signs. Over-cap → step-up; unknown contract / unlimited approval → extra warning. Value never authorized by voice alone (visual echo per A3/PRD §7.2/§7.4). | E1, A2, **S4** |
+| **E1** · Read + prepare + simulate | New `services/wallet.ts`: read balances/positions via RPC; build tx; **simulate** (gas, slippage, expected output, revert); decode calldata to a human-readable summary; caps + scam guards. `wallet_intents` table (decoded summary, sim result, caps checked — **no key material**). | Reads work; tx + simulation produced; calldata decoded to plain language + contract label; caps/scam-guard helpers tested; `assertNoKeyMaterial` guards persisted fields. **Done (#178).** | A1 |
+| **E2** · Policy engine + burner keystore + testnet signing + `wallet_tx` card | **(1)** Policy engine (`services/wallet-policy.ts`, pure): per-tx threshold (**default $100, operator-configurable**), per-day cap, destination allowlist, `autonomous_signing_enabled`/`mainnet_enabled` flags → decide `autonomous_sign` vs `require_approval` vs `refuse`. **(2)** Burner-keystore design + plumbing: sealed local encrypted keystore **or** delegated session key (WalletConnect can't do unattended signing — documented); key never plaintext at rest, never logged, denylisted from the host (S3). **(3)** Testnet-only signing path behind `WALLET_AUTONOMOUS_SIGNING_ENABLED=false`/`WALLET_MAINNET_ENABLED=false` (both default off). **(4)** `wallet_tx` approval card (decoded summary, caps, scam guards) for ≥-threshold txs. `wallet_policy` table. | Sub-threshold + in-policy tx → autonomous testnet sign, logged as a task; ≥-threshold / over-per-day / off-allowlist / scam-flagged → A2 `wallet_tx` approval + step-up. Simulate-before-sign enforced (revert/missing-sim → refuse). **Mainnet autonomous signing impossible without the explicit flags + operator go.** Value never authorized by voice alone (visual echo). No private key in any API in/out, prompt, log, or `wallet_intents`. Pure policy/keystore-decision logic tested; **no real mainnet signing shipped.** | E1, A2, S4 ✅ |
 
 ### Epic F — Resilience & LLM failover
 
@@ -97,21 +102,35 @@ The dangerous surfaces (B/C/D/E) must not ship before this epic. A is the gate.
 | Story | Scope | Acceptance criteria | Deps |
 |---|---|---|---|
 | **G1** · Self-description + CLI | All new endpoints self-described via `openapi.ts` (`documentEndpoint`); CLI `7ei-mc` gains `arturita bind` / `arturita panic` / `arturita host-status`; `docs/API.md` narrative for the Arturita surface. | New paths appear in `/api/openapi.json` with correct auth scope (auth-scoping test green); CLI verbs work token/session-appropriately; API.md updated. | after A–E land |
-| **G2** · Go-live gates + runbook | Extend `GO-LIVE.md` with PRD §11 gates (WEBHOOK_SIGNING_SECRET as hard prereq, STT/TTS keys + local models, Telegram bind, host install, WalletConnect project id + caps, fallback chain). Operator runbook. Update `STATUS.md`/`HANDOFF.md`/vault milestone. | Every user-only console action documented with the exact step; runbook lets the operator bring Arturita up from zero; docs/vault bumped. | G1 |
+| **G2** · Go-live gates + runbook | Extend `GO-LIVE.md` with PRD §11 gates (WEBHOOK_SIGNING_SECRET as hard prereq, `NVIDIA_API_KEY` + local models, Telegram bot token + bind, host install + TCC grants, **burner fund + caps + mainnet-flag go**, fallback chain, packaging). Operator runbook. Update `STATUS.md`/`HANDOFF.md`/vault milestone. | Every user-only console action documented with the exact step; runbook lets the operator bring Arturita up from zero; docs/vault bumped. | G1 |
+
+### Epic H — Packaging & Distribution `[new 2026-07-08 — S2/D-h; design/plan this wave, build later]`
+
+The whole solution must be replicable/installable on other machines and as an iPhone remote app. This wave captures the design + stories fully so it's tracked; the installer itself is not built yet.
+
+| Story | Scope | Acceptance criteria | Deps |
+|---|---|---|---|
+| **H1** · macOS installable bundle | A `.dmg` / installable app bundle packaging the local host daemon (+ any desk agent). **Code-signing (Developer ID) + notarization** so Gatekeeper accepts it. Reproducible build from the repo. | A fresh Mac can install from the `.dmg`; the app is signed + notarized (no Gatekeeper block); build is scripted + documented. | C1 |
+| **H2** · First-run permission wizard | A first-run flow that walks the operator through granting the macOS **TCC permissions** the host daemon needs: **Full Disk Access, Accessibility, Automation, Microphone** (+ Screen Recording if used). Detects what's granted, deep-links to the right System Settings panes, blocks capabilities whose permission is missing (fail-closed). | Wizard enumerates required permissions, shows granted/missing state, links to each Settings pane, and the daemon refuses a capability whose TCC grant is absent (with a clear spoken/text reason). | H1, C1 |
+| **H3** · Auto-update channel | A signed release/update feed (e.g. Sparkle-style appcast or equivalent) so installed hosts update themselves; version pinning + rollback. | An installed host detects + applies a new signed release; updates are signature-verified; a bad update can be rolled back. | H1 |
+| **H4** · Fresh-machine config/secret bootstrap | Bootstrapping on a clean machine: initialize the encrypted secret store, load `NVIDIA_API_KEY`/Telegram token/RPC + burner keystore, set `deployConfig` (fallback chain, caps), and run the one-time operator **bind**. No secret ever written to disk in plaintext or committed. | From zero, the operator can stand up a working Arturita (secrets sealed, bound, policy configured) via a documented bootstrap; no plaintext secret on disk; nothing committed. | H1, A1 |
+| **H5** · iPhone remote surface | **v1 = Telegram** (Epic D). **v2 = a dedicated native/PWA iPhone client** (push, voice capture, inline approvals) — design + plan only this wave. | v1 Telegram surface tracked in D1/D2; v2 native/PWA client scoped (surface, auth reuse of the bind + HMAC model, push infra) as a design doc; no App Store build this wave. | D1, D2 |
 
 ---
 
 ## 2. Sequencing & critical path
 
 ```
-A1 ─┬─ A2 ─┬───────────────────────────────► (gates every dangerous story)
+A1 ─┬─ A2 ─┬───────────────────────────────► (gates every dangerous story)  [DONE]
     └─ A3 ─┘
-              B1 ─ B2 ─ B3        (voice; B1 waits on S1)
-              C1 ─ C2 ─ C3        (machine; C1 waits on S3)
-                        D1 ─ D2   (remote; needs B1+C2, surface choice S2)
-              E1 ─ E2             (wallet; E2 waits on S4)
-              F1 ─ F2             (resilience; F1 after A)
+              B1 ─ B2 ─ B3        (voice; S1 ✅ — B1 config+provider+endpoint this wave)
+              C1 ─ C2 ─ C3        (machine; S3 ✅ — daemon+read/preview/undo this wave, destructive A2-gated)
+                        D1 ─ D2   (remote; S2 ✅ — needs bot token + WEBHOOK_SIGNING_SECRET)
+              E1 ─ E2             (wallet; S4 ✅ — policy engine + burner keystore + TESTNET signing; mainnet flag-gated)
+              F1 ─ F2             (resilience; F1 executor wiring this wave)
                         G1 ─ G2   (docs/go-live; after A–E)
+              H1 ─ H2 ─ H3 ─ H4   (packaging; design/plan this wave, build later)
+                        H5        (iPhone: v1 Telegram=D, v2 native/PWA design)
 ```
 
 - **Start now:** **A1** (no blockers). Then **A2** + **A3** in parallel after A1.
@@ -124,22 +143,20 @@ A1 ─┬─ A2 ─┬───────────────────�
 
 ## 3. Pre-build decisions & spikes (resolve before the blocked stories)
 
-> **Recorded as a decision log in `docs/DECISIONS-arturita.md`** with per-item status (`PROVISIONAL — pending operator confirm` / `CONFIRMED`). The table below is the at-a-glance reference; DECISIONS is where status flips when the operator signs off.
+> **Recorded as a decision log in `docs/DECISIONS-arturita.md`** with per-item status. **All S1–S6 CONFIRMED 2026-07-08** — this table is the at-a-glance record of the confirmed answers.
 
-These need an operator decision or a short timeboxed spike **before** the dependent stories start. None require writing feature code — they're decisions + throwaway proofs.
+| # | Decision | Blocks | **Confirmed answer (2026-07-08)** |
+|---|---|---|---|
+| **S1** | STT/TTS provider | B1, B3, D1 | **`local\|provider` config setting, per-context.** Interim `provider` = **Chatterbox TTS via NVIDIA API** (key → encrypted secrets store, **never git**; `.env.example` placeholder only). `local` default for sensitive contexts. |
+| **S2** | iPhone / remote surface | D1, D2, H5 | **Telegram-only for v1** (operator provides the bot token → HMAC receiver + secrets store). **v2 native/PWA iPhone app → Epic H.** |
+| **S3** | Mac-control adapter + access scope | C1, C2, C3 | **Custom hardened daemon**, **whole-machine access** (full control assumed), **minimal self-protection denylist only** (own secret store, burner keystore, daemon config, OS system-integrity paths). Destructive ops still A2-gated with verbatim summary. |
+| **S4** | **Wallet model — CHANGED** | E2 | **Bounded autonomous signing from a capped burner.** Autonomous < **$100** (per-tx threshold, configurable); ≥ $100 → A2 approval. Local encrypted keystore / delegated session key (WalletConnect can't do unattended signing). Policy engine (per-tx/per-day/allowlist). **Testnet only this wave; mainnet behind explicit go flag.** |
+| **S5** | Wake-word vs push-to-talk | B2 | **Push-to-talk default; "Arturita" wake-word opt-in.** |
+| **S6** | `machine_exec` scope | C3 | **Full control assumed → broad exec allowed.** Destructive/irreversible commands still A2-gated + two-phase confirm with argv shown verbatim. |
 
-| # | Decision/Spike | Blocks | Recommendation | Needs from operator |
-|---|---|---|---|---|
-| **S1** | **STT/TTS provider** — cloud (quality/latency) vs local-first (privacy, offline). | B1, B3, D1 | **Local-first with a cloud option**: whisper.cpp (STT) + a local TTS for sensitive/offline, a cloud provider (higher quality) for everyday, provider-pluggable like `llm-router`. Prefer local for anything touching secrets/wallet. | Confirm privacy stance + budget; name the cloud provider if any. |
-| **S2** | **iPhone surface** — Telegram-only (v1, no App Store) vs a thin PWA/native client. | D1, D2 (framing) | **Telegram-only for v1** (fastest, no App Store, reuses the HMAC receiver); revisit a PWA in v2 once flows settle. | Confirm Telegram is acceptable as the sole remote surface for v1. |
-| **S3** | **Mac-control adapter approach** — build the custom hardened daemon (`adapters/arturita-host/`) vs. wrap an existing MCP (e.g. desktop-commander / computer-use) vs. hybrid. | C1, C2, C3 | **Custom daemon for the write/destructive path** (we need the allowlist-root + denylist + blast-radius caps + undo journal + fail-closed guarantees, which a general MCP won't enforce). Optionally *read/inspection* via an existing MCP. Timebox a spike to confirm the daemon's auth channel (mTLS vs signed local socket) and language (Node to match the repo vs a small Swift/Go helper for macOS APIs). | Approve building a local daemon on the Mac; confirm the allowlist root(s) + denylist. |
-| **S4** | **WalletConnect integration proof** — v1 provider is **decided** (PRD §12); the spike is a read+prepare+simulate + unsigned-tx handoff proof against MetaMask **and** Brave, plus calldata decoding source (self-hosted decoder vs a decode API). | E2 | Timebox a WalletConnect v2 handshake + one simulated swap end-to-end (no real funds); pick the calldata-decode + contract-label source; confirm the no-custody invariant holds through the handoff. | Provide/confirm a WalletConnect project id (go-live); confirm test wallet + testnet. |
-| **S5** | **Wake-word** — always-listening vs push-to-talk default. | B2 | **Push-to-talk default, wake-word opt-in** (privacy). | Confirm. |
-| **S6** | **`machine_exec` allowlist scope at launch** — which commands (if any) are pre-allowed. | C3 | **Empty allowlist at launch**; every command opt-in per approval. | Provide the initial command allowlist (likely none). |
-
-**Also flagged from the PRD (no decision needed, but call out at build time):**
-- Voice audio retention default = discard-after-transcription (PRD §7.8) — confirm no audit-audio store is wanted.
-- Per-tx / per-day wallet caps + address allowlist are operator-configured at go-live (E2 / GO-LIVE) — values TBD by operator.
+**Also from the PRD (call out at build time):**
+- Voice audio retention default = discard-after-transcription (PRD §7.8) — no audit-audio store (confirmed default).
+- Per-tx threshold ($100 default) / per-day cap / destination allowlist are operator-configured at go-live (E2 / GO-LIVE); burner funded by the operator; mainnet stays off until the explicit go.
 
 ---
 

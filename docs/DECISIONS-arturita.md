@@ -1,69 +1,91 @@
 # DECISIONS — Arturita (S1–S6 + standing decisions)
 
-> **Companion to `docs/PRD-arturita.md` (what/why) and `docs/PLAN-arturita.md` (how/stories).** This is the decision log: the pre-build spikes/decisions that gate the first stories, each recorded with a provisional answer, rationale, and what it unblocks.
-> **Status legend:** `PROVISIONAL — pending operator confirm` (recommended answer, not yet signed off) · `CONFIRMED` (operator signed off, or already decided in the PRD) · `OPEN` (no recommendation yet).
+> **Companion to `docs/PRD-arturita.md` (what/why) and `docs/PLAN-arturita.md` (how/stories).** This is the decision log: the pre-build spikes/decisions that gate the first stories, each recorded with its answer, rationale, and what it unblocks.
+> **Status legend:** `PROVISIONAL — pending operator confirm` (recommended answer, not yet signed off) · `CONFIRMED (YYYY-MM-DD)` (operator signed off, or already decided in the PRD) · `OPEN` (no recommendation yet).
 > **Date:** 2026-07-08 · **Owner:** operator (arturito@7ei.ai)
 
-**How to use this file:** a decision stays `PROVISIONAL` until the operator confirms. A build agent **may proceed on a PROVISIONAL decision** for non-destructive scaffolding, but **must not** ship a dangerous surface (B/C/D/E) whose safety envelope depends on an unconfirmed decision (S3 root/denylist, S4 wallet handoff, S6 exec allowlist) until it is `CONFIRMED`. When the operator confirms, flip the status here and note the date.
+**How to use this file:** a decision stays `PROVISIONAL` until the operator confirms. A build agent **may proceed on a PROVISIONAL decision** for non-destructive scaffolding, but **must not** ship a dangerous surface (B/C/D/E) whose safety envelope depends on an unconfirmed decision until it is `CONFIRMED`. When the operator confirms, flip the status here and note the date.
+
+> **⚠️ 2026-07-08 DECISION LOCK — S1–S6 all CONFIRMED by the operator at their desk, plus two new requirements.** This flips the whole S-block from provisional to confirmed and records a **material change to the wallet safety model** (S4 below): Arturita moves from *read/prepare/never-sign* to *bounded autonomous signing from a capped burner wallet*, with any transaction at/above ~USD $100 still gated through the A2 approval flow. **Mainnet autonomous signing is NOT enabled in this wave** — testnet + full policy/keystore design only, mainnet behind a final explicit operator go. The two new requirements (distributable packaging + iPhone app) are captured as **Epic H** in `docs/PLAN-arturita.md` and new FR/NFR items in `docs/REQUIREMENTS-arturita.md`.
 
 ---
 
 ## S1 — STT/TTS provider
-**Status:** `PROVISIONAL — pending operator confirm`
-**Decision:** Local-first, provider-pluggable. Default to **local models** (whisper.cpp for STT + a local TTS) for anything touching secrets, wallet, or offline use; offer an **optional cloud tier** (higher-quality STT/TTS) selectable per-context, wired the same way `llm-router.ts` abstracts LLM providers.
-**Rationale:** Voice carries the operator's private context (emails, file names, wallet amounts). Local-first keeps that off third-party servers by default and satisfies the degraded/offline mode (PRD §7.6, §8). A pluggable layer lets the operator opt into cloud quality where privacy isn't a concern, with no lock-in.
-**Unblocks:** B1 (Voice Gateway), and therefore B2/B3, D1.
-**Needs from operator:** confirm the local-first stance; approve a cloud provider + budget if the optional tier is wanted; confirm no cloud STT for wallet/secret-adjacent commands.
+**Status:** `CONFIRMED (2026-07-08)`
+**Decision:** Ship a **Configuration Setting** with two modes — **`local`** and **`provider`** — **selectable per context** (e.g. sensitive/wallet-adjacent contexts can be pinned to `local`, everyday dictation can use `provider`), wired the same way `llm-router.ts` abstracts LLM providers. The **interim `provider` implementation is Chatterbox TTS via the NVIDIA API.** `local` remains the privacy/offline default for sensitive contexts (whisper.cpp-class STT + a local TTS), per the standing local-first stance.
+**Secret handling (done + verified):** the NVIDIA API key belongs in the existing **AES-256-GCM encrypted secrets store** (`secrets.ts`), injected into execution, **never committed to git**. `.env.example` carries only a **placeholder** (`NVIDIA_API_KEY=`). A repo-wide scan (working tree + full git history) on 2026-07-08 confirmed the supplied key value is **not present anywhere in the repo** — no rotation is required for it. (The separate, pre-existing `MC_LLM_API_KEY` NVIDIA-NIM rotation remains a standing GO-LIVE item, unrelated to this key.)
+**Rationale:** Voice carries the operator's private context (emails, file names, wallet amounts). A per-context `local|provider` switch keeps sensitive audio off third-party servers by default while allowing higher-quality cloud voice where privacy isn't a concern, with no lock-in. Chatterbox-via-NVIDIA is the fast, good-enough interim cloud voice.
+**Unblocks:** B1 (Voice Gateway) config + provider adapter + `/voice` endpoint; therefore B2/B3, D1.
+**Follow-through:** the config setting (`local|provider`, per-context) + a Chatterbox/NVIDIA provider adapter + the B1 `/voice` endpoint wiring are the next build items (see PLAN B1/B2). The key is loaded by the operator via **Cockpit → Secrets** (or Fly/agent-secrets injection); it never lands in a prompt/transcript/log/vault (NFR-11).
 
 ## S2 — iPhone / remote surface
-**Status:** `PROVISIONAL — pending operator confirm`
-**Decision:** **Telegram-only for v1.** No App Store release. Remote voice/text/files/approvals ride the existing Telegram receiver (`telegram-bot.ts` + `webhook-auth.ts` HMAC). A thin PWA or native client is a **v2 candidate**, revisited once the flows settle.
-**Rationale:** Fastest path to remote control, zero App Store latency/review, and it reuses a hardened primitive (per-org HMAC receiver) instead of standing up a new client + push infra. PWA/native adds a large surface for marginal v1 value.
-**Unblocks:** D1/D2 framing (and confirms no `app/` Expo revival is needed for this).
-**Needs from operator:** confirm Telegram is acceptable as the **sole** remote surface for v1.
+**Status:** `CONFIRMED (2026-07-08)`
+**Decision:** **Telegram-only for v1.** Remote voice/text/files/approvals ride the existing Telegram receiver (`telegram-bot.ts` + `webhook-auth.ts` HMAC). The **operator will provide a Telegram bot token**, wired through the existing HMAC receiver + secrets store (never committed). A **dedicated iPhone app (native/PWA)** is planned for **v2** and is now tracked in **Epic H — Packaging & Distribution** (`docs/PLAN-arturita.md`) alongside the macOS installer.
+**Rationale:** Fastest path to remote control, zero App Store latency/review, reuses the hardened per-org HMAC receiver. The native/PWA client is real future scope but sequenced after the flows settle — captured in Epic H so it is not lost.
+**Unblocks:** D1/D2 (with `WEBHOOK_SIGNING_SECRET` set + the bot token loaded).
+**Needs from operator (go-live):** provide the Telegram bot token (→ secrets store), set `WEBHOOK_SIGNING_SECRET`, complete the one-time bind.
 
-## S3 — Mac-control adapter approach
-**Status:** `PROVISIONAL — pending operator confirm` *(safety-critical — must be CONFIRMED before C-epic dangerous stories ship)*
-**Decision:** Build a **custom hardened local daemon** (`adapters/arturita-host/`, sibling to `adapters/mac-mini/`) for the write/destructive path. Optionally use an existing MCP (desktop-commander / computer-use) for **read/inspection only**. The daemon owns the safety envelope: allowlist root, hard denylist, blast-radius caps, path canonicalization, undo journal, fail-closed, runs as the operator user (no sudo).
-**Rationale:** A general-purpose MCP (desktop-commander/computer-use) does not and cannot enforce the allowlist-root + denylist + blast-radius + undo + fail-closed guarantees the PRD requires (§7.3). Those guarantees are the product's safety story; they must live in code we own and test, not a third-party tool with broad filesystem/shell reach. A custom daemon also gives a clean authenticated channel (agent token + mTLS or signed local socket) and matches the existing mac-mini adapter install/keep-alive pattern.
-**Open sub-choices (resolve in the S3 spike):** (a) daemon language — Node (matches the repo) vs a small Swift/Go helper for native macOS APIs; (b) auth channel — mTLS vs signed local socket.
+## S3 — Mac-control adapter approach + access scope
+**Status:** `CONFIRMED (2026-07-08)` *(safety-critical — now unblocked for C-epic host build, with the revised envelope below)*
+**Decision:** Build the **custom hardened local daemon** (`adapters/arturita-host/`, sibling to `adapters/mac-mini/`) for the read/preview/write/exec path. **The operator grants FULL machine access** — installing Arturita / 7Ei Mission Control **assumes full control of the given machine**, so the **allowlist root is effectively the whole machine**. What changes vs the earlier draft is the *default posture*: from "small allowlist root" to "whole machine allowed, minimal denylist."
+**Minimal hard denylist (self-protection ONLY — not general safety):** the daemon still hard-refuses read *and* write on a short list whose only purpose is to stop Arturita harming herself or bricking the host:
+- **Arturita's own secret store / signing material** — the AES-256-GCM secret store backing file(s), the burner wallet **keystore** (S4), and the daemon's own credentials/config. She must never be able to exfiltrate or overwrite her own signing key.
+- **OS system-integrity paths** — SIP-protected system locations and anything whose corruption bricks the OS (e.g. `/System`, `/usr` (non-`/usr/local`), boot/firmware paths). She runs as the operator user, no sudo.
+- Everything else on the machine is **permitted**.
+**Still gated:** even with the whole machine allowed, **destructive/irreversible operations still render a machine-generated verbatim approval summary through the A2 gate** and require the two-phase confirm (delete/move/overwrite outside a safe cap). Blast-radius caps still produce a preview manifest + undo journal; the daemon is still **fail-closed** (acts only on an authenticated, approved backend command). Path canonicalization (`..`/symlink-escape) still applies — it now enforces the denylist boundary rather than an allowlist boundary.
+**Open sub-choices (resolve in the C1 daemon build):** (a) daemon language — Node (matches the repo) vs a small Swift/Go helper for native macOS APIs; (b) auth channel — mTLS vs signed local socket. First-run macOS TCC permission grants (Full Disk Access, Accessibility, Automation, Microphone) are handled by the Epic H permission wizard.
+**Rationale:** the operator explicitly wants a full chief-of-staff with real machine reach; a whole-machine root maximizes usefulness. The residual risk (a compromised model with broad reach) is bounded by: (1) the self-protection denylist so she can't steal her own key or brick the OS, (2) the A2 approval gate + two-phase confirm on every destructive/irreversible op, (3) the undo journal, (4) fail-closed + no-sudo, and (5) full auditability (every host action is a task + thread + heartbeat).
 **Unblocks:** C1 (Local Host daemon), and therefore C2/C3, D2.
-**Needs from operator:** approve building a local daemon on the Mac; provide the **allowlist root(s)** and confirm the **denylist** (`~/.ssh`, keychains, `.env`/secret files, wallet vaults, browser profiles with wallet-extension data, the host's own config).
 
-## S4 — WalletConnect integration proof
-**Status:** `CONFIRMED (provider)` in PRD §12 · spike `PROVISIONAL`
-**Decision:** **WalletConnect** is the v1 wallet-integration provider (decided in PRD §12 — works with MetaMask + Brave, keeps Arturita out of key custody, avoids a fragile extension bridge). The remaining work is a **timeboxed spike**: a WalletConnect v2 handshake + one **simulated** swap end-to-end (no real funds) against MetaMask **and** Brave, plus choosing the calldata-decode + contract-label source (self-hosted decoder vs a decode API).
-**Rationale:** Provider is settled; the spike de-risks the unsigned-tx handoff and confirms the no-custody invariant holds through the flow before E2 is built.
-**Unblocks:** E2 (approval card + signing handoff).
-**Needs from operator:** a **WalletConnect project id** (go-live), a **test wallet + testnet** for the spike, and confirmation of per-tx / per-day caps + destination allowlist values.
+## S4 — Wallet safety model — **CHANGED: bounded autonomous signing from a capped burner** ⚠️
+**Status:** `CONFIRMED (2026-07-08)` — **this is a material change to a prior invariant; read in full.**
+
+> **What changed.** The earlier invariant was **"never sign / no key custody, ever"** (read + prepare + simulate; the operator signs in the wallet UI). The operator has **overridden** this: Arturita is to have **full control of a dedicated wallet**, **funded only with what she may spend**, so the **downside is capped by the balance**. She may transact **autonomously up to a per-tx spend limit**; **anything at/above ~USD $100 equivalent requires explicit operator approval through the A2 gate.** See the updated PRD invariants (§2/§7.4) and the residual-risk note there.
+
+**Decision (design + policy for this wave — NO mainnet autonomous signing yet):**
+- **Dedicated low-balance hot wallet (burner).** A separate burner wallet, **distinct from the operator's main wallet**, funded with a small capped balance. Capped funding = capped maximum loss (the rationale for allowing autonomy at all).
+- **Local signer / session key (WalletConnect alone is insufficient).** Autonomous signing below the threshold requires a **local signer**: plain **WalletConnect cannot do unattended signing** (it always defers to the wallet UI for a human tap). So the design uses either **(a) a local encrypted keystore** (the burner's key sealed in the AES-256-GCM store / an OS keychain-backed keystore, decrypted only in-process at signing time) **or (b) a delegated session key** (e.g. a smart-account session key / ERC-4337-style delegation) **with an on-chain or policy-enforced cap.** Preference: whichever keeps the blast radius smallest for the same UX — a session key with an enforced cap is safer than a raw hot key if the target chain/wallet supports it; otherwise a local encrypted keystore for the burner only.
+- **Policy engine (build this wave, testnet-enforced):**
+  - **Per-tx threshold** — default **USD $100**, operator-configurable. **< threshold → Arturita may sign autonomously; ≥ threshold → routes to the A2 `wallet_tx` approval path** (operator confirms; never voice-alone for value — NFR-5).
+  - **Per-day cap** — cumulative USD limit; exceeding it forces approval regardless of per-tx size.
+  - **Destination allowlist** — configurable; higher amounts / off-allowlist destinations require step-up.
+  - **Scam guards** carry over (new-address / `setApprovalForAll` / unlimited-approval / drain-pattern — `detectScamSignals`).
+- **Keystore plumbing + testnet path only.** Build the full design + policy engine + burner-keystore plumbing + a **testnet** signing path. **Do NOT enable real MAINNET autonomous signing in this wave.** Mainnet stays behind a **final explicit operator go + a funded wallet**, guarded by a hard default flag (e.g. `WALLET_AUTONOMOUS_SIGNING_ENABLED=false`, `WALLET_MAINNET_ENABLED=false`).
+- **Key hygiene (unchanged, absolute):** the burner private key is **never exposed or logged**, never enters a prompt/transcript/vault, and is denylisted from the host daemon (S3). The `assertNoKeyMaterial` guard stays; what changes is that a **sealed** key may now exist in the encrypted keystore for the burner — it is never in plaintext at rest and never leaves the signing boundary.
+
+**Rationale:** the operator wants genuine autonomous spend for small amounts (a working treasury for a chief-of-staff), accepting that the **maximum loss is bounded by the burner balance**. The ≥$100 approval gate keeps every material transaction human-in-the-loop; the burner separation keeps the main wallet untouched; testnet-first + the disabled mainnet flag keep this wave safe.
+**Residual risk (documented, accepted for the capped amount):** a compromised model or a mis-simulated tx could lose **up to the burner balance and the per-day cap** autonomously (below the $100 per-tx line) before any human sees it. Mitigations: keep the burner balance and per-day cap small, keep the per-tx threshold conservative, allowlist destinations, retain scam guards + simulation-before-sign, and log every autonomous tx as a visible task. This risk did not exist under the old never-sign model and is the explicit trade for autonomy.
+**Unblocks:** E2 (now: policy engine + burner keystore design + testnet signing path + the `wallet_tx` ≥threshold approval card). E1 (read/prepare/simulate) is unchanged and already shipped.
+**Needs from operator (go-live, before any mainnet):** fund + name the burner wallet (MetaMask or Brave), a testnet + testnet-funded wallet for the build, confirm per-tx threshold ($100 default) / per-day cap / destination allowlist values, and the **final explicit go** to flip mainnet autonomous signing on.
 
 ## S5 — Wake-word vs push-to-talk
-**Status:** `PROVISIONAL — pending operator confirm`
+**Status:** `CONFIRMED (2026-07-08)`
 **Decision:** **Push-to-talk by default; wake-word ("Arturita") opt-in.**
 **Rationale:** Always-listening is a standing privacy cost (a hot mic in the operator's office/home); push-to-talk is an explicit, auditable capture. Wake-word remains available for hands-free use as an opt-in.
-**Unblocks:** B2 (Cockpit voice panel default behavior).
-**Needs from operator:** confirm push-to-talk default is acceptable.
+**Unblocks:** B2 (Cockpit voice panel default behavior). Pure helpers (`shouldProcessCapture`, `hasWakeWord`) already encode this.
+**Needs from operator:** none — confirmed.
 
-## S6 — `machine_exec` allowlist scope at launch
-**Status:** `PROVISIONAL — pending operator confirm` *(safety-critical — must be CONFIRMED before C3 ships)*
-**Decision:** **Empty allowlist at launch.** No command runs from the model without an explicit per-command opt-in (each an approval-gated `machine_exec` showing exact argv). Never a free-form shell from the model.
-**Rationale:** `machine_exec` is the highest-blast-radius capability. Starting empty means the default posture is "Arturita cannot run commands," and the operator grows the allowlist deliberately.
+## S6 — `machine_exec` scope at launch
+**Status:** `CONFIRMED (2026-07-08)` *(safety-critical — revised to broad-exec-allowed, still gated for destructive)*
+**Decision:** **Full control assumed → broad exec allowed** (consistent with S3's whole-machine access). This **supersedes** the earlier "empty allowlist at launch" recommendation. Arturita may run commands on the operator's machine. **However:** any **destructive/irreversible command still routes through the A2 approval gate** with the **two-phase confirm** and the exact `argv` shown verbatim. Non-destructive commands run without a per-command approval; the daemon's fail-closed + denylist (S3) + blast-radius classification still bound what "non-destructive" means.
+**Rationale:** the operator wants a genuinely capable chief-of-staff, not a locked-down shell. Safety comes from gating the *irreversible* subset (destructive file ops, anything over the blast-radius cap, anything touching the denylist) rather than from a near-empty allowlist. `argv` is always shown verbatim in any approval so a misheard/mis-planned command can't execute silently.
 **Unblocks:** C3 (`machine_exec` + doc editing).
-**Needs from operator:** provide the initial command allowlist (recommended: none) and confirm the opt-in-per-command model.
+**Needs from operator:** none to launch broad exec; optionally provide a *denylist* of commands to always-gate beyond the destructive-intent classifier.
 
 ---
 
-## Standing decisions (already settled in the PRD — recorded here for the cold-start reader)
+## Standing decisions
 | # | Decision | Source | Status |
 |---|---|---|---|
-| D-a | **No key custody, ever** — Arturita never imports/stores/transmits a private key or seed phrase; wallet is read+prepare+simulate only; the operator signs in the wallet UI. | PRD §2, §7.4 | `CONFIRMED` (invariant) |
-| D-b | **Every dangerous action gates through the existing tri-state approval flow** (`file_destructive`/`wallet_tx`/`email_send`/`machine_exec`) with step-up. | PRD §7.1, PLAN A2 | `CONFIRMED` |
-| D-c | **Safety spine (Epic A) ships before any dangerous surface;** `machine_exec` (C3) + wallet signing (E2) are last. | PRD §10, PLAN §2 | `CONFIRMED` |
+| D-a | ~~**No key custody, ever**~~ **SUPERSEDED by S4 (2026-07-08).** Arturita now holds a **sealed burner key** in the encrypted keystore for **bounded autonomous signing** (< per-tx threshold; testnet this wave). Key material is never in plaintext at rest, never logged, never in a prompt/transcript/vault, and denylisted from the host daemon. ≥ threshold still routes to human approval. | PRD §2, §7.4 (updated) · S4 | `CHANGED (2026-07-08)` |
+| D-b | **Every dangerous action gates through the existing tri-state approval flow** (`file_destructive`/`wallet_tx`/`email_send`/`machine_exec`) with step-up. Under S4, `wallet_tx` fires at/above the per-tx threshold; under S6, destructive/irreversible `machine_exec` fires regardless. | PRD §7.1, PLAN A2 | `CONFIRMED` |
+| D-c | **Safety spine (Epic A) ships before any dangerous surface;** `machine_exec` (C3) + wallet **mainnet** signing (E2) are last and stay behind explicit go flags. | PRD §10, PLAN §2 | `CONFIRMED` |
 | D-d | **Single operator only** — Arturita is owner-scoped, not multi-tenant, in v1. | PRD §2 | `CONFIRMED` |
-| D-e | **Voice audio discarded after transcription** — no long-term audio store; transcripts live in the (deletable) task thread. | PRD §7.8 | `CONFIRMED` (confirm no audit-audio store wanted) |
-| D-f | **`WEBHOOK_SIGNING_SECRET` is a hard prerequisite** for enabling Telegram remote control (receivers must be HMAC-enforced, not open). | PRD §11, §7.1 | `CONFIRMED` (operator must set the secret at go-live) |
+| D-e | **Voice audio discarded after transcription** — no long-term audio store; transcripts live in the (deletable) task thread. | PRD §7.8 | `CONFIRMED` |
+| D-f | **`WEBHOOK_SIGNING_SECRET` is a hard prerequisite** for enabling Telegram remote control (receivers must be HMAC-enforced, not open). | PRD §11, §7.1 | `CONFIRMED` |
 | D-g | **LLM failover is cost-bounded** — every retry re-runs the preflight per-wake cap. | PRD §6 | `CONFIRMED` |
+| D-h | **Distributable packaging is v1 scope** — macOS installable bundle (signed + notarized), first-run TCC permission wizard, auto-update, fresh-machine config/secret bootstrap, and the iPhone remote surface (v1 Telegram, v2 native/PWA). Design/plan this wave; build later. | S2 + operator (2026-07-08) | `CONFIRMED` (Epic H) |
 
 ---
 
-_Linked from `docs/PLAN-arturita.md` §3 and `HANDOFF.md`. When the operator confirms an S-decision, flip its status to `CONFIRMED (YYYY-MM-DD)` here and note it in the PLAN §3 table + HANDOFF._
+_Linked from `docs/PLAN-arturita.md` §3 and `HANDOFF.md`. All S-decisions confirmed 2026-07-08. The S4 wallet-model change and the D-h packaging decision cascade into the PRD invariants, PLAN (Epic E revised + Epic H new), and REQUIREMENTS (new FR/NFR items)._
