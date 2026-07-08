@@ -29,7 +29,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **D2** | Telegram files + inline approvals + voice replies | `todo` | — | S2 ✅ |
 | **E1** | Wallet read + prepare + simulate | `done` | [#178](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/178) | — |
 | **E2** | **Wallet policy engine + burner keystore + testnet signing + `wallet_tx` card** *(model changed — S4)* | `in-progress` (policy engine + fail-closed signing gate + `wallet_policy` table + policy/evaluate endpoints + keystore design doc done; testnet live-signer wiring + `wallet_tx` card are go-live/follow-up) | #186 | S4 ✅ |
-| **F1** | LLM fallback chain + circuit breaker | `done` (pure layer [#177]); **executor/`streamLLM` wiring + `/health` breaker surface = this wave** | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) | — |
+| **F1** | LLM fallback chain + circuit breaker | `done` (pure layer [#177]; **live executor wiring + breaker registry + `/health` surface [#187]**) | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177), [#187](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/187) | — |
 | **F2** | Degraded/offline + watchdogs | `done` (pure helpers; queue/host wiring pends B1/C1 execution) | [#182](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/182) | — |
 | **G1** | Self-description + CLI | `todo` | — | — |
 | **G2** | Go-live gates + runbook | `todo` | — | — |

@@ -15,6 +15,8 @@ import { goalAncestry, formatGoalContext } from './goals'
 import { canAgentRun } from './governance'
 import { enforceAgentBudget } from './budget'
 import { preflightWake, parseCapUsd, estimateInputTokens } from './preflight'
+import { parseFallbackChain } from './llm-fallback'
+import { streamLLMWithFallback } from './llm-fallback-runtime'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
 
@@ -212,13 +214,31 @@ export async function executeAgentTask(opts: {
     const start = Date.now()
     let rawOutput = ''
 
-    const result = await streamLLM({
-      provider, model, system: systemPrompt, messages, orgApiKey, baseURL,
-      onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) },
+    // F1: run through the ordered fallback chain + circuit breaker when the
+    // agent/org configures one (`arturita_fallback_chain` in deployConfig).
+    // Absent a chain this is a single attempt — identical to a bare streamLLM.
+    // Failover stays cost-bounded: every hop is dropped if its worst-case wake
+    // cost exceeds the per-wake cap.
+    const fbChain = parseFallbackChain(org?.deployConfig as any, agent.id)
+    const effectiveChain = fbChain.length > 0 ? fbChain : [{ provider, model }]
+    const wakeCapUsd = parseCapUsd(org?.deployConfig as any, agent.id)
+    const wakeInputTokens = estimateInputTokens([systemPrompt, ...messages.map(m => m.content)])
+    const fb = await streamLLMWithFallback({
+      base: { system: systemPrompt, messages, onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) } },
+      chain: effectiveChain,
+      resolveCreds: (prov) => ({
+        orgApiKey: org?.deployConfig?.[`${prov}_api_key`] as string | undefined,
+        baseURL: org?.deployConfig?.[`${prov}_base_url`] as string | undefined,
+      }),
+      inputTokens: wakeInputTokens,
+      capUsd: wakeCapUsd,
     })
+    const result = fb.result
+    const usedModel = fb.used.model
+    const usedProvider = fb.used.provider
 
     const tokensUsed = result.usage.inputTokens + result.usage.outputTokens
-    const costUsd    = calcCost(model, result.usage.inputTokens, result.usage.outputTokens)
+    const costUsd    = calcCost(usedModel, result.usage.inputTokens, result.usage.outputTokens)
     const durationMs = Date.now() - start
 
     // Extract memory
@@ -260,7 +280,7 @@ export async function executeAgentTask(opts: {
 
     await db.update(schema.tasks).set({
       output: cleanedOutput, status: 'done', tokensUsed, costUsd,
-      durationMs, llmModel: model, completedAt: new Date(),
+      durationMs, llmModel: usedModel, completedAt: new Date(),
     }).where(eq(schema.tasks.id, taskId))
     await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agentId))
 
@@ -278,7 +298,7 @@ export async function executeAgentTask(opts: {
     }
 
     const execResult: ExecuteResult = {
-      output: cleanedOutput, tokensUsed, costUsd, durationMs, provider,
+      output: cleanedOutput, tokensUsed, costUsd, durationMs, provider: usedProvider,
       memorySaved: Object.keys(toSave).length > 0 ? toSave : undefined,
       delegations: delegatedAgentNames.length > 0 ? delegatedAgentNames : undefined,
       budgetWarning,

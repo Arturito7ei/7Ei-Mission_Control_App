@@ -31,6 +31,7 @@ import { telemetryPlugin } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
 import { buildLlmsTxt } from './services/llms-txt'
+import { llmProviderHealth } from './services/llm-fallback-runtime'
 
 // Keep in sync with package.json "version" — surfaced in /api/openapi.json + /api/health.
 const API_VERSION = '0.6.0'
@@ -134,6 +135,11 @@ async function start() {
 
     const oauthCount = await db.select({ id: schema.oauthTokens.id }).from(schema.oauthTokens).then(r => r.length).catch(() => 0)
 
+    // F1: LLM provider circuit-breaker health — which providers are in cooldown
+    // after repeated failures (empty until a fallback chain trips a breaker).
+    const llmProviders = llmProviderHealth()
+    const llmUnhealthy = llmProviders.filter(p => !p.healthy).map(p => p.key)
+
     return {
       status: 'ok',
       version: '1.3.0',
@@ -145,6 +151,10 @@ async function start() {
         pinecone: !!process.env.PINECONE_API_KEY,
         redis: !!process.env.REDIS_URL,
         googleOAuth: oauthCount,
+      },
+      llm: {
+        providers: llmProviders,
+        unhealthy: llmUnhealthy,
       },
       features: [
         'anthropic', 'openai', 'gemini',
