@@ -56,3 +56,29 @@ test('[J2] entryKey distinguishes by label + mode', () => {
     entryKey('llm', { provider: 'ollama', model: 'a', mode: 'provider' }),
   )
 })
+
+// ─── Custom operator-defined LLM entries (J2+) ───────────────────────────────
+
+test('[J2+] entryLabel shows the display name for a custom LLM entry', () => {
+  const custom: LlmEntry = { provider: 'together_l3', model: 'meta/Llama-3.3', mode: 'provider', label: 'Together L3', baseUrl: 'https://t/v1', custom: true }
+  assert.equal(entryLabel('llm', custom), 'Together L3 · meta/Llama-3.3')
+  // a built-in (no custom flag) still shows provider · model
+  assert.equal(entryLabel('llm', { provider: 'ollama', model: 'llama3.2:3b', mode: 'local' }), 'ollama · llama3.2:3b')
+})
+
+test('[J2+] toggleMode preserves the custom label + baseUrl', () => {
+  const custom: LlmEntry = { provider: 'x', model: 'm', mode: 'provider', label: 'X', baseUrl: 'https://t/v1', custom: true }
+  const toggled = toggleMode(custom) as LlmEntry
+  assert.equal(toggled.mode, 'local')
+  assert.equal(toggled.label, 'X')
+  assert.equal(toggled.baseUrl, 'https://t/v1')
+  assert.equal(toggled.custom, true)
+})
+
+test('[J2+] a custom entry appends + de-dupes by its slug label+mode', () => {
+  const base: Entry[] = [{ provider: 'ollama', model: 'llama3.2:3b', mode: 'local' }]
+  const custom: LlmEntry = { provider: 'together_l3', model: 'm', mode: 'provider', label: 'Together', baseUrl: 'https://t/v1', custom: true }
+  const once = appendEntry('llm', base, custom)
+  assert.equal(once.length, 2)
+  assert.equal(appendEntry('llm', once, custom).length, 2) // idempotent
+})

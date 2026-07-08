@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { calcCost, COST_RATES, MODEL_CATALOGUE, OPENAI_COMPATIBLE_BASE_URLS, resolveBaseURL } from '../services/llm-router.ts'
+import { calcCost, COST_RATES, MODEL_CATALOGUE, OPENAI_COMPATIBLE_BASE_URLS, resolveBaseURL, streamLLM } from '../services/llm-router.ts'
 
 describe('calcCost', () => {
   it('calculates cost for claude-sonnet-4', () => {
@@ -119,5 +119,24 @@ describe('OpenAI-compatible providers', () => {
   it('lets a per-org base URL override the MiniMax endpoint', () => {
     const url = resolveBaseURL({ provider: 'minimax', model: 'MiniMax-M2.7', system: '', messages: [], onToken: () => {}, baseURL: 'https://api.minimax.chat/v1' })
     assert.equal(url, 'https://api.minimax.chat/v1')
+  })
+})
+
+describe('streamLLM keyless custom/base-URL relaxation (J2+)', () => {
+  const base = { model: 'x', system: 's', messages: [{ role: 'user' as const, content: 'hi' }], onToken: () => {} }
+
+  it('does NOT throw "No API key" for a custom provider with an explicit baseURL (keyless)', async () => {
+    // point at an unroutable port so the call fails at the network layer, not the key check
+    await assert.rejects(
+      () => streamLLM({ ...base, provider: 'custom_together', baseURL: 'http://127.0.0.1:1/v1' }),
+      (e: any) => !/No API key configured/.test(String(e?.message)),
+    )
+  })
+
+  it('still throws "No API key" for a known hosted provider with no key and no baseURL', async () => {
+    await assert.rejects(
+      () => streamLLM({ ...base, provider: 'deepseek' }),
+      /No API key configured/,
+    )
   })
 })

@@ -85,6 +85,26 @@
 
 ---
 
+## S8 — Custom operator-defined LLM insertion (arbitrary model → the same fallback chain)
+**Status:** `CONFIRMED (2026-07-08)` — the operator can add an **arbitrary model** from the Config panel instead of only picking presets. Extends **S7** (`arturita_llm_chain`) and reuses **F1** (breaker/failover) + **D-g** (cost bound) unchanged.
+**Decision:** a "Custom model" form (display name · base URL · model id · type · optional API key) POSTs `…/arturita/custom-model`; the entry slots into `arturita_llm_chain` and behaves exactly like a built-in hop.
+- **General case = OpenAI-compatible** (`/chat/completions`, base URL + key) — covers most new providers (Together, Fireworks, DeepInfra, OpenRouter, Azure, vLLM, LM Studio, …). **Local base-URL / Ollama-style** = the keyless case (`mode: 'local'`, no key).
+- **Provider slug** is `slugify(name)`, **namespaced** (`custom_…`) whenever it would collide with a built-in provider key — a custom model can never clobber `openai_api_key`/`ollama_base_url`/etc.
+- **Routing:** an unknown slug **with a base URL** is driven through `streamOpenAICompatible` (llm-router). The keyless local case is now allowed (the `No API key` guard only trips for a *known hosted* provider with **no** base URL).
+**Config schema (deployConfig keys):**
+| Key | Value | Notes |
+|---|---|---|
+| `arturita_llm_chain[]` | `{ provider, model, mode, label?, baseUrl?, custom? }` | `label`/`baseUrl`/`custom` are the S8 additions; **no key material on the entry**. |
+| `<slug>_base_url` | string | OpenAI-compatible endpoint. |
+| `<slug>_api_key_enc` | AES-256-GCM blob (`secrets.ts`) | encrypted at rest; **never returned, never logged** (responses mask to the last 4). Legacy plaintext `<slug>_api_key` still read for back-compat. |
+**Endpoints:** `POST …/arturita/custom-model` (owner-gated, add/update), `POST …/custom-model/test` (reachability/auth self-test — GET `/models` then a 1-token `/chat/completions`; no key echoed), `DELETE …/custom-model/:provider`.
+**Validation:** model id required; base URL must be a valid `http(s)` URL (rejects `javascript:`/`data:`); a same-slug+model re-save updates in place (no duplicate hops); a corrupt encrypted blob degrades to "no key".
+**Rationale:** new providers appear constantly; hard-coding a preset list ages badly. One OpenAI-compatible adapter + an encrypted key slot covers ~all of them and keeps the F1 resilience contract.
+**Unblocks:** operator-supplied paid/free models without a redeploy.
+**Needs from operator:** the base URL + (for hosted) an API key per custom model; nothing for a local Ollama-style base URL.
+
+---
+
 ## Standing decisions
 | # | Decision | Source | Status |
 |---|---|---|---|

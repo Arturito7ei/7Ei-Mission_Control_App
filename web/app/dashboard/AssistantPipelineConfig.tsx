@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, text, space } from './tokens'
-import { Button, Card, Select, SectionLabel } from './ui'
+import { Button, Card, Select, SectionLabel, TextInput } from './ui'
 import {
   PRESETS, entryLabel, entryKey, moveEntry, removeAt, appendEntry, toggleMode,
   type Entry, type PipelineLayer, type LlmEntry,
@@ -106,6 +106,12 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
           {chains && LAYERS.map(({ key, label, hint }) => (
             <LayerEditor key={key} layer={key} label={label} hint={hint} entries={chains[key]} onChange={next => edit(key, next)} />
           ))}
+          {chains && (
+            <CustomModelForm
+              orgId={orgId} getToken={getToken} dirty={dirty}
+              onAdded={(llm, note) => { setChains(c => c ? { ...c, llm } : c); setDirty(false); setMsg(note); setErr(null) }}
+            />
+          )}
           {/* ── Talk-path self-test ─────────────────────────────────────────── */}
           <div style={{ borderTop: `1px solid ${tk.line}`, paddingTop: space.md }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
@@ -184,6 +190,97 @@ function LayerEditor({ layer, label, hint, entries, onChange }: { layer: Pipelin
   )
 }
 
+// ─── Custom operator-defined LLM ─────────────────────────────────────────────
+// Add an arbitrary OpenAI-compatible (or keyless local base-URL) model instead of
+// picking from the presets. Persists to the encrypted store + LLM chain via
+// POST /arturita/custom-model; the key never leaves the form except over the API.
+type Getter2 = () => Promise<string | null>
+type AddResp = { ok: boolean; slug: string; entry: Entry; maskedKey: string | null; llm: Entry[] }
+type TestResp = { ok: boolean; status: number | null; detail: string }
+
+function CustomModelForm({ orgId, getToken, dirty, onAdded }: { orgId: string; getToken: Getter2; dirty: boolean; onAdded: (llm: Entry[], note: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [label, setLabel] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [model, setModel] = useState('')
+  const [mode, setMode] = useState<'provider' | 'local'>('provider')
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [testResult, setTestResult] = useState<TestResp | null>(null)
+  const [formErr, setFormErr] = useState<string | null>(null)
+
+  const canSubmit = model.trim() !== '' && baseUrl.trim() !== '' && !busy
+  const body = () => ({ label: label.trim() || undefined, model: model.trim(), baseUrl: baseUrl.trim(), mode, apiKey: apiKey.trim() || undefined })
+
+  const runTest = async () => {
+    setBusy(true); setTestResult(null); setFormErr(null)
+    try {
+      const r = await api<TestResp>(`/api/orgs/${orgId}/arturita/custom-model/test`, {
+        token: await getToken(), method: 'POST',
+        body: JSON.stringify({ model: model.trim(), baseUrl: baseUrl.trim(), apiKey: apiKey.trim() || undefined }),
+      })
+      setTestResult(r)
+    } catch (e: any) { setFormErr(e?.message ?? 'Test failed') }
+    finally { setBusy(false) }
+  }
+
+  const add = async () => {
+    setBusy(true); setFormErr(null)
+    try {
+      const r = await api<AddResp>(`/api/orgs/${orgId}/arturita/custom-model`, { token: await getToken(), method: 'POST', body: JSON.stringify(body()) })
+      onAdded(r.llm, `Added “${label.trim() || model.trim()}”${r.maskedKey ? ` (key ${r.maskedKey})` : ''} — it’s in the LLM chain (reorder above to change priority).`)
+      setLabel(''); setBaseUrl(''); setModel(''); setApiKey(''); setTestResult(null); setOpen(false)
+    } catch (e: any) { setFormErr(e?.message ?? 'Add failed') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ border: `1px dashed ${tk.line}`, borderRadius: tk.r.md, padding: space.sm }}>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', gap: space.sm, background: 'transparent', border: 'none', cursor: 'pointer', color: tk.accent, fontSize: text.sm.fontSize, fontWeight: 700, padding: 0 }}>
+        <span style={{ color: tk.muted }}>{open ? '▾' : '▸'}</span> ＋ Add a custom model (OpenAI-compatible or local base URL)
+      </button>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm, marginTop: space.sm }}>
+          {dirty && <div style={{ fontSize: text.xs.fontSize, color: tk.amber }}>▲ Save or discard your pipeline edits above first — adding a custom model persists immediately and reloads the saved chain.</div>}
+          <label style={fieldLabel}>Display name
+            <TextInput value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Together Llama 3.3" aria-label="Display name" />
+          </label>
+          <label style={fieldLabel}>Base URL <span style={{ color: tk.muted }}>(OpenAI-compatible endpoint)</span>
+            <TextInput value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.together.xyz/v1" aria-label="Base URL" />
+          </label>
+          <label style={fieldLabel}>Model id
+            <TextInput value={model} onChange={e => setModel(e.target.value)} placeholder="meta-llama/Llama-3.3-70B-Instruct-Turbo" aria-label="Model id" />
+          </label>
+          <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap' }}>
+            <label style={{ ...fieldLabel, flex: 1, minWidth: 180 }}>Type
+              <Select value={mode} onChange={e => setMode(e.target.value as any)} aria-label="Model type">
+                <option value="provider">☁ Provider (hosted — needs an API key)</option>
+                <option value="local">🔒 Local base URL (no key — Ollama-style)</option>
+              </Select>
+            </label>
+            <label style={{ ...fieldLabel, flex: 1, minWidth: 180 }}>API key <span style={{ color: tk.muted }}>{mode === 'local' ? '(not needed)' : '(stored encrypted)'}</span>
+              <TextInput type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={mode === 'local' ? '—' : 'sk-…'} autoComplete="off" aria-label="API key" disabled={mode === 'local'} />
+            </label>
+          </div>
+          {testResult && (
+            <div style={{ fontSize: text.sm.fontSize, color: testResult.ok ? tk.green : tk.red }}>
+              {testResult.ok ? '✓' : '✕'} {testResult.detail}{testResult.status ? ` (HTTP ${testResult.status})` : ''}
+            </div>
+          )}
+          {formErr && <div style={errBox}>⚠ {formErr}</div>}
+          <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap' }}>
+            <Button onClick={runTest} disabled={!canSubmit} style={{ color: tk.accent }}>{busy ? '…' : 'Test reachability'}</Button>
+            <Button variant="primary" onClick={add} disabled={!canSubmit || dirty}>{busy ? 'Adding…' : 'Add to LLM chain'}</Button>
+          </div>
+          <p style={hintStyle}>The key is stored in the encrypted secret store — never committed, never logged. The model joins the LLM fallback chain and rides the F1 breaker like any built-in.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2, fontSize: text.xs.fontSize, color: tk.textDim, fontWeight: 600 }
 const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: space.sm, padding: `${space.xs}px ${space.sm}px`, border: `1px solid ${tk.line}`, borderRadius: tk.r.sm, background: tk.surface, fontSize: text.sm.fontSize }
 const pill: React.CSSProperties = { fontSize: text.xs.fontSize, fontWeight: 700, borderRadius: tk.r.pill, padding: '1px 8px', whiteSpace: 'nowrap' }
 const hintStyle: React.CSSProperties = { fontSize: text.xs.fontSize, color: tk.muted, margin: 0 }

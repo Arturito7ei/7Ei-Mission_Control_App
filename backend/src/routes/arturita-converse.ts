@@ -24,6 +24,7 @@ import { decideConverseMode, buildConverseSystemPrompt } from '../services/artur
 import { routeVoiceCommand } from '../services/voice-routing'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
 import { parseLlmChain, usableLlmChain } from '../services/arturita-pipeline'
+import { resolveLlmCreds, hasStoredKey } from '../services/custom-model'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
 
 const ConverseBody = z.object({
@@ -135,7 +136,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // the live path never breaks when local Ollama / free-tier keys are absent.
     const deployCfg = (org?.deployConfig ?? {}) as Record<string, any>
     const keyAvailable = (p: string) =>
-      !!deployCfg[`${p}_api_key`] ||
+      hasStoredKey(deployCfg, p) ||       // plaintext or encrypted (custom models)
       (p === 'anthropic' && !!process.env.ANTHROPIC_API_KEY) ||
       (p === 'openai' && !!process.env.OPENAI_API_KEY) ||
       (p === 'google' && !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) ||
@@ -152,10 +153,8 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       const fb = await streamLLMWithFallback({
         base: { system, messages, onToken: () => { /* buffered; the client reveals it */ } },
         chain,
-        resolveCreds: (prov) => ({
-          orgApiKey: (org?.deployConfig as any)?.[`${prov}_api_key`],
-          baseURL: (org?.deployConfig as any)?.[`${prov}_base_url`],
-        }),
+        // Handles plaintext AND encrypted (custom-model) keys + per-provider base URL.
+        resolveCreds: (prov) => resolveLlmCreds(deployCfg, prov),
         inputTokens,
         capUsd,
       })
