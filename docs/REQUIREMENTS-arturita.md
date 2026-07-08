@@ -24,11 +24,11 @@
 ### Machine control
 | ID | Requirement | Story | Status |
 |---|---|---|---|
-| FR-8 | **(changed — S3)** Arturita can list/read files & directories across the **whole machine** (full control assumed), except the minimal self-protection denylist (own secret store, burner keystore, daemon config, OS system-integrity paths). | C1, C2 | `[ ]` |
+| FR-8 | **(changed — S3)** Arturita can list/read files & directories across the **whole machine** (full control assumed), except the minimal self-protection denylist (own secret store, burner keystore, daemon config, OS system-integrity paths). | C1, C2 | `[~]` (C1 #189: `adapters/arturita-host` daemon does real `/list`+`/read` enforcing whole-machine root + denylist, verified over HTTP; backend→daemon proxy is C2) |
 | FR-9 | Arturita can create/edit files & documents; edits show a diff preview; in-root + under-threshold edits are auto-safe. | C2, C3 | `[ ]` |
-| FR-10 | Destructive file ops (move/delete/overwrite) produce a preview manifest (count, size, destination) before executing. | C2 | `[ ]` |
+| FR-10 | Destructive file ops (move/delete/overwrite) produce a preview manifest (count, size, destination) before executing. | C2 | `[~]` (C1 #189: daemon `/preview` builds the manifest (count/size/destination) without acting; `buildPreviewManifest` in host-planner) |
 | FR-11 | Destructive/over-threshold file ops require a `file_destructive` approval. | C2, A2 | `[ ]` |
-| FR-12 | File ops are reversible via an undo journal ("undo that") within the window. | C2 | `[ ]` |
+| FR-12 | File ops are reversible via an undo journal ("undo that") within the window. | C2 | `[~]` (C1 #189: approved destructive ops stage originals + `/undo` restores within a 10-min window; verified with tests) |
 | FR-13 | **(changed — S6)** `machine_exec` allows broad commands (full control assumed); the **destructive/irreversible subset** is A2-gated + two-phase confirm, showing exact argv verbatim. A misheard/mis-planned destructive command can't run silently. | C3, A2 | `[ ]` |
 | FR-14 | Every host action is recorded as a task + thread entry + heartbeat block (nothing invisible). | C2 | `[ ]` |
 
@@ -98,10 +98,10 @@
 | NFR-3 | No dangerous surface (B/C/D/E) merges before A2 (the approval-type gate) is on `main`. | sequencing | `[ ]` |
 | NFR-4 | Destructive voice commands are never one-shot: ≥99% require an explicit confirmation utterance/tap; ambiguous/low-confidence → reject + re-prompt. | A3, B1 | `[~]` (A3: two-phase confirm logic — bare affirmative rejected, action-verb restatement or tap required, sub-threshold STT re-prompts; end-to-end voice wiring in B1) |
 | NFR-5 | Voice never authorizes an address or amount alone — entities echoed visually before wallet/email approval. | A3, E2 | `[ ]` |
-| NFR-6 | **(changed — S3)** Machine ops span the whole machine but **cannot touch the self-protection denylist** (own secret store, burner keystore, daemon config, OS system-integrity paths), hard-refused for read + write; canonicalize + no `..`/symlink escape past the denylist boundary. | C1 | `[~]` (C1 planner: `canonicalizePath`/`isWithinRoot`/`hitsDenylist`/`decideAccess` logic done + tested; the daemon that resolves real symlinks + enforces this ships this wave under S3) |
+| NFR-6 | **(changed — S3)** Machine ops span the whole machine but **cannot touch the self-protection denylist** (own secret store, burner keystore, daemon config, OS system-integrity paths), hard-refused for read + write; canonicalize + no `..`/symlink escape past the denylist boundary. | C1 | `[~]` (C1 planner: `canonicalizePath`/`isWithinRoot`/`hitsDenylist`/`decideAccess` logic done + tested; the daemon (`adapters/arturita-host` #189) realpath-resolves symlinks + enforces root+denylist over HTTP, verified end-to-end) |
 | NFR-6a | **(new — S4)** The **burner keystore** is denylisted from the host daemon (S3) and from any file/exec path — Arturita cannot read or overwrite her own signing key. | C1, E2 | `[~]` (E2 #186: keystore-denylist invariant documented in `docs/WALLET-KEYSTORE-arturita.md` §2; host-daemon denylist enforcement is C1) |
 | NFR-7 | Blast-radius caps: over-cap ops require approval; over hard-ceiling refused outright. | C1, C2 | `[~]` (C1 planner: `classifyBlastRadius` — auto-safe / needs-approval / refuse, destructive never auto-safe — done + tested; execution wiring blocked on S3) |
-| NFR-8 | Local host is fail-closed — acts only on an authenticated, approved backend command; runs as operator user, no sudo. | C1 | `[~]` (C1 planner: `HOST_EXECUTION_ENABLED=false` + `assertExecutionEnabled()` throw — nothing can execute until S3 confirmed + the daemon ships; daemon itself is the S3-gated deliverable) |
+| NFR-8 | Local host is fail-closed — acts only on an authenticated, approved backend command; runs as operator user, no sudo. | C1 | `[~]` (C1 #189: daemon binds 127.0.0.1 only, requires a bearer token (refuses to start without one), destructive `/apply` requires `approved:true` else refused; runs as operator user, no sudo) |
 
 ### Security
 | ID | Requirement | Story | Status |

@@ -114,3 +114,34 @@ test('[C1] buildUndoEntry + isReversible respect the window and staged originals
   assert.equal(isReversible({ ...e, staged: null }, 1001), false)
   assert.equal(isReversible(null, 1001), false)
 })
+
+// ─── S3: system-integrity self-protection + preview manifest ──────────────────
+
+import { hitsSystemIntegrity, buildPreviewManifest, SYSTEM_INTEGRITY_PREFIXES } from '../services/host-planner'
+
+test('[C1/S3] hitsSystemIntegrity denies SIP paths but allows /usr/local + user space', () => {
+  assert.equal(hitsSystemIntegrity('/System/Library/CoreServices/x'), true)
+  assert.equal(hitsSystemIntegrity('/usr/bin/python3'), true)
+  assert.equal(hitsSystemIntegrity('/sbin/launchd'), true)
+  assert.equal(hitsSystemIntegrity('/usr/local/bin/brew'), false) // operator carve-out
+  assert.equal(hitsSystemIntegrity('/Users/op/Documents/notes.md'), false)
+  assert.ok(SYSTEM_INTEGRITY_PREFIXES.length > 0)
+})
+
+test('[C1/S3] hitsDenylist now catches OS system-integrity + the burner keystore', () => {
+  assert.equal(hitsDenylist('/System/Library/x'), true)
+  assert.equal(hitsDenylist('/usr/lib/dyld'), true)
+  assert.equal(hitsDenylist('/Users/op/.arturita-keystore/burner.json'), true)
+  // whole-machine access: an ordinary user path is still allowed (S3)
+  assert.equal(hitsDenylist('/Users/op/Projects/app/src/index.ts'), false)
+})
+
+test('[C1] buildPreviewManifest summarizes a destructive op (count/size/dest/sample)', () => {
+  const files = Array.from({ length: 42 }, (_, i) => ({ path: `/Users/op/Downloads/f${i}.png`, bytes: 1000 }))
+  const m = buildPreviewManifest({ op: 'move', files, destination: '/Users/op/Archive/2026-07', sampleCap: 20 })
+  assert.equal(m.fileCount, 42)
+  assert.equal(m.totalBytes, 42000)
+  assert.equal(m.destination, '/Users/op/Archive/2026-07')
+  assert.equal(m.files.length, 20)
+  assert.equal(m.truncated, true)
+})
