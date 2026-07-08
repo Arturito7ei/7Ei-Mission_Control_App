@@ -62,13 +62,13 @@ Monorepo (npm workspaces), all merged to `main`, auto-deploys on merge.
 
 ---
 
-## Incoming major update — plan placeholder
+## Incoming major update — Arturita (voice-first personal AI agent)
 
-> **The operator will drop the major-update plan here.** Until then, treat the app as a stable checkpoint and do not start feature work off the parked-candidates list.
+> **The plan has landed: `docs/PRD-arturita.md`** — a voice-first personal AI agent persona (the operator's chief-of-staff, female counterpart to Arturito) layered onto the existing Mission Control surface. Voice from the desk (Cockpit) and remote from iPhone via Telegram (voice notes, text, files, one-tap approvals); full-but-bounded machine control via a new hardened local host; email/calendar via the existing Google connectors; and **read+prepare-only** crypto wallet awareness (MetaMask/Brave) with **human-in-the-loop signing — never auto-sign, never key custody**.
 >
-> When the plan lands, the next session should: (1) restate scope + acceptance as filed epics/stories, (2) confirm it against the conventions above (pure helpers, idempotent migrations, colorblind rules, ship-via-squash-admin, docs bump per PR), (3) sequence the stories, and (4) ship one PR per story keeping the invariant green.
+> **Design commitment:** it reuses existing primitives, it does not fork them — the tri-state **approval flow** gates every dangerous action (`file_destructive`/`wallet_tx`/`email_send`/`machine_exec`); **preflight/budget** bound LLM failover cost; **watchdogs**, **wake-on-comment**, **ask-mode**, **heartbeat/timeline**, the **HMAC Telegram receiver**, the scoped **secrets store**, and the **mac-mini adapter pattern** all carry through. See the PRD's §5 reuse map.
 >
-> _(placeholder — replace this block with the plan)_
+> **Next session should:** (1) file Epics A–G (PRD §10) as MCA issues with acceptance from §4/§7; (2) confirm against the conventions above (pure helpers, idempotent migrations, colorblind rules, ship-via-squash-admin, docs bump per PR); (3) sequence per §10 — **Epic A (safety spine + kill switch) lands before any dangerous surface**; (4) ship one PR per story keeping the invariant green. Go-live gates in PRD §11 extend `GO-LIVE.md` (`WEBHOOK_SIGNING_SECRET` becomes a hard prerequisite for Telegram remote control).
 
 ---
 
