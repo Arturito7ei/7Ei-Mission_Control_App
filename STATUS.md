@@ -36,6 +36,8 @@ Full planning/tracking layer filed (docs-only, no code yet): **PRD** `docs/PRD-a
 
 | **B1** (pure helpers) · Voice gateway core | `services/voice.ts` (pure: `normalizeTranscript`; `hasWakeWord`/`stripWakeWord`/`shouldProcessCapture` — push-to-talk default, wake-word opt-in; `gateTranscript` empty/reprompt/accept confidence gate; `orderVoiceProviders` cloud→alt→local→text-only with **local-only for sensitive/wallet contexts** (S1 privacy default); `nextVoiceProvider`; `AUDIO_RETENTION` discard-after-transcription marker). Provider adapters + the `/voice` endpoint land when an **S1** STT/TTS provider is configured. | in progress | PR pending |
 
+| **B3** (pure routing) · Ask-vs-execute from voice | `services/voice-routing.ts` (pure: `isQuestion`; `routeVoiceCommand` → question→`ask` single-turn, work order→`execute`, **destructive→execute-always** even if phrased as a question; `isFollowUp` re-enters the thread via wake-on-comment). Reuses `intent.ts` + `askmode.ts` + `thread.ts` — no new loop. Endpoint wiring pends the B1 voice endpoint (S1). | in progress | PR pending |
+
 Safety gate: **A2 (on `main`) is the mechanical approval-type gate** every dangerous surface depends on. `machine_exec` (C3) + wallet signing handoff (E2) + host filesystem writes (C1/C2 daemon) stay blocked on **S3/S6/S4** until CONFIRMED. **Arturita never signs; no key custody; no real destructive machine op ships until S3.**
 
 ## Paperclip gap-bridge — 5 / 5 phases shipped

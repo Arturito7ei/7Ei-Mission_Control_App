@@ -16,8 +16,8 @@
 | FR-2 | Spoken input is transcribed with a confidence score; low-confidence transcripts trigger a re-prompt, never a guess. | B1, A3 | `[~]` (B1: `gateTranscript` (empty/reprompt/accept) + `TranscriptResult.confidence`; A3 re-prompt path done; live STT provider returning the score wires when an S1 provider is configured) |
 | FR-3 | Wake-word ("Arturita") is available as an opt-in; push-to-talk is the default. | B2 (S5) | `[~]` (B1: `hasWakeWord`/`stripWakeWord`/`shouldProcessCapture` — push-to-talk default, wake-word opt-in; Cockpit panel UI is B2) |
 | FR-4 | Arturita replies by voice (TTS) on the desk and as a Telegram voice message remotely. | B1, D2 | `[ ]` |
-| FR-5 | Questions route to a single-turn `ask` (no workspace/checkout); work orders route to the `execute` loop. | B3 | `[ ]` |
-| FR-6 | A follow-up utterance continues the same task thread (wake-on-comment). | B3 | `[ ]` |
+| FR-5 | Questions route to a single-turn `ask` (no workspace/checkout); work orders route to the `execute` loop. | B3 | `[~]` (B3: `routeVoiceCommand` — question→ask, work order→execute, destructive→execute-always; reuses `askmode`/`intent`. Executor wiring pends the B1 voice endpoint) |
+| FR-6 | A follow-up utterance continues the same task thread (wake-on-comment). | B3 | `[~]` (B3: `routeVoiceCommand` sets `isFollowUp` from an existing thread id → reuses `thread.ts` wake-on-comment; endpoint wiring pends B1) |
 | FR-7 | Operator can interrupt (barge-in) a spoken reply; long answers summarized aloud with full text in the thread. | B1/B2 | `[ ]` |
 
 ### Machine control
