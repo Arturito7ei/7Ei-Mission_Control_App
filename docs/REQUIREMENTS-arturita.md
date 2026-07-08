@@ -71,7 +71,7 @@
 | FR-33 | Arturita exists as an owner-scoped agent persona per org. | A1 | `[x]` (A1: `agentType='arturita'`, idempotently ensured per org) |
 | FR-34 | Remote control is bound to the single operator (Telegram chat id + Cockpit identity) via a one-time Cockpit code. | A1 | `[~]` (A1: begin/confirm/revoke binding + one-time hashed code with TTL, single-use; primary Telegram-driven confirm path lands in D1) |
 | FR-35 | Command sessions are short-lived and individually revocable; dangerous actions require a fresh session / step-up. | A1, A2 | `[x]` (A1: short-lived + individually revocable sessions + `isFresh`/`needsStepUp`; A2: `POST /api/approvals/:id/decide` refuses to *approve* a dangerous type without a fresh command session — 403) |
-| FR-36 | Destructive intents are classified and always produce a preview + explicit distinct confirmation (two-phase). | A3 | `[ ]` |
+| FR-36 | Destructive intents are classified and always produce a preview + explicit distinct confirmation (two-phase). | A3 | `[~]` (A3: `classifyIntent`/`confirmationPhraseFor`/`isConfirmed` pure two-phase logic done — generic yes rejected for the top tier, low STT-confidence re-prompts; wired to the voice loop in B1/B3) |
 | FR-37 | New endpoints are self-described via `/api/openapi.json`; CLI `7ei-mc` gains `arturita bind|panic|host-status`. | G1 | `[ ]` |
 
 ---
@@ -84,7 +84,7 @@
 | NFR-1 | **100%** of destructive file ops, wallet txs, and email sends pass through an approval before execution. | A2 + C2/E2/A2 | `[~]` (A2: the gate exists — dangerous types + machine-rendered verbatim summary + step-up on approve; per-surface *execution* wiring enforced in C2/E2/D2) |
 | NFR-2 | **Zero** private keys / seed phrases ever touch Arturita's process — enforced by design invariant + CI secret-scan. | E1 | `[ ]` |
 | NFR-3 | No dangerous surface (B/C/D/E) merges before A2 (the approval-type gate) is on `main`. | sequencing | `[ ]` |
-| NFR-4 | Destructive voice commands are never one-shot: ≥99% require an explicit confirmation utterance/tap; ambiguous/low-confidence → reject + re-prompt. | A3, B1 | `[ ]` |
+| NFR-4 | Destructive voice commands are never one-shot: ≥99% require an explicit confirmation utterance/tap; ambiguous/low-confidence → reject + re-prompt. | A3, B1 | `[~]` (A3: two-phase confirm logic — bare affirmative rejected, action-verb restatement or tap required, sub-threshold STT re-prompts; end-to-end voice wiring in B1) |
 | NFR-5 | Voice never authorizes an address or amount alone — entities echoed visually before wallet/email approval. | A3, E2 | `[ ]` |
 | NFR-6 | Machine ops cannot escape the allowlist root (canonicalize + prefix check; no `..`/symlink escape); denylist hard-refused for read + write. | C1 | `[ ]` |
 | NFR-7 | Blast-radius caps: over-cap ops require approval; over hard-ceiling refused outright. | C1, C2 | `[ ]` |
