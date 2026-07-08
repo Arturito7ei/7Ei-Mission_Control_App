@@ -272,7 +272,7 @@ Extends `GO-LIVE.md`:
 
 ## 12. Open questions
 - STT/TTS vendor default (cloud provider vs. local-first for privacy)? Lean local-first for sensitive contexts.
-- Wallet integration path: WalletConnect (works with MetaMask/Brave, cleaner) vs. a browser-extension bridge — likely WalletConnect for v1.
+- ~~Wallet integration path: WalletConnect vs. a browser-extension bridge~~ **Decided (v1): WalletConnect.** Works with both MetaMask and Brave, keeps Arturita fully out of key custody (she only emits an unsigned tx to the wallet; the operator signs in the wallet's own UI), and avoids a fragile extension bridge. Revisit only if a target wallet drops WalletConnect support.
 - Wake-word on desk: always-listening vs. push-to-talk default (privacy). Recommend push-to-talk default, wake-word opt-in.
 - Does the operator want a thin PWA/native iOS client in v2, or is Telegram sufficient long-term?
 - Scope of `machine_exec` allowlist at launch (probably empty; opt-in per command).
