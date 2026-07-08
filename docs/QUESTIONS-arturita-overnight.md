@@ -23,7 +23,16 @@ These are the S-decisions from `DECISIONS-arturita.md`. Until you flip them to `
 
 ## Assumptions I made (provisional — tell me if wrong)
 
-_(appended as the session progresses)_
+Scaffolded on the PROVISIONAL decisions in `DECISIONS-arturita.md`; none of these shipped a dangerous surface. Flag any you'd change:
+- **S1 local-first:** `voice.ts` `orderVoiceProviders` prefers **local-only** for sensitive/wallet-adjacent contexts (drops cloud entirely), cloud-first otherwise, text-only last. `AUDIO_RETENTION = discard_after_transcription`.
+- **S2 Telegram-only** for v1 remote surface (no PWA/native) — D-epic not started, but B/F assume this framing.
+- **S5 push-to-talk default**, wake-word (`"Arturita"`) opt-in (`shouldProcessCapture`).
+- **S6 empty `machine_exec` allowlist** at launch — C1 planner marks non-allowlisted commands as one-off-approval-only; nothing pre-enabled.
+- **Session/step-up timings** (`arturita-session.ts`): session TTL **30 min**, step-up freshness window **5 min**, bind-code TTL **10 min**. Change if you want tighter/looser.
+- **Blast-radius default caps** (`host-planner.ts`, all S3-gated, no execution): auto-safe ≤ **10 files / 50 MB**; hard ceiling **5000 files / 20 GB**; destructive ops (move/delete) are **never** auto-safe. Undo window **10 min**.
+- **Circuit-breaker defaults** (`llm-fallback.ts`): **3** failures / **60 s** window → **120 s** cooldown, then re-probe.
+- **Wallet caps model** (`wallet.ts`): per-tx / per-day USD caps + destination allowlist are operator-config; an **empty allowlist means no allowlist restriction** (not "deny all"). Confirm you want that default (vs. deny-all until an address is added).
+- **B3 destructive-always-execute:** a destructive intent phrased as a question (e.g. "can you delete X?") routes to `execute` (so it hits the approval gate), **not** to a single-turn `ask`. Deliberate safety choice.
 
 ---
 
@@ -46,4 +55,37 @@ _(appended as the session progresses)_
 
 ## What shipped tonight
 
-_(appended as each PR merges — see PLAN §0 for the live tracker)_
+Nine PRs squash-merged to `main`, invariant green throughout (ended at **707 backend tests · 11/11 evals · web build**; started at 588). Full detail in `STATUS.md` + PLAN §0.
+
+| PR | Story | One line |
+|---|---|---|
+| **#174** | A1 | Persona + command sessions + single-operator binding + `/panic` kill switch |
+| **#175** | A2 | Dangerous approval types + machine-rendered verbatim summaries + step-up gate |
+| **#176** | A3 | Intent classifier + two-phase destructive confirm (bare "yes" rejected, low-confidence re-prompts) |
+| **#177** | F1 | LLM fallback chain + circuit breaker, cost-bounded (pure decision layer) |
+| **#178** | E1 | Wallet read/prepare/**simulate** — never sign, no key custody |
+| **#179** | C1 planner | Host safety logic (allowlist-root/denylist/blast-radius/undo) — **fail-closed, no execution, S3-gated** |
+| **#180** | B1 helpers | Voice pure core (STT-confidence gating, wake-word, provider fallback) |
+| **#181** | B3 | Ask-vs-execute routing from voice (reuses askmode/intent/thread) |
+| **#182** | F2 | Degraded/offline queue-replay (exactly-once, nonce-guarded) + watchdog specs |
+
+**Epic A (safety spine) is 100% complete and on `main`.** Every dangerous surface (files/wallet/email/machine) is gated behind the A2 approval gate + a fail-closed default; **no dangerous action was shipped** — no real destructive machine op, no wallet signing, no email send.
+
+### Not started / needs you before it can proceed
+- **B2** Cockpit voice panel (needs S5 confirm + a voice provider; UI story).
+- **C2/C3** real file ops + `machine_exec` — **blocked on S3/S6 CONFIRMED** (planner logic is ready).
+- **D1/D2** Telegram remote — needs S2 confirm + `WEBHOOK_SIGNING_SECRET` set.
+- **E2** wallet approval card + WalletConnect handoff — **blocked on S4**.
+- **G1/G2** self-description + go-live runbook — can run once the above land.
+- **FR-7** barge-in / long-answer summarization — pends the live B1 voice endpoint.
+
+### Follow-ups I chose not to do unattended (all logged above)
+- F1 → live executor/`streamLLM` wiring + `/health` breaker surface.
+- B1/B3 → the `/voice` endpoint + provider adapters (S1 keys).
+- NFR-2 → the CI secret-scan **workflow** (`.github/workflows` — untouched per convention).
+- E1 → live RPC endpoint for balance reads + real simulation.
+
+### Housekeeping
+- Recovered cleanly from a mid-session `ECONNRESET` (dropped while polling F2's CI): F2 (#182) was verified green and merged on resume; tracker docs reconciled to match `main`.
+- **Jira** Epics A–G still not filed (Atlassian OAuth unavailable in build sessions) — file interactively, back-fill MCA numbers.
+- **Vault mirror** (`vault/07-Agents/Arturita.md`) — Obsidian MCP was disconnected at wrap-up; mirror pending (see below).

@@ -18,7 +18,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 |---|---|---|---|---|
 | **A1** | Persona, sessions & `/panic` kill switch | `done` | [#174](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/174) | — |
 | **A2** | Dangerous-action approval types + step-up | `done` | [#175](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/175) | — |
-| **A3** | Intent classifier + two-phase destructive confirm | `in-progress` | PR pending | — |
+| **A3** | Intent classifier + two-phase destructive confirm | `done` | [#176](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/176) | — |
 | **B1** | Voice Gateway (STT/TTS) | `in-progress` (pure helpers done [#180]; provider layer + endpoint pending S1 keys) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 |
 | **B2** | Cockpit voice panel | `todo` | — | S5 |
 | **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done [#181]; endpoint wiring pends B1-full) | [#181](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/181) | — |
@@ -30,11 +30,13 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **E1** | Wallet read + prepare + simulate | `done` | [#178](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/178) | — |
 | **E2** | Wallet approval card + WalletConnect handoff | `todo` | — | **S4** |
 | **F1** | LLM fallback chain + circuit breaker | `done` | [#177](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/177) (pure layer; executor wiring follow-up) | — |
-| **F2** | Degraded/offline + watchdogs | `in-progress` (pure helpers; queue/host wiring pends B1/C1 execution) | PR pending | — |
+| **F2** | Degraded/offline + watchdogs | `done` (pure helpers; queue/host wiring pends B1/C1 execution) | [#182](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/182) | — |
 | **G1** | Self-description + CLI | `todo` | — | — |
 | **G2** | Go-live gates + runbook | `todo` | — | — |
 
-**Next story:** **A1** (no blockers). See `HANDOFF.md`. Bold gating decisions (**S3/S4/S6**) are safety-critical — the dependent story must not merge until that decision is `CONFIRMED` in `docs/DECISIONS-arturita.md`.
+**Overnight build (2026-07-08) landed the entire safe spine + safe non-blocked work:** A1 #174, A2 #175, A3 #176, F1 #177, E1 #178, C1 planner #179, B1 helpers #180, B3 #181, F2 #182 — all squash-merged to `main`, invariant green (707 backend tests · 11/11 evals · web build).
+
+**Next story (needs operator input first):** the remaining stories are all gated on a `PROVISIONAL` S-decision or a live surface: **B1-full/B3-endpoint** need S1 (STT/TTS keys); **B2** needs S5 + a voice provider; **C2/C3** need **S3**/**S6** CONFIRMED before any real host write/exec; **D1/D2** need S2 + `WEBHOOK_SIGNING_SECRET`; **E2** needs **S4** (WalletConnect id + test wallet). **G1/G2** (self-description + go-live) can proceed once the above land. Confirm S1–S6 in `docs/DECISIONS-arturita.md` to unblock. Bold gating decisions (**S3/S4/S6**) are safety-critical.
 
 ---
 
