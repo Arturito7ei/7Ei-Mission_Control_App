@@ -1,32 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   ╔══════════════════════════════════════════════════════════════════════╗
-  ║  PLACEHOLDER — Arturita logo.                                         ║
+  ║  Arturita orb logo — the 7Ei mark (7-hexagon honeycomb).             ║
   ║                                                                       ║
-  ║  Swap this ONE file for the real Arturita asset (keep the same path   ║
-  ║  and filename: web/public/arturita-logo.svg) and the Assistant tab    ║
-  ║  picks it up with no code change — it is referenced exactly once, in  ║
-  ║  web/app/dashboard/AssistantPanel.tsx (search: ARTURITA_LOGO_SRC).    ║
+  ║  Faithful transparent vector of the operator-supplied raster         ║
+  ║  (web/public/7ei-logo.jpg, 916×916, white hexagons on black). Vector ║
+  ║  is used at the orb centre so it stays crisp at any size and its      ║
+  ║  transparent background lets the frosted orb show through. White fill ║
+  ║  ("White on dark", DESIGN_SYSTEM) reads on every orb state colour.    ║
   ║                                                                       ║
-  ║  A raster (PNG/SVG) at ~256×256+ works; a transparent background is   ║
-  ║  recommended so the frosted orb behind it shows through. This         ║
-  ║  placeholder uses `currentColor` so it inherits the accent in both    ║
-  ║  light and dark themes — a real brand asset can hardcode its colors.  ║
+  ║  Referenced exactly once: ARTURITA_LOGO_SRC in                       ║
+  ║  web/app/dashboard/AssistantPanel.tsx. To restyle the mark, edit      ║
+  ║  this file; to use the raster instead, point ARTURITA_LOGO_SRC at     ║
+  ║  /7ei-logo.jpg (note: the JPG has a black background).                ║
   ╚══════════════════════════════════════════════════════════════════════╝
 -->
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Arturita">
-  <!-- petal bloom (nods to 🌸 + the 7Ei honeycomb) -->
-  <g fill="currentColor" opacity="0.9">
-    <g transform="translate(64 64)">
-      <g opacity="0.55">
-        <ellipse cx="0" cy="-34" rx="13" ry="26" />
-        <ellipse cx="0" cy="-34" rx="13" ry="26" transform="rotate(60)" />
-        <ellipse cx="0" cy="-34" rx="13" ry="26" transform="rotate(120)" />
-        <ellipse cx="0" cy="-34" rx="13" ry="26" transform="rotate(180)" />
-        <ellipse cx="0" cy="-34" rx="13" ry="26" transform="rotate(240)" />
-        <ellipse cx="0" cy="-34" rx="13" ry="26" transform="rotate(300)" />
-      </g>
-      <circle cx="0" cy="0" r="17" />
-    </g>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="#ffffff" role="img" aria-label="7Ei — Arturita">
+  <path d="M43.5 8.74 56.5 8.74 63 20 56.5 31.26 43.5 31.26 37 20Z"/>
+  <path d="M17.52 23.74 30.52 23.74 37.02 35 30.52 46.26 17.52 46.26 11.02 35Z"/>
+  <path d="M69.48 23.74 82.48 23.74 88.98 35 82.48 46.26 69.48 46.26 62.98 35Z"/>
+  <path d="M43.5 38.74 56.5 38.74 63 50 56.5 61.26 43.5 61.26 37 50Z"/>
+  <path d="M17.52 53.74 30.52 53.74 37.02 65 30.52 76.26 17.52 76.26 11.02 65Z"/>
+  <path d="M69.48 53.74 82.48 53.74 88.98 65 82.48 76.26 69.48 76.26 62.98 65Z"/>
+  <path d="M43.5 68.74 56.5 68.74 63 80 56.5 91.26 43.5 91.26 37 80Z"/>
 </svg>
