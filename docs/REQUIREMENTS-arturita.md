@@ -86,6 +86,15 @@
 | FR-41 | A fresh machine can be **bootstrapped from zero**: encrypted secret-store init, secrets/keystore load (NVIDIA key, Telegram token, RPC, burner keystore), `deployConfig`, and the one-time bind — no plaintext secret on disk, nothing committed. | H4 | `[ ]` |
 | FR-42 | The iPhone remote surface is delivered as **v1 Telegram** (Epic D) and a **v2 dedicated native/PWA client** (design/plan only this wave). | H5, D1/D2 | `[ ]` |
 
+### Memory & vault graph (Epic M — new 2026-07-08; operator request)
+| ID | Requirement | Story | Status |
+|---|---|---|---|
+| FR-43 | The Memory tab has a **vault picker** at the top: the operator selects/points the Obsidian vault (repo/root/branch), defaulting to the org TARCO vault; the choice **persists** (`VAULT_CONFIG`). Path is configurable, never hardcoded. | M1, M3 | `[~]` (backend `VAULT_CONFIG` persistence reused; picker UI = M3) |
+| FR-44 | The tab renders an **interactive force-directed graph** of the vault: nodes = notes (+tags), edges = `[[wikilinks]]`/tags/containment; color/cluster by folder; node size by degree; zoom/pan/search; hover highlights connections; clicking a node opens the note. | M3 | `[~]` (graph model shipped; d3 view = M3) |
+| FR-45 | The graph renders from a **Graphify `graph.json`** when one exists in the vault (richer backend), and **falls back to a native `[[wikilink]]`/#tag/frontmatter parse** when it does not. | M1, M2 | `[x]` (`/memory/graph`: Graphify-first via `parseGraphifyGraph`, native fallback via `buildNativeGraph`) |
+| FR-46 | A way to **(re)build** the graph for the selected vault is surfaced as a status + command in the tab (`graphify update <root>`); MCP exposure of the graph for agents is scaffolded as a follow-up. | M2 | `[~]` (rebuild command + `?rebuild=1` cache-bust shipped; MCP = follow-up) |
+| FR-47 | The initial `graph.json` is **built from the current TARCO vault** and committed to the vault repo (not the app bundle). | M2 | `[x]` (structural/AST pass, committed to `vault/graphify-out/`) |
+
 ---
 
 ## Non-functional requirements
@@ -141,6 +150,12 @@
 | NFR-25 | The macOS bundle is **code-signed (Developer ID) + notarized**; updates are signature-verified; a bad update can be rolled back. | H1, H3 | `[ ]` |
 | NFR-26 | Fresh-machine bootstrap writes **no plaintext secret to disk** and commits nothing; the burner key is sealed at rest. | H4 | `[ ]` |
 | NFR-27 | The host daemon **fails closed** on any macOS TCC permission it needs but hasn't been granted, with a clear spoken/text reason (ties to the H2 wizard). | H2, C1 | `[ ]` |
+
+### Memory & vault graph (Epic M — non-functional)
+| ID | Requirement | Story | Status |
+|---|---|---|---|
+| NFR-28 | The Graphify **semantic pass costs money (AI API + key)** and is **never run unprompted**: the graph is built with the **structural/AST pass only** (`graphify update --no-cluster`, no LLM); running the semantic pass is an explicit operator decision (which provider/key + rough cost), logged in DECISIONS/QUESTIONS. **No API key is ever committed.** | M2 | `[x]` (structural pass only; no key present in env; semantic pass deferred to operator — QUESTIONS Q-M1) |
+| NFR-29 | The graph endpoint is **read-cheap**: Graphify graph.json is one fetch; the native fallback is capped (≤120 notes) + TTL-cached + flags truncation; colorblind-safe clustering (folder hues, never red/green-only). | M1, M3 | `[x]` (backend: cap+cache+`hasGraphify`/`truncated`; UI CVD ramp = M3) |
 
 ---
 

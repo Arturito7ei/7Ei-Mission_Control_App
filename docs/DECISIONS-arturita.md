@@ -85,6 +85,19 @@
 | D-f | **`WEBHOOK_SIGNING_SECRET` is a hard prerequisite** for enabling Telegram remote control (receivers must be HMAC-enforced, not open). | PRD §11, §7.1 | `CONFIRMED` |
 | D-g | **LLM failover is cost-bounded** — every retry re-runs the preflight per-wake cap. | PRD §6 | `CONFIRMED` |
 | D-h | **Distributable packaging is v1 scope** — macOS installable bundle (signed + notarized), first-run TCC permission wizard, auto-update, fresh-machine config/secret bootstrap, and the iPhone remote surface (v1 Telegram, v2 native/PWA). Design/plan this wave; build later. | S2 + operator (2026-07-08) | `CONFIRMED` (Epic H) |
+| D-i | **Vault graph uses Graphify as the richer backend, native parse as fallback** — the Memory tab prefers a committed `graphify-out/graph.json`; when absent, the backend parses the vault's markdown ([[wikilinks]]/#tags/frontmatter) itself. No hard runtime dependency on Graphify. | Operator request (2026-07-08) · Epic M | `CONFIRMED` |
+
+---
+
+## S-M1 — Graphify semantic pass: run it, and with which provider/key? `[OPEN — operator decision]`
+**Status:** `OPEN (2026-07-08)` — **needs operator sign-off before any spend.**
+**Context:** Graphify builds the vault graph in two passes. The **structural/AST pass** (tree-sitter, `graphify update <root> --no-cluster`) is **local and free** — this is what shipped: it produced **786 nodes / 964 edges** from the 128-note TARCO vault (`vault/graphify-out/graph.json`), rendering fully in the Memory tab. The **semantic pass** (community naming / richer relations) calls an **AI API and costs money + needs a key**.
+**What I found:** **no standalone LLM API key** is present in the build environment (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`GOOGLE_API_KEY` all unset — only the Claude Code OAuth proxy, not usable by Graphify as a plain key). A **local Ollama** is running (free, no external key) and could name communities at zero API cost, but *which* local model + whether that quality is wanted is an operator preference.
+**Decision needed from operator (pick one):**
+1. **Leave structural-only** (default, $0) — the graph already works; skip semantic naming. *(Recommended for now.)*
+2. **Local Ollama** (`graphify cluster-only <root> --backend=ollama --model=<name>`) — $0 API cost, local only; name the model.
+3. **Cloud provider** — supply/confirm a key (`GEMINI_API_KEY` cheapest) and I'll run `graphify cluster-only`/`label`. Rough cost: a 128-note / ~30k-word vault is a **single small pass — cents, not dollars** on Gemini Flash.
+**Guardrail honored:** no key was committed; no semantic pass was run unprompted. See `docs/REQUIREMENTS-arturita.md` NFR-28.
 
 ---
 

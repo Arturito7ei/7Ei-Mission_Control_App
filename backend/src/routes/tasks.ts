@@ -9,7 +9,12 @@ import { runHeartbeatSweep } from '../services/heartbeat-engine'
 import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
-import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
+import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite, vaultTree } from '../services/vault-connector'
+import { buildNativeGraph, parseGraphifyGraph, type VaultGraph } from '../services/vault-graph'
+
+// In-memory cache for the (expensive) native vault-graph build — keyed per
+// org+config. Small and TTL-bounded; a process restart just rebuilds on demand.
+const graphCache = new Map<string, { at: number; graph: any }>()
 import { normalizeAttachmentKind, buildTimeline } from '../services/tickets'
 import { buildRecovery } from '../services/recovery'
 import { rollupCost } from '../services/worksurface'
@@ -300,6 +305,63 @@ export async function taskRoutes(app: FastifyInstance) {
     const r = await vaultWrite(token, cfg, path, String(body.markdown ?? ''), body.message || `mc: update ${path}`)
     if (!r.ok) return reply.code(r.status).send({ error: r.error ?? `GitHub ${r.status}` })
     return { ok: true, path, commit: r.commit }
+  })
+
+  // ─── Memory graph (Epic M — vault graph map) ────────────────────────────
+  // Force-directed graph of the vault for the Memory tab. Prefers a Graphify
+  // `graph.json` committed to the vault (richer AST/semantic backend); falls
+  // back to a native [[wikilink]]/#tag parse. Native reads are capped + cached
+  // (they cost one GitHub call per note); Graphify is one fetch. `?rebuild=1`
+  // busts the cache. `?tags=0` drops tag nodes from the native graph.
+  const GRAPH_TTL_MS = 10 * 60_000
+  const NATIVE_FILE_CAP = 120
+  app.get('/api/orgs/:orgId/memory/graph', async (req, reply) => {
+    const { orgId } = req.params as any
+    const q = (req.query as any) ?? {}
+    const cfg = await resolveVaultConfig(orgId)
+    const token = await resolveVaultToken(orgId)
+    if (!token) return reply.code(400).send(NO_VAULT)
+
+    const includeTags = String(q.tags ?? '1') !== '0'
+    const rebuild = String(q.rebuild ?? '') === '1'
+    const cacheKey = `${orgId}:${cfg.repo}:${cfg.root}:${cfg.branch}:${includeTags ? 't' : 'n'}`
+    if (!rebuild) {
+      const hit = graphCache.get(cacheKey)
+      if (hit && Date.now() - hit.at < GRAPH_TTL_MS) return { ...hit.graph, cached: true }
+    }
+
+    // 1) Graphify graph.json (fast path — one fetch). Candidates: inside the
+    //    vault root first, then repo-root `graphify-out/`.
+    const root = String(cfg.root ?? '').replace(/^\/+|\/+$/g, '')
+    const graphifyCandidates = [`${root}/graphify-out/graph.json`, 'graphify-out/graph.json'].filter(Boolean)
+    let graph: VaultGraph | null = null
+    let graphPath: string | undefined
+    for (const cand of graphifyCandidates) {
+      const gr = await vaultRead(token, cfg, cand)
+      if (!gr.ok || !gr.markdown) continue
+      try { graph = parseGraphifyGraph(JSON.parse(gr.markdown), cfg.root); graphPath = cand; break } catch { /* not JSON — keep looking */ }
+    }
+
+    // 2) Native fallback — parse markdown ourselves.
+    if (!graph) {
+      const tree = await vaultTree(token, cfg)
+      if (!tree.ok) return reply.code(tree.status).send({ error: `GitHub ${tree.status}` })
+      const all = tree.paths ?? []
+      const picked = all.slice(0, NATIVE_FILE_CAP)
+      const files = (await Promise.all(picked.map(async p => {
+        const r = await vaultRead(token, cfg, p)
+        return r.ok && r.markdown != null ? { path: p, markdown: r.markdown } : null
+      }))).filter(Boolean) as { path: string; markdown: string }[]
+      graph = buildNativeGraph(files, cfg.root, { includeTags, truncated: all.length > picked.length })
+    }
+
+    const rebuildCommand = `graphify update ${cfg.root} --no-cluster && git -C <vault> add ${cfg.root}/graphify-out/graph.json && git -C <vault> commit -m "chore: refresh vault graph"`
+    const payload: VaultGraph & { repo: string; root: string; branch: string; hasGraphify: boolean; graphPath?: string; rebuildCommand: string } = {
+      ...graph, repo: cfg.repo, root: cfg.root, branch: cfg.branch,
+      hasGraphify: graph.source === 'graphify', graphPath, rebuildCommand,
+    }
+    graphCache.set(cacheKey, { at: Date.now(), graph: payload })
+    return payload
   })
 
   // ─── Company portability (MCA-PC D3) ────────────────────────────────────
