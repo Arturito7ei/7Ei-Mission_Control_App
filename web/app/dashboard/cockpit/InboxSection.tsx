@@ -49,7 +49,7 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
           return (
           <div key={a.id}>
             <div style={sx.row}>
-              <span style={{ ...sx.tag, background: review ? 'var(--warning-dim, var(--accent-dim))' : 'var(--accent-dim)', color: review ? 'var(--warning-text, #b45309)' : EXT_PURPLE }}>
+              <span style={{ ...sx.tag, background: review ? 'var(--warning-dim)' : 'var(--accent-dim)', color: review ? 'var(--warning-text)' : EXT_PURPLE }}>
                 {review ? '🛡 Low-trust review' : `Approval · ${a.type}`}
               </span>
               <div style={{ flex: 1, minWidth: 0, fontWeight: 600 }}>{a.summary}</div>
@@ -97,5 +97,5 @@ const s: Record<string, React.CSSProperties> = {
   // Failure evidence: muted, monospace-ish, single-line clamp (full text on hover).
   errLine: { fontSize: text.xs.fontSize, color: 'var(--danger-text)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace' },
   // Low-trust review warnings — amber, iconed (⚠), indented under the case.
-  warnLine: { fontSize: text.xs.fontSize, color: 'var(--warning-text, #b45309)', paddingLeft: space.md },
+  warnLine: { fontSize: text.xs.fontSize, color: 'var(--warning-text)', paddingLeft: space.md },
 }

@@ -14,6 +14,7 @@ Owner: Arturito · Last updated: 2026-07-02
 | 2 | Google consent screen: Gmail/Calendar scopes | Gmail/Calendar connectors can't read data | ~15 min |
 | 3 | Rotate exposed tokens (NVIDIA key, vault PAT) | Leaked creds usable by anyone who saw them | ~15 min |
 | 4 | Move OpenClaw to the Mac mini | Agent dies when the laptop sleeps/closes | ~10 min |
+| 5 | Set `SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET` on Fly | At-rest secret store & run-token HMAC fall back to a **public** default key → encrypted secrets decryptable / run-tokens forgeable | ~5 min |
 
 ---
 
@@ -147,6 +148,33 @@ Run the always-on adapter on the Mac mini instead of the laptop.
    reaches **done**.
 
 See `adapters/mac-mini/README.md` for flags and operations.
+
+---
+
+## 5. Set the secret-store & run-token keys on Fly
+
+The at-rest secret store (`backend/src/services/secrets.ts`) derives its AES-256-GCM
+key from `SECRETS_ENC_KEY`; the per-run HMAC tokens (`backend/src/routes/agent-api.ts`)
+sign with `RUN_TOKEN_SECRET || SECRETS_ENC_KEY`. **Both fall back to a hard-coded
+public default** (`'dev-7ei-mc-secrets-key'` / `'dev-7ei-mc-run'`) when unset — which
+is fine for dev but means that, in production without them, every encrypted secret in
+the DB is decryptable with a key that lives in the source, and run-tokens are forgeable.
+
+**Steps (once — do this BEFORE storing any real secret via Cockpit → Secrets):**
+```bash
+flyctl secrets set \
+  SECRETS_ENC_KEY=$(openssl rand -hex 32) \
+  RUN_TOKEN_SECRET=$(openssl rand -hex 32) \
+  --app 7ei-backend
+```
+Verify with `bash scripts/check-secrets.sh` (both are now listed).
+
+> ⚠️ Set `SECRETS_ENC_KEY` **before** encrypting any secret. Anything already stored
+> under the dev default won't decrypt under a new key — re-enter those secrets (NVIDIA
+> key, vault PAT, custom-model keys) via Cockpit → Secrets after rotating.
+
+Engineering follow-up (tracked in the review report): add a boot-time fail-closed
+guard so `NODE_ENV=production` refuses to start on the default key.
 
 ---
 
