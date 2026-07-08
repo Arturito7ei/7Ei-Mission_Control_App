@@ -19,7 +19,7 @@ This table is the source of truth for per-story status. Update the **Status** + 
 | **A1** | Persona, sessions & `/panic` kill switch | `done` | [#174](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/174) | — |
 | **A2** | Dangerous-action approval types + step-up | `done` | [#175](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/175) | — |
 | **A3** | Intent classifier + two-phase destructive confirm | `done` | [#176](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/176) | — |
-| **B1** | Voice Gateway (`local|provider` config + Chatterbox/NVIDIA adapter + `/voice`) | `in-progress` (pure helpers done [#180]; config + provider adapter + endpoint = this wave) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180) | S1 ✅ |
+| **B1** | Voice Gateway (`local|provider` config + Chatterbox/NVIDIA adapter + `/voice`) | `done` (pure helpers [#180]; `voice-config.ts` per-context mode + `voice-provider.ts` Chatterbox/NVIDIA TTS + `POST …/arturita/voice` endpoint [#188]; live raw-audio STT + local engine = go-live) | [#180](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/180), [#188](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/188) | S1 ✅ |
 | **B2** | Cockpit voice panel | `todo` | — | S5 ✅ |
 | **B3** | Ask-vs-execute routing from voice | `in-progress` (pure routing done [#181]; endpoint wiring pends B1-full) | [#181](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/181) | — |
 | **C1** | Local Host daemon | `in-progress` (pure planner done [#179]; daemon scaffold + read/preview/undo = this wave, destructive/exec behind A2) | [#179](https://github.com/Arturito7ei/7Ei-Mission_Control_App/pull/179) | S3 ✅ |
