@@ -35,6 +35,20 @@ test('[F1] single-hop chain: one call, returns the result (identical to bare str
   assert.equal(r.attempts[0].ok, true)
 })
 
+test('[P2] reasoningEffort in base opts flows through to the LLM call', async () => {
+  const breakers = new Map<string, BreakerState>()
+  let seenEffort: string | undefined
+  const capture: (o: LLMStreamOpts) => Promise<LLMResult> = async (o) => {
+    seenEffort = o.reasoningEffort
+    return { output: 'ok', model: o.model, provider: o.provider, usage: { inputTokens: 1, outputTokens: 1 } }
+  }
+  await streamLLMWithFallback({
+    base: { ...base, reasoningEffort: 'high' }, chain: [CHAIN[0]], resolveCreds: creds,
+    inputTokens: 100, capUsd: null, now: 1000, breakers, streamFn: capture,
+  })
+  assert.equal(seenEffort, 'high')
+})
+
 test('[F1] primary 500 → fails over to the next hop', async () => {
   const breakers = new Map<string, BreakerState>()
   const r = await streamLLMWithFallback({
