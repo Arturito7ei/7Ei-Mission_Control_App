@@ -76,6 +76,8 @@ export interface Message {
   routing?: Routing | null
   taskId?: string | null
   degraded?: boolean
+  /** provenance — e.g. "local · llama3.2:3b" or "cloud · anthropic". */
+  via?: string | null
 }
 
 // Shape of the /converse response (subset the panel consumes).
@@ -86,6 +88,9 @@ export interface ConverseResponse {
   degraded?: boolean
   reply?: { text?: string; provider?: string; model?: string } | null
   error?: string
+  /** J-prod: answer deferred to the client for local streaming (browser→Ollama). */
+  deferred?: boolean
+  prompt?: { system?: string; messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> } | null
 }
 
 /** Build the request body for POST /arturita/converse from the running thread. */
@@ -114,12 +119,18 @@ export function toArturitaMessage(input: { id: string; resp: ConverseResponse })
   const { id, resp } = input
   const text = (resp.reply?.text ?? '').trim() || "I didn't get a reply just now."
   const mode = resp.mode ?? 'answer'
+  const prov = resp.reply?.provider
+  const model = resp.reply?.model
+  const via = prov && prov !== 'arturita' && prov !== 'text_only'
+    ? `cloud · ${prov}${model ? ` (${model})` : ''}`
+    : null
   return {
     id, role: 'arturita', text,
     mode,
     routing: resp.routing ?? null,
     taskId: resp.taskId ?? null,
     degraded: !!resp.degraded,
+    via,
     streaming: true,
   }
 }

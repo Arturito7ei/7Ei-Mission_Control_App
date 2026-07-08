@@ -34,6 +34,11 @@ const ConverseBody = z.object({
   existingThreadId: z.string().nullable().optional(),
   /** prior turns (role/content) so a direct answer has short-term memory. */
   history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).max(20).optional(),
+  /** J-prod: the client can stream the answer itself from a local engine (e.g.
+   *  browser→Ollama). When set + the turn is an ANSWER, the endpoint returns the
+   *  built prompt (system + messages) INSTEAD of calling the LLM, so the client
+   *  streams tokens locally. Delegation still runs server-side. */
+  deferAnswer: z.boolean().optional(),
 })
 
 async function ensureArturita(orgId: string): Promise<typeof schema.agents.$inferSelect> {
@@ -111,6 +116,17 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     })
     const history = (b.history ?? []).map(h => ({ role: h.role, content: h.content }))
     const messages = [...history, { role: 'user' as const, content: message }]
+
+    // J-prod: hand the built prompt back so the client streams tokens locally
+    // (browser→Ollama). No LLM call here, no secrets in the payload.
+    if (b.deferAnswer) {
+      return {
+        mode: 'answer',
+        deferred: true,
+        routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
+        prompt: { system, messages },
+      }
+    }
 
     const provider = agent.llmProvider ?? 'anthropic'
     const model = agent.llmModel ?? 'claude-sonnet-4-20250514'

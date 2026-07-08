@@ -24,6 +24,7 @@ import {
   revealStepFor, routingBadge, type Message, type ConverseResponse,
 } from './assistant.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
+import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
 
 type Getter = () => Promise<string | null>
 
@@ -49,6 +50,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [wakeWord, setWakeWord] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [reveal, setReveal] = useState<{ id: string; shown: number } | null>(null)
+  // J-prod: browser-direct local Ollama (free, private, real token streaming) —
+  // resolved from the pipeline config + a reachability probe; null → use backend.
+  const [localLlm, setLocalLlm] = useState<{ model: string; baseUrl: string } | null>(null)
 
   const recogRef = useRef<any>(null)
   const threadRef = useRef<string | null>(null)
@@ -77,6 +81,23 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     } catch { /* TTS unavailable; text still shown */ }
   }, [])
 
+  // Resolve a browser-reachable local Ollama from the pipeline config (once).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const cfg = await api<{ llm: Array<{ provider?: string; model?: string; mode?: string }> }>(`/api/orgs/${orgId}/arturita/pipeline`, { token: await getToken() })
+        const primary = (cfg.llm ?? []).find(e => e.mode === 'local' && e.provider === 'ollama' && e.model)
+        if (!primary?.model) return
+        const models = await probeOllama(DEFAULT_OLLAMA_URL)
+        if (cancelled || !models) return
+        const base = String(primary.model).split(':')[0]
+        if (models.some(m => m === primary.model || m.split(':')[0] === base)) setLocalLlm({ model: primary.model!, baseUrl: DEFAULT_OLLAMA_URL })
+      } catch { /* no local Ollama reachable → backend chain handles it */ }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, getToken])
+
   // ── Send a turn to the conversational front door ─────────────────────────────
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
     const message = bodyText.trim()
@@ -85,26 +106,55 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     const userMsg: Message = { id: nextId(), role: 'user', text: message }
     setMessages(m => [...m, userMsg])
     setThinking(true)
+    const reqHistory = [...messages, userMsg]
+    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory })
+    const post = async (body: object) => api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
     try {
-      const reqHistory = [...messages, userMsg]
-      const resp = await api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, {
-        token: await getToken(),
-        method: 'POST',
-        body: JSON.stringify(toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory })),
-      })
+      const resp = await post({ ...baseReq, deferAnswer: !!localLlm })
+
+      // Delegate → the office runs it as a task (gated at A2 if destructive).
+      if (resp.mode === 'delegate') {
+        const arturita = toArturitaMessage({ id: nextId(), resp })
+        if (arturita.taskId) threadRef.current = arturita.taskId
+        setThinking(false); setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
+        return
+      }
+
+      // Answer deferred to the client → stream tokens live from local Ollama.
+      if (resp.deferred && resp.prompt && localLlm) {
+        const id = nextId()
+        setThinking(false)
+        setMessages(m => [...m, { id, role: 'arturita', text: '', streaming: true, mode: 'answer', routing: resp.routing ?? null, via: `local · ${localLlm.model}` }])
+        setSpeaking(true)
+        try {
+          const msgs = (resp.prompt.messages ?? []).filter(m => m.role !== 'system') as ChatMsg[]
+          const full = await streamOllamaChat({
+            baseUrl: localLlm.baseUrl, model: localLlm.model, system: resp.prompt.system ?? '', messages: msgs,
+            onToken: t => setMessages(m => m.map(x => x.id === id ? { ...x, text: x.text + t } : x)),
+          })
+          setMessages(m => m.map(x => x.id === id ? { ...x, streaming: false } : x))
+          if (full.trim()) speak(full); else setSpeaking(false)
+          return
+        } catch {
+          // local stream failed (Ollama down / CORS) → drop the bubble, use cloud.
+          setMessages(m => m.filter(x => x.id !== id)); setLocalLlm(null)
+          const cloud = await post({ ...baseReq, deferAnswer: false })
+          const arturita = toArturitaMessage({ id: nextId(), resp: cloud })
+          setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
+          return
+        }
+      }
+
+      // Plain cloud answer → client-side reveal.
       const arturita = toArturitaMessage({ id: nextId(), resp })
-      if (arturita.taskId) threadRef.current = arturita.taskId
-      setThinking(false)
-      setMessages(m => [...m, arturita])
-      setReveal({ id: arturita.id, shown: 0 })   // begin the streamed reveal
-      setSpeaking(true)
+      setThinking(false); setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
     } catch (e: any) {
       setThinking(false)
       setErr(e?.message ?? 'Arturita is unreachable right now.')
     } finally {
       setDelegate(false)   // opt-in is per-turn
     }
-  }, [orgId, getToken, messages, thinking])
+  }, [orgId, getToken, messages, thinking, localLlm, speak])
 
   // ── Streamed reveal (typewriter) — advances the active message's shown length.
   useEffect(() => {
@@ -198,6 +248,11 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
           </label>
         </div>
         {!supported && <p style={sxHint}>Speech capture isn’t available in this browser — type below.</p>}
+        <p style={sxHint}>
+          {localLlm
+            ? <>🔒 Running on your local <b>{localLlm.model}</b> (Ollama) — free &amp; on-device.</>
+            : <>☁ Using the cloud fallback chain. <span title="Run Ollama with OLLAMA_ORIGINS set to this app's origin to go fully local & free.">Local Ollama not detected.</span></>}
+        </p>
       </div>
 
       {/* ── Conversation ───────────────────────────────────────────────────── */}
@@ -273,6 +328,7 @@ function ArturitaBubble({ msg, shown }: { msg: Message; shown: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 15 }}>🌸</span>
         <span style={{ ...tagStyle, background: badgeStyle.bg, color: badgeStyle.fg }}>{badge.icon} {badge.label}</span>
+        {msg.via && <span style={{ ...tagStyle, background: 'var(--s2)', color: tk.muted }} title="which model produced this reply">{msg.via.startsWith('local') ? '🔒 ' : '☁ '}{msg.via}</span>}
         {msg.degraded && <span style={{ ...tagStyle, background: 'var(--warn-bg)', color: tk.amber }}>⚠ Degraded</span>}
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.6, color: tk.text, whiteSpace: 'pre-wrap' }}>
