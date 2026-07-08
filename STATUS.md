@@ -3,7 +3,7 @@
 _Last updated: 2026-07-07 (W5 wrap-up — all four Paperclip-gap-bridge v2 epics complete) · auto-maintained by the build agent (bumped at each story/phase)._
 
 **Live:** backend on Fly (`7ei-backend`, v1.3.0), web on Vercel (`app.7ei.ai`), Turso DB. All PRs merged to `main`.
-Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **588 backend tests · 11/11 evals · web build**.
+Health `GET /api/health` → 200, `db: connected`, `scheduler: running`. Invariant green: **707 backend tests · 11/11 evals · web build green**.
 Full write-up in the shared vault: `07-Agents/STATUS-Mission-Control-2026-07-02.md` · plan: `01-Projects/Paperclip-Gap-Analysis-v2-2026-07-06.md`.
 
 ## Paperclip gap-bridge v2 — 4 / 4 epics complete
