@@ -25,6 +25,7 @@ import {
 } from './assistant.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
+import { pickSpeechVoice, classifyTtsError, describeTalkError } from '@/lib/talkDiagnostics'
 
 type Getter = () => Promise<string | null>
 
@@ -49,12 +50,16 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [voiceReplies, setVoiceReplies] = useState(true)
   const [wakeWord, setWakeWord] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Non-fatal, colorblind-safe status (icon+label) for a leg that degraded but
+  // didn't dead-end — a TTS voice failure, or a local-Ollama→cloud fallback.
+  const [notice, setNotice] = useState<{ tone: 'warn' | 'info'; text: string } | null>(null)
   const [reveal, setReveal] = useState<{ id: string; shown: number } | null>(null)
   // J-prod: browser-direct local Ollama (free, private, real token streaming) —
   // resolved from the pipeline config + a reachability probe; null → use backend.
   const [localLlm, setLocalLlm] = useState<{ model: string; baseUrl: string } | null>(null)
 
   const recogRef = useRef<any>(null)
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([])
   const threadRef = useRef<string | null>(null)
   const wakeRef = useRef(wakeWord)
   const delegateRef = useRef(delegate)
@@ -66,19 +71,49 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
 
   const voiceState = resolveVoiceState({ speaking, thinking, listening })
 
+  // Browser voices populate asynchronously (Chrome fires `voiceschanged` after
+  // the list is ready). Cache them so `speak` can pick an on-device voice.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const load = () => { voicesRef.current = window.speechSynthesis.getVoices() ?? [] }
+    load()
+    window.speechSynthesis.addEventListener?.('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', load)
+  }, [])
+
   // ── Speak a reply locally (browser TTS). Converse returns text; local speech
-  // is the client-side voice. Never throws. ────────────────────────────────────
+  // is the client-side voice. Never throws, never dead-ends: it prefers an
+  // on-device voice (Chrome's cloud voices throw a `network` error offline), and
+  // on failure it retries once with a forced-local voice, then surfaces a
+  // specific, non-fatal status — the reply text is always already on screen. ──
   const speak = useCallback((body: string) => {
     if (!voiceRef.current || typeof window === 'undefined' || !('speechSynthesis' in window)) return
-    try {
-      const u = new SpeechSynthesisUtterance(body)
-      u.lang = 'en-US'
-      u.onstart = () => setSpeaking(true)
-      u.onend = () => setSpeaking(false)
-      u.onerror = () => setSpeaking(false)
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(u)
-    } catch { /* TTS unavailable; text still shown */ }
+    const synth = window.speechSynthesis
+    const run = (voice: SpeechSynthesisVoice | null, isRetry: boolean) => {
+      try {
+        const u = new SpeechSynthesisUtterance(body)
+        u.lang = 'en-US'
+        if (voice) u.voice = voice
+        u.onstart = () => { setSpeaking(true); setNotice(n => (n?.tone === 'warn' ? null : n)) }
+        u.onend = () => setSpeaking(false)
+        u.onerror = (ev: any) => {
+          setSpeaking(false)
+          const st = classifyTtsError(ev?.error)
+          if (!st.failed) return // benign (interrupted/canceled) — we cancel each turn
+          // one automatic retry forcing an on-device voice on a network failure
+          if (st.kind === 'network' && !isRetry) {
+            const local = (voicesRef.current || []).find(v => (v as any).localService && v !== voice)
+            if (local) { run(local, true); return }
+          }
+          setNotice({ tone: 'warn', text: st.hint ? `${st.message} ${st.hint}` : st.message! })
+        }
+        synth.cancel()
+        synth.speak(u)
+      } catch { /* TTS unavailable; text still shown */ }
+    }
+    const preferred = pickSpeechVoice(voicesRef.current as any, 'en-US')
+    const match = preferred ? (voicesRef.current || []).find(v => v.name === preferred.name) ?? null : null
+    run(match, false)
   }, [])
 
   // Resolve a browser-reachable local Ollama from the pipeline config (once).
@@ -102,7 +137,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
     const message = bodyText.trim()
     if (!message || thinking) return
-    setErr(null)
+    setErr(null); setNotice(null)
     const userMsg: Message = { id: nextId(), role: 'user', text: message }
     setMessages(m => [...m, userMsg])
     setThinking(true)
@@ -135,9 +170,12 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
           setMessages(m => m.map(x => x.id === id ? { ...x, streaming: false } : x))
           if (full.trim()) speak(full); else setSpeaking(false)
           return
-        } catch {
-          // local stream failed (Ollama down / CORS) → drop the bubble, use cloud.
+        } catch (localErr) {
+          // local stream failed (Ollama down / CORS) → drop the bubble, use cloud,
+          // and tell the operator which leg degraded + how to fix it (OLLAMA_ORIGINS).
           setMessages(m => m.filter(x => x.id !== id)); setLocalLlm(null)
+          const d = describeTalkError(localErr, 'local-ollama')
+          setNotice({ tone: 'info', text: `${d.message} ${d.hint ?? ''}`.trim() })
           const cloud = await post({ ...baseReq, deferAnswer: false })
           const arturita = toArturitaMessage({ id: nextId(), resp: cloud })
           setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
@@ -150,7 +188,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       setThinking(false); setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
     } catch (e: any) {
       setThinking(false)
-      setErr(e?.message ?? 'Arturita is unreachable right now.')
+      // Specific, actionable message per leg — never the raw "network error".
+      const d = describeTalkError(e, 'backend')
+      setErr(d.hint ? `${d.message} ${d.hint}` : d.message)
     } finally {
       setDelegate(false)   // opt-in is per-turn
     }
@@ -275,6 +315,20 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       </div>
 
       {err && <div style={ui.err}>⚠ {err}</div>}
+      {notice && (
+        <div role="status" style={{
+          display: 'flex', alignItems: 'flex-start', gap: space.xs,
+          background: notice.tone === 'warn' ? 'var(--warn-bg)' : 'var(--info-bg)',
+          border: `1px solid ${notice.tone === 'warn' ? 'var(--line-strong)' : 'var(--accent-line)'}`,
+          color: notice.tone === 'warn' ? tk.amber : tk.blue,
+          borderRadius: tk.r.md, padding: `${space.xs}px ${space.md}px`, fontSize: text.sm.fontSize,
+        }}>
+          <span aria-hidden>{notice.tone === 'warn' ? '▲' : 'ⓘ'}</span>
+          <span style={{ color: tk.textDim }}>{notice.text}</span>
+          <span style={{ flex: 1 }} />
+          <button onClick={() => setNotice(null)} aria-label="Dismiss" style={{ background: 'transparent', border: 'none', color: tk.muted, cursor: 'pointer', padding: 0, fontSize: text.sm.fontSize }}>✕</button>
+        </div>
+      )}
 
       {/* ── Composer ───────────────────────────────────────────────────────── */}
       <Card style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>

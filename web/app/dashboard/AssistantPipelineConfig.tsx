@@ -11,8 +11,10 @@ import { tk, text, space } from './tokens'
 import { Button, Card, Select, SectionLabel } from './ui'
 import {
   PRESETS, entryLabel, entryKey, moveEntry, removeAt, appendEntry, toggleMode,
-  type Entry, type PipelineLayer,
+  type Entry, type PipelineLayer, type LlmEntry,
 } from './assistantConfig.logic'
+import { probeOllama, DEFAULT_OLLAMA_URL } from '@/lib/ollama'
+import { runSelfTest, overallSeverity, pickSpeechVoice, type LegResult } from '@/lib/talkDiagnostics'
 
 type Getter = () => Promise<string | null>
 type Chains = { llm: Entry[]; stt: Entry[]; tts: Entry[] }
@@ -62,6 +64,32 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
 
   const resetDefaults = () => { if (defaults) { setChains({ ...defaults }); setDirty(true); setMsg(null) } }
 
+  // ── Talk-path self-test — probe each leg (backend / local Ollama / TTS / STT)
+  // and shape the results via the pure `runSelfTest`. Colorblind-safe rows. ────
+  const [testing, setTesting] = useState(false)
+  const [selfTest, setSelfTest] = useState<LegResult[] | null>(null)
+  const runTest = async () => {
+    setTesting(true); setSelfTest(null)
+    // 1. backend reachable? — a lightweight authed GET (this endpoint).
+    let backendOk = false, backendDetail: string | null = null
+    try { await api(`/api/orgs/${orgId}/arturita/pipeline`, { token: await getToken() }); backendOk = true }
+    catch (e: any) { backendDetail = e?.message ?? 'unreachable' }
+    // 2. local Ollama reachable? (+ configured primary model)
+    const primary = (chains?.llm ?? []).find((e): e is LlmEntry => 'provider' in e && (e as LlmEntry).provider === 'ollama' && (e as LlmEntry).mode === 'local')
+    const ollamaModels = await probeOllama(DEFAULT_OLLAMA_URL)
+    // 3/4. browser TTS + STT capabilities
+    const hasTts = typeof window !== 'undefined' && 'speechSynthesis' in window
+    const voices = hasTts ? (window.speechSynthesis.getVoices() ?? []) : []
+    const localVoice = !!pickSpeechVoice(voices as any, 'en-US')?.localService
+    const hasStt = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+    setSelfTest(runSelfTest({
+      backendOk, backendDetail,
+      ollamaModels, ollamaPrimaryModel: primary ? (primary as LlmEntry).model : null,
+      ttsSupported: hasTts, ttsLocalVoice: localVoice, sttSupported: hasStt,
+    }))
+    setTesting(false)
+  }
+
   return (
     <Card style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>
       <button onClick={() => setOpen(o => !o)} aria-expanded={open}
@@ -78,6 +106,34 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
           {chains && LAYERS.map(({ key, label, hint }) => (
             <LayerEditor key={key} layer={key} label={label} hint={hint} entries={chains[key]} onChange={next => edit(key, next)} />
           ))}
+          {/* ── Talk-path self-test ─────────────────────────────────────────── */}
+          <div style={{ borderTop: `1px solid ${tk.line}`, paddingTop: space.md }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+              <SectionLabel style={{ margin: 0 }}>🩺 Talk-path self-test</SectionLabel>
+              <span style={{ flex: 1 }} />
+              <Button onClick={runTest} disabled={testing} style={{ color: tk.accent }}>{testing ? 'Testing…' : 'Run self-test'}</Button>
+            </div>
+            <p style={hintStyle}>Checks each leg you use to talk to Arturita — backend, local Ollama, spoken replies, and mic — and tells you exactly what to fix.</p>
+            {selfTest && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: space.xs, marginTop: space.sm }}>
+                {selfTest.map((r, i) => (
+                  <div key={r.leg + i} style={{ ...rowStyle, alignItems: 'flex-start' }}>
+                    <span style={{ ...pill, background: 'var(--s2)', color: r.severity === 'fail' ? tk.red : r.severity === 'warn' ? tk.amber : tk.green, minWidth: 24, textAlign: 'center' }}>{r.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600 }}>{r.label}</div>
+                      <div style={{ fontSize: text.xs.fontSize, color: tk.muted }}>{r.detail}{r.hint ? <><br /><span style={{ color: tk.textDim }}>→ {r.hint}</span></> : null}</div>
+                    </div>
+                  </div>
+                ))}
+                <p style={{ ...hintStyle, marginTop: 2 }}>
+                  {overallSeverity(selfTest) === 'ok' ? '✓ All legs healthy — voice + answers should work end-to-end.'
+                    : overallSeverity(selfTest) === 'warn' ? '▲ Working, with optional legs degraded (Arturita still answers via the cloud chain + text).'
+                    : '✕ A required leg is down — see the fix hint above.'}
+                </p>
+              </div>
+            )}
+          </div>
+
           {(msg || err) && <div style={err ? errBox : okBox}>{err ? `⚠ ${err}` : `✓ ${msg}`}</div>}
           {chains && (
             <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap' }}>
