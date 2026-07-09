@@ -74,10 +74,20 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
     let backendOk = false, backendDetail: string | null = null
     try { await api(`/api/orgs/${orgId}/arturita/pipeline`, { token: await getToken() }); backendOk = true }
     catch (e: any) { backendDetail = e?.message ?? 'unreachable' }
-    // 2. local Ollama reachable? (+ configured primary model)
+    // 2. cloud LLM actually reachable? — a REAL 1-token probe on the backend, so a
+    // stored-but-invalid key (e.g. an expired Anthropic key) reads as unusable,
+    // not a false ✓. null = couldn't run the probe (backend down / error).
+    let cloudLlmUsable: boolean | null = null, cloudLlmDetail: string | null = null
+    if (backendOk) {
+      try {
+        const s = await api<{ cloudUsable: boolean; detail?: string }>(`/api/orgs/${orgId}/arturita/llm-status`, { token: await getToken() })
+        cloudLlmUsable = !!s.cloudUsable; cloudLlmDetail = s.detail ?? null
+      } catch (e: any) { cloudLlmUsable = null; cloudLlmDetail = e?.message ?? null }
+    }
+    // 3. local Ollama reachable? (+ configured primary model)
     const primary = (chains?.llm ?? []).find((e): e is LlmEntry => 'provider' in e && (e as LlmEntry).provider === 'ollama' && (e as LlmEntry).mode === 'local')
     const ollamaModels = await probeOllama(DEFAULT_OLLAMA_URL)
-    // 3/4. browser TTS + STT capabilities
+    // 4/5. browser TTS + STT capabilities
     const hasTts = typeof window !== 'undefined' && 'speechSynthesis' in window
     const voices = hasTts ? (window.speechSynthesis.getVoices() ?? []) : []
     const localVoice = !!pickSpeechVoice(voices as any, 'en-US')?.localService
@@ -85,6 +95,7 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
     setSelfTest(runSelfTest({
       backendOk, backendDetail,
       ollamaModels, ollamaPrimaryModel: primary ? (primary as LlmEntry).model : null,
+      cloudLlmUsable, cloudLlmDetail,
       ttsSupported: hasTts, ttsLocalVoice: localVoice, sttSupported: hasStt,
     }))
     setTesting(false)

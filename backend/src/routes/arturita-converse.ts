@@ -23,8 +23,8 @@ import { buildArturitaAgent } from '../services/arturita-session'
 import { decideConverseMode, buildConverseSystemPrompt } from '../services/arturita-converse'
 import { routeVoiceCommand } from '../services/voice-routing'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
-import { parseLlmChain, usableLlmChain } from '../services/arturita-pipeline'
-import { resolveLlmCreds, hasStoredKey } from '../services/custom-model'
+import { parseLlmChain, usableLlmChain, usableCloudProviders } from '../services/arturita-pipeline'
+import { resolveLlmCreds, keyAvailableFor } from '../services/custom-model'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
 
 const ConverseBody = z.object({
@@ -41,6 +41,14 @@ const ConverseBody = z.object({
    *  streams tokens locally. Delegation still runs server-side. */
   deferAnswer: z.boolean().optional(),
 })
+
+// Shown when no language model can answer — deliberately actionable (names the
+// two operator fixes) instead of a vague "network error"/"check config".
+export const NO_LLM_MESSAGE =
+  "I can't reach any language model right now, so I can't answer this turn. " +
+  "Two ways to fix it: run local Ollama on the machine you're talking to me from " +
+  "(Ollama started + `OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama), " +
+  "or add a working cloud key (a free Groq or Gemini key works) in ⚙ Pipeline config below."
 
 async function ensureArturita(orgId: string): Promise<typeof schema.agents.$inferSelect> {
   const existing = await db.query.agents.findFirst({
@@ -135,12 +143,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // to usable hops with the agent's own model guaranteed as the last resort so
     // the live path never breaks when local Ollama / free-tier keys are absent.
     const deployCfg = (org?.deployConfig ?? {}) as Record<string, any>
-    const keyAvailable = (p: string) =>
-      hasStoredKey(deployCfg, p) ||       // plaintext or encrypted (custom models)
-      (p === 'anthropic' && !!process.env.ANTHROPIC_API_KEY) ||
-      (p === 'openai' && !!process.env.OPENAI_API_KEY) ||
-      (p === 'google' && !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) ||
-      (p === 'groq' && !!process.env.GROQ_API_KEY)
+    const keyAvailable = keyAvailableFor(deployCfg)  // shared with GET /arturita/llm-status
     const chain = usableLlmChain({
       entries: parseLlmChain(deployCfg),
       keyAvailable,
@@ -169,14 +172,62 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         mode: 'answer',
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         degraded: true,
-        reply: { text: "I couldn't reach a language model just now — the provider chain is unavailable. Try again in a moment, or check the LLM config.", provider: 'text_only' },
+        reply: { text: NO_LLM_MESSAGE, provider: 'text_only' },
         error: e?.message ?? 'llm unavailable',
       }
+    }
+  })
+
+  // ── Talk-path LLM reachability probe (for the Config self-test) ─────────────
+  // Answers the honest question the reachability-of-`/pipeline` check can't: can
+  // the CLOUD fallback actually produce a token? It runs a tiny real completion
+  // through the usable cloud chain, so a stored-but-INVALID key (e.g. an expired
+  // Anthropic key) is reported as unusable — not a false ✓. Local Ollama is NOT
+  // probed here (it lives on the operator's machine; the browser probes that
+  // directly). Read-only, operator-initiated; capped to a 1-token ping.
+  app.get('/api/orgs/:orgId/arturita/llm-status', async (req, reply) => {
+    const { orgId } = req.params as any
+    const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
+    if (!org) return reply.code(404).send({ error: 'Organisation not found' })
+    const agent = await ensureArturita(orgId)
+    const deployCfg = (org.deployConfig ?? {}) as Record<string, any>
+    const keyAvailable = keyAvailableFor(deployCfg)
+    const provider = agent.llmProvider ?? 'anthropic'
+    const model = agent.llmModel ?? 'claude-sonnet-4-20250514'
+    // Cloud-only chain: drop local/ollama hops; keep the guaranteed hop (backend
+    // env key) so a working env key still counts even without an org key.
+    const cloudEntries = parseLlmChain(deployCfg).filter(e => e.mode !== 'local' && e.provider !== 'ollama')
+    const chain = usableLlmChain({ entries: cloudEntries, keyAvailable, guaranteed: { provider, model } })
+    const configuredProviders = usableCloudProviders(parseLlmChain(deployCfg), keyAvailable)
+
+    if (chain.length === 0) {
+      return { cloudUsable: false, configuredProviders, checked: false, detail: 'No cloud LLM provider with a key is configured.' }
+    }
+    try {
+      const fb = await streamLLMWithFallback({
+        base: { system: 'Reply with the single word: ok', messages: [{ role: 'user', content: 'ping' }], onToken: () => {} },
+        chain,
+        resolveCreds: (prov) => resolveLlmCreds(deployCfg, prov),
+        inputTokens: estimateInputTokens(['ping']),
+        capUsd: parseCapUsd(org.deployConfig as any, agent.id),
+      })
+      return { cloudUsable: true, checked: true, provider: fb.used.provider, model: fb.used.model, configuredProviders, detail: `Cloud LLM reachable via ${fb.used.provider} (${fb.used.model}).` }
+    } catch (e: any) {
+      const raw = String(e?.message ?? 'provider chain unavailable')
+      // Surface the common cause plainly without leaking the key/full payload.
+      const detail = /invalid|x-api-key|401|403|authentication/i.test(raw)
+        ? `A configured cloud key was rejected (invalid or expired). Providers tried: ${chain.map(c => c.provider).join(', ')}.`
+        : `Cloud LLM unreachable: ${raw.slice(0, 160)}`
+      return { cloudUsable: false, checked: true, configuredProviders, detail }
     }
   })
 
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/converse', {
     summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow)',
     tag: 'arturita', body: ConverseBody,
+  })
+  documentEndpoint('GET', '/api/orgs/:orgId/arturita/llm-status', {
+    summary: 'Talk-path cloud-LLM reachability probe (real 1-token ping) — powers the Config self-test; catches stored-but-invalid keys',
+    tag: 'arturita',
   })
 }

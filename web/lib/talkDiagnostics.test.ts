@@ -92,10 +92,33 @@ const BASE = {
 }
 
 test('runSelfTest is all-green when every leg is healthy', () => {
-  const r = runSelfTest(BASE)
+  const r = runSelfTest({ ...BASE, cloudLlmUsable: true })
   assert.equal(overallSeverity(r), 'ok')
-  assert.equal(r.length, 4)
+  assert.equal(r.length, 5)               // answers + backend + ollama + tts + stt
   assert.ok(r.every(x => x.icon === '✓'))
+})
+
+test('runSelfTest FAILS the answers leg when neither local Ollama nor a cloud key works (the live root cause)', () => {
+  const r = runSelfTest({ ...BASE, ollamaModels: null, cloudLlmUsable: false })
+  const ans = r.find(x => x.leg === 'answers')!
+  assert.equal(ans.severity, 'fail')
+  assert.equal(ans.icon, '✕')
+  assert.match(String(ans.hint), /OLLAMA_ORIGINS/)
+  assert.match(String(ans.hint), /Groq or Gemini/)
+  assert.equal(overallSeverity(r), 'fail')
+})
+
+test('runSelfTest answers leg is OK via cloud when local Ollama is down but a cloud key works', () => {
+  const r = runSelfTest({ ...BASE, ollamaModels: null, cloudLlmUsable: true, cloudLlmDetail: 'Cloud LLM reachable via groq (llama-3.3-70b-versatile).' })
+  const ans = r.find(x => x.leg === 'answers')!
+  assert.equal(ans.severity, 'ok')
+  assert.match(ans.detail, /groq/)
+})
+
+test('runSelfTest answers leg warns (not fails) when cloud was not probed and no local model', () => {
+  const r = runSelfTest({ ...BASE, ollamaModels: null, cloudLlmUsable: null })
+  const ans = r.find(x => x.leg === 'answers')!
+  assert.equal(ans.severity, 'warn')
 })
 
 test('runSelfTest fails the backend leg (never color-only) and reports overall fail', () => {

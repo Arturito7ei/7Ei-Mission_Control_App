@@ -172,6 +172,11 @@ export interface SelfTestInput {
   ollamaModels: string[] | null
   /** the configured local primary model id, if the chain has one. */
   ollamaPrimaryModel?: string | null
+  /** cloud LLM reachability from a REAL backend probe (GET /arturita/llm-status):
+   *  true = a token came back; false = no usable/valid cloud key; null/undefined
+   *  = not probed. This is what catches a stored-but-invalid key. */
+  cloudLlmUsable?: boolean | null
+  cloudLlmDetail?: string | null
   /** SpeechSynthesis present in this browser. */
   ttsSupported: boolean
   /** an on-device voice is available. */
@@ -179,6 +184,12 @@ export interface SelfTestInput {
   /** SpeechRecognition (mic capture) present. */
   sttSupported: boolean
 }
+
+/** The single actionable fix when NO language model can answer — names both
+ *  operator options. Shared so the self-test + panel notice say the same thing. */
+export const NO_LLM_FIX_HINT =
+  'Either run local Ollama on THIS machine (Ollama started + `OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama), ' +
+  'or add a working cloud key (a free Groq or Gemini key works) in the LLM chain below.'
 
 const ICON: Record<LegSeverity, string> = { ok: '✓', warn: '▲', fail: '✕' }
 
@@ -193,7 +204,28 @@ function leg(leg: string, severity: LegSeverity, label: string, detail: string, 
 export function runSelfTest(input: SelfTestInput): LegResult[] {
   const out: LegResult[] = []
 
-  // 1. Backend converse (cloud LLM chain — the guaranteed answer path).
+  // 0. THE headline question: can Arturita actually produce an answer at all?
+  // She can if EITHER a local Ollama model is reachable from this browser, OR the
+  // backend's cloud chain has a working (valid) key. Neither → she can't answer,
+  // and this is the leg that most often reads as a bare "network error".
+  const localAnswers = Array.isArray(input.ollamaModels) && input.ollamaModels.length > 0
+  const cloudAnswers = input.cloudLlmUsable === true
+  if (localAnswers) {
+    out.push(leg('answers', 'ok', 'Arturita can answer', `A local Ollama model on this machine is ready (${input.ollamaModels![0]}) — free & private.`))
+  } else if (cloudAnswers) {
+    out.push(leg('answers', 'ok', 'Arturita can answer', input.cloudLlmDetail || 'A cloud language model is reachable.'))
+  } else if (input.cloudLlmUsable === false) {
+    // Real probe said the cloud key is missing/invalid AND no local model → dead.
+    out.push(leg('answers', 'fail', 'Arturita can’t answer — no reachable language model',
+      input.cloudLlmDetail || 'No local Ollama model here, and no working cloud key.', NO_LLM_FIX_HINT))
+  } else {
+    // Cloud not probed (unknown). Report on local only, don't over-claim.
+    out.push(leg('answers', 'warn', 'Answer path unverified',
+      'No local Ollama model on this machine; cloud LLM not checked.',
+      'Nothing to answer with locally — ' + NO_LLM_FIX_HINT))
+  }
+
+  // 1. Backend converse (routing + prompt/answer path — required every turn).
   out.push(input.backendOk
     ? leg('backend', 'ok', 'Backend reachable', input.backendDetail || 'Cloud answer + delegate path available.')
     : leg('backend', 'fail', 'Backend unreachable', input.backendDetail || 'Could not reach 7ei-backend.',

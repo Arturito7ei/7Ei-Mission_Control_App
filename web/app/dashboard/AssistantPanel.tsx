@@ -25,7 +25,7 @@ import {
 } from './assistant.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
-import { pickSpeechVoice, classifyTtsError, describeTalkError } from '@/lib/talkDiagnostics'
+import { pickSpeechVoice, classifyTtsError, describeTalkError, NO_LLM_FIX_HINT } from '@/lib/talkDiagnostics'
 
 type Getter = () => Promise<string | null>
 
@@ -144,6 +144,12 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     const reqHistory = [...messages, userMsg]
     const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory })
     const post = async (body: object) => api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
+    // When the backend answered but no LLM was reachable (degraded/text_only),
+    // surface the actionable fix (enable local Ollama, or add a free cloud key)
+    // right under the transcript instead of leaving only a ⚠ badge on the bubble.
+    const noticeIfDegraded = (r: ConverseResponse) => {
+      if (r.degraded || r.reply?.provider === 'text_only') setNotice({ tone: 'warn', text: `No language model was reachable for that reply. ${NO_LLM_FIX_HINT} Open ⚙ Pipeline config below and “Run self-test” to check each leg.` })
+    }
     try {
       const resp = await post({ ...baseReq, deferAnswer: !!localLlm })
 
@@ -177,6 +183,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
           const d = describeTalkError(localErr, 'local-ollama')
           setNotice({ tone: 'info', text: `${d.message} ${d.hint ?? ''}`.trim() })
           const cloud = await post({ ...baseReq, deferAnswer: false })
+          noticeIfDegraded(cloud)
           const arturita = toArturitaMessage({ id: nextId(), resp: cloud })
           setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
           return
@@ -184,6 +191,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       }
 
       // Plain cloud answer → client-side reveal.
+      noticeIfDegraded(resp)
       const arturita = toArturitaMessage({ id: nextId(), resp })
       setThinking(false); setMessages(m => [...m, arturita]); setReveal({ id: arturita.id, shown: 0 }); setSpeaking(true)
     } catch (e: any) {
