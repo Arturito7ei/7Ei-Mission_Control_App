@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parseLlmChain, parseSttChain, parseTtsChain, filterForContext,
-  usableLlmChain, resolvePipeline, validatePipelineConfig,
+  usableLlmChain, usableCloudProviders, resolvePipeline, validatePipelineConfig,
   DEFAULT_LLM_CHAIN, DEFAULT_STT_CHAIN, DEFAULT_TTS_CHAIN, PIPELINE_KEYS,
 } from '../services/arturita-pipeline'
 
@@ -129,4 +129,27 @@ test('[J2] validate ignores absent layers (partial update)', () => {
   assert.equal(v.value.llm, undefined)
   assert.equal(v.value.stt, undefined)
   assert.equal(v.value.tts?.length, 1)
+})
+
+// ─── usableCloudProviders: the cloud fallback the self-test actually depends on ─
+
+test('[talk] usableCloudProviders excludes local/ollama hops and keys the rest', () => {
+  // default chain: 2 local ollama hops + groq + google (providers)
+  const withGroq = usableCloudProviders(DEFAULT_LLM_CHAIN, p => p === 'groq')
+  assert.deepEqual(withGroq, ['groq'])           // only the provider WITH a key
+})
+
+test('[talk] usableCloudProviders is empty when no cloud key is present (the live failure)', () => {
+  // no keys at all → the cloud fallback cannot answer → empty
+  assert.deepEqual(usableCloudProviders(DEFAULT_LLM_CHAIN, () => false), [])
+})
+
+test('[talk] usableCloudProviders dedupes and skips local-mode entries even for cloud providers', () => {
+  const chain = [
+    { provider: 'ollama', model: 'llama3.2:3b', mode: 'local' as const },
+    { provider: 'groq', model: 'a', mode: 'provider' as const },
+    { provider: 'groq', model: 'b', mode: 'provider' as const },       // dup provider
+    { provider: 'google', model: 'g', mode: 'local' as const },        // marked local → skipped
+  ]
+  assert.deepEqual(usableCloudProviders(chain, () => true), ['groq'])
 })

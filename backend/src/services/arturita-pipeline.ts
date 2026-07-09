@@ -174,6 +174,23 @@ export function usableLlmChain(input: {
   return out
 }
 
+/**
+ * The distinct `provider`-mode LLM providers that have a usable key — i.e. the
+ * cloud providers Arturita can fall back to when no local engine is reachable
+ * from the operator's browser. Local/ollama hops are excluded: they need the
+ * operator's own machine and are probed client-side. Pure; `keyAvailable`
+ * injected. (Key PRESENCE, not validity — a live call is needed for validity.)
+ */
+export function usableCloudProviders(entries: LlmEntry[], keyAvailable: (provider: string) => boolean): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const e of entries) {
+    if (e.mode === 'local' || LOCAL_LLM_PROVIDERS.has(e.provider)) continue
+    if (keyAvailable(e.provider) && !seen.has(e.provider)) { seen.add(e.provider); out.push(e.provider) }
+  }
+  return out
+}
+
 // ─── Resolve everything for a context (for the tab / a GET) ───────────────────
 
 export interface ResolvedPipeline {

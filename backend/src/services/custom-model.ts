@@ -194,3 +194,23 @@ export function hasStoredKey(deployConfig: Record<string, unknown> | null | unde
   const cfg = (deployConfig ?? {}) as Record<string, unknown>
   return !!(cfg[plainKeyKey(provider)] || cfg[encKeyKey(provider)])
 }
+
+/**
+ * Build the per-provider "is a usable key available?" predicate shared by the
+ * converse route AND the talk-path LLM-reachability probe — a key is available
+ * when the org stored one (plaintext or encrypted) OR the backend env holds one.
+ * One source of truth so the answer path and the self-test can never drift.
+ * (Presence only — a stored-but-invalid key still reads as available here; the
+ * live probe in `/arturita/llm-status` is what catches an invalid key.)
+ */
+export function keyAvailableFor(
+  deployConfig: Record<string, unknown> | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): (provider: string) => boolean {
+  return (p: string) =>
+    hasStoredKey(deployConfig, p) ||
+    (p === 'anthropic' && !!env.ANTHROPIC_API_KEY) ||
+    (p === 'openai' && !!env.OPENAI_API_KEY) ||
+    (p === 'google' && !!(env.GEMINI_API_KEY || env.GOOGLE_API_KEY)) ||
+    (p === 'groq' && !!env.GROQ_API_KEY)
+}
