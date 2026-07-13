@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   normalizeTranscript, hasWakeWord, stripWakeWord, shouldProcessCapture,
   gateTranscript, orderVoiceProviders, nextVoiceProvider,
+  matchWakeWord, levenshtein, WAKE_VARIANTS,
   AUDIO_RETENTION, WAKE_WORD, MIN_STT_CONFIDENCE, type VoiceProvider,
 } from '../services/voice'
 
@@ -41,6 +42,64 @@ test('[B1] shouldProcessCapture: push-to-talk always; wake-word only if present'
   assert.equal(shouldProcessCapture({ transcript: '   ', mode: 'push_to_talk' }), false)
   assert.equal(shouldProcessCapture({ transcript: 'move it', mode: 'wake_word' }), false)
   assert.equal(shouldProcessCapture({ transcript: 'Arturita move it', mode: 'wake_word' }), true)
+})
+
+// ─── Fuzzy wake word (STT mishears her name) ─────────────────────────────────
+
+test('[wake] levenshtein basic distances', () => {
+  assert.equal(levenshtein('arturita', 'arturita'), 0)
+  assert.equal(levenshtein('arturita', 'arturito'), 1)   // last char
+  assert.equal(levenshtein('arturita', 'arturia'), 1)    // dropped 't'
+  assert.equal(levenshtein('', 'abc'), 3)
+})
+
+test('[wake] hasWakeWord tolerates common Whisper mishears of "Arturita"', () => {
+  // Each of these should reliably trigger wake-word mode.
+  for (const v of ['Arturator', 'Arturito', 'Arturia', 'Arturater', 'Arthurita', 'arturi']) {
+    assert.equal(hasWakeWord(`${v}, open the cockpit`), true, `variant "${v}" should match`)
+  }
+})
+
+test('[wake] hasWakeWord tolerates the name split across tokens ("art of eta")', () => {
+  assert.equal(hasWakeWord('art of eta what is on my calendar'), true)
+  assert.equal(hasWakeWord('art of eta'), true)
+})
+
+test('[wake] hasWakeWord still rejects unrelated leading speech', () => {
+  assert.equal(hasWakeWord('hey there'), false)
+  assert.equal(hasWakeWord('open the cockpit'), false)
+  assert.equal(hasWakeWord('are we there yet'), false)
+  // The name present but NOT leading must not trigger (back-compat invariant).
+  assert.equal(hasWakeWord('tell Arturita later'), false)
+  assert.equal(hasWakeWord('please tell arturita to wait'), false)
+})
+
+test('[wake] exact + case-insensitive still work (no regression)', () => {
+  assert.equal(hasWakeWord('Arturita, what is on my calendar'), true)
+  assert.equal(hasWakeWord('arturita move the files'), true)
+  assert.equal(hasWakeWord('Arturita'), true)
+  assert.equal(WAKE_WORD, 'arturita')
+})
+
+test('[wake] matchWakeWord reports how many tokens the name spanned', () => {
+  assert.deepEqual(matchWakeWord('Arturita move it'), { matched: true, tokensConsumed: 1 })
+  assert.deepEqual(matchWakeWord('art of eta move it'), { matched: true, tokensConsumed: 3 })
+  assert.deepEqual(matchWakeWord('move it'), { matched: false, tokensConsumed: 0 })
+  assert.deepEqual(matchWakeWord(''), { matched: false, tokensConsumed: 0 })
+})
+
+test('[wake] stripWakeWord removes a fuzzy/split leading name, keeps the command', () => {
+  assert.equal(stripWakeWord('Arturator, move the files'), 'move the files')
+  assert.equal(stripWakeWord('Arturito delete downloads'), 'delete downloads')
+  assert.equal(stripWakeWord('art of eta open the cockpit'), 'open the cockpit')
+  assert.equal(stripWakeWord('Arturita, move the files'), 'move the files') // exact still works
+  assert.equal(stripWakeWord('move the files'), 'move the files')           // no-op
+})
+
+test('[wake] every allowlisted variant matches as a leading wake word', () => {
+  for (const v of WAKE_VARIANTS) {
+    assert.equal(hasWakeWord(`${v} do the thing`), true, `allowlist entry "${v}" should match`)
+  }
 })
 
 // ─── Confidence gating ───────────────────────────────────────────────────────
