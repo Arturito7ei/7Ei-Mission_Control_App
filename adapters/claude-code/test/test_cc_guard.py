@@ -47,5 +47,32 @@ class GuardDecisions(unittest.TestCase):
         self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "ask")
 
 
+class GuardAutonomous(unittest.TestCase):
+    """CC5+CC6 — with BOTH operator guards set, the hook consults the command
+    denylist: denied → deny, allowlisted → allow, otherwise → propose (deny)."""
+    AUTO = {"CC_AUTONOMOUS": "1", "CC_AUTONOMOUS_CONFIRM": "1"}
+
+    def test_denylisted_is_refused_even_autonomous(self):
+        d = run_guard({"tool_name": "Bash", "tool_input": {"command": "sudo rm -rf /"}}, env_extra=self.AUTO)
+        out = d["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("denylist", out["permissionDecisionReason"].lower())
+
+    def test_allowlisted_runs_autonomously(self):
+        d = run_guard({"tool_name": "Bash", "tool_input": {"command": "git status"}}, env_extra=self.AUTO)
+        self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "allow")
+
+    def test_gated_command_still_proposed_not_run(self):
+        d = run_guard({"tool_name": "Bash", "tool_input": {"command": "./deploy.sh --prod"}}, env_extra=self.AUTO)
+        self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_one_guard_only_is_propose_and_approve(self):
+        # Guard #1 without guard #2 → never autonomous; an allowlisted command is
+        # still proposed + denied (not run).
+        d = run_guard({"tool_name": "Bash", "tool_input": {"command": "git status"}},
+                      env_extra={"CC_AUTONOMOUS": "1"})
+        self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
 if __name__ == "__main__":
     unittest.main()

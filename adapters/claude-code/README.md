@@ -25,6 +25,7 @@ until that lands and you mean it.
 - `cc_adapter.py` — the daemon (IO: poll loop, subprocess, HTTP). Runnable: `python3 cc_adapter.py [--once]`.
 - `cc_headless.py` — pure, unit-tested helpers: argv builder, stream-json parser, result extractor, secret redaction, the permission-mode gate, workdir/worktree planning, and the PreToolUse guard-hook helpers (CC2).
 - `cc_guard.py` — the **PreToolUse guard hook** (CC2). When Claude could attempt a command, this turns it into a `machine_exec` approval (verbatim argv → the office A2 gate) and **denies** the tool call — nothing runs on the host. Installed automatically via `--settings` whenever a non-`plan` posture is active (or `CC_GUARD=1`).
+- `cc_denylist.py` — the **semantic command allow/deny list** (CC5), the host-side twin of `backend/src/services/cc-denylist.ts`. Classifies a shell command `deny` (catastrophic / privilege / exfil / reverse-shell — refused pre-approval) / `allow` (opt-in allowlist of safe read-only commands) / `gate` (everything else → A2 approval). Deny > allow > gate; fail-closed (unknown → gate).
 - `test/` — `python3 -m unittest discover -s adapters/claude-code/test` (headless helpers + guard hook).
 
 ## Propose-and-approve bridge (CC2)

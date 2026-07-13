@@ -14,6 +14,8 @@
 //
 // Pure helpers only (string formatting + arithmetic); the route does the IO.
 
+import { evaluateCommand, commandFromAction, type CommandPolicy } from './cc-denylist'
+
 export const DANGEROUS_APPROVAL_TYPES = [
   'file_destructive',
   'wallet_tx',
@@ -188,9 +190,26 @@ export function prepareApprovalRecord(input: {
   summary?: string | null
   action?: any
   payload?: any
+  /** per-agent command policy (CC5) — allow/deny lists for machine_exec */
+  commandPolicy?: CommandPolicy
 }): PreparedApproval {
   if (isDangerousType(input.type)) {
-    const action = input.action ?? (input.payload && input.payload.action)
+    let action = input.action ?? (input.payload && input.payload.action)
+    // CC5 — a machine_exec proposal runs through the command denylist. A
+    // denylisted command is REFUSED pre-approval (you can't approve a command
+    // we already forbid); otherwise we stamp `allowlisted` so the card shows
+    // honestly whether it's a known-safe command or a one-off.
+    const t = String(input.type ?? '').trim().toLowerCase().replace(/\s+/g, '_')
+    if (t === 'machine_exec' && action && typeof action === 'object') {
+      const command = commandFromAction(action)
+      if (command) {
+        const verdict = evaluateCommand(command, input.commandPolicy)
+        if (verdict.decision === 'deny') {
+          return { ok: false, error: `command is denylisted (${verdict.category}): ${verdict.reason}` }
+        }
+        action = { ...action, allowlisted: verdict.decision === 'allow' }
+      }
+    }
     const rendered = renderActionSummary(input.type, action)
     if (!rendered.ok) return { ok: false, error: `dangerous approval: ${rendered.error}` }
     return {
