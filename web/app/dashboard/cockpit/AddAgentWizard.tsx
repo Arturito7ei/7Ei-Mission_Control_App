@@ -4,6 +4,7 @@
 // token + mc.env block exactly once.
 import { useState } from 'react'
 import { api, API } from '@/lib/api'
+import { adapterProfile, runBlock } from '@/lib/adapterProfile'
 import { tk, text, space } from '../tokens'
 import { Button, TextArea, TextInput } from '../ui'
 import { FormLabel, Modal, ModalTitle, RUNTIME_BADGE, sx, type Getter } from './shared'
@@ -17,7 +18,7 @@ const RUNTIMES = [
 
 export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { orgId: string; getToken: Getter; onClose: () => void; onDone: () => void }) {
   const [step, setStep] = useState(0)
-  const [f, setF] = useState({ name: 'Arturito · Open Claw', role: 'Ops', runtime: 'openclaw', llmProvider: 'minimax', llmModel: 'MiniMax-Text-01', termsOfReference: '', avatarEmoji: '📎' })
+  const [f, setF] = useState({ name: 'Arturito · Open Claw', role: 'Ops', runtime: 'openclaw', llmProvider: 'minimax', llmModel: 'MiniMax-Text-01', termsOfReference: '', avatarEmoji: '📎', externalEndpoint: '' })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -29,20 +30,26 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
   const submit = async () => {
     setBusy(true); setErr(null)
     try {
-      const res = await api<{ agentToken: string }>(`/api/orgs/${orgId}/agents/external`, { token: await getToken(), method: 'POST', body: JSON.stringify(f) })
+      // Only send externalEndpoint when provided (schema expects a URL or omit).
+      const { externalEndpoint, ...rest } = f
+      const body = externalEndpoint.trim() ? { ...rest, externalEndpoint: externalEndpoint.trim() } : rest
+      const res = await api<{ agentToken: string }>(`/api/orgs/${orgId}/agents/external`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
       setToken(res.agentToken)
     } catch (e: any) { setErr(e?.message ?? 'Failed') }
     setBusy(false)
   }
 
-  const envSnippet = token ? `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_EXECUTOR=auto\nMC_ALLOW_SHELL=1\nMC_WORKDIR=/Users/artutito/7Ei-MC_TARCO` : ''
+  // CC4 — the run block now matches the picked runtime's real adapter (claude_code
+  // no longer falls through to the OpenClaw command).
+  const envSnippet = token ? runBlock(f.runtime, API, token) : ''
+  const runtimeNote = adapterProfile(f.runtime).note
 
   return (
     <Modal onClose={onClose}>
       {token ? (
         <>
           <ModalTitle>✓ {f.name} onboarded</ModalTitle>
-          <p style={sx.hint}>Copy this agent token now — it is shown only once. Paste it into the runtime's <code style={sx.code}>mc.env</code>.</p>
+          <p style={sx.hint}>Copy this agent token now — it is shown only once. Paste it into the runtime's <code style={sx.code}>mc.env</code>. {runtimeNote}</p>
           <div style={sx.tokenBox}>{token}</div>
           <Button style={{ color: tk.accent, alignSelf: 'flex-start' }} onClick={() => { navigator.clipboard?.writeText(envSnippet); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>
             {copied ? '✓ Copied env' : '📋 Copy mc.env block'}
@@ -87,6 +94,7 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
             <div style={sx.form}>
               <FormLabel>LLM provider<TextInput value={f.llmProvider} onChange={e => setF({ ...f, llmProvider: e.target.value })} /></FormLabel>
               <FormLabel>Model<TextInput value={f.llmModel} onChange={e => setF({ ...f, llmModel: e.target.value })} /></FormLabel>
+              <FormLabel>External endpoint (optional)<TextInput value={f.externalEndpoint} placeholder="https://… — a push URL for task nudges (adapter still polls)" onChange={e => setF({ ...f, externalEndpoint: e.target.value })} /></FormLabel>
               <p style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft, margin: 0 }}>External runtimes run their own brain; this is metadata + the model the adapter calls.</p>
             </div>
           )}
