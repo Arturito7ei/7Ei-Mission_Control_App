@@ -36,19 +36,26 @@ VALID_MODES = ("acceptEdits", "auto", "bypassPermissions", "default", "dontAsk",
 AUTONOMOUS_MODES = ("acceptEdits", "auto", "bypassPermissions", "default", "dontAsk")
 
 
-def resolve_permission_mode(requested, *, autonomous_enabled=False, autonomous_confirmed=False):
+def resolve_permission_mode(requested, *, autonomous_enabled=False, autonomous_confirmed=False,
+                            denylist_available=False):
     """The permission mode the adapter will ACTUALLY pass to `claude`.
 
     Fail-closed: an unknown mode → `plan`; any autonomous mode → `plan` unless
-    BOTH `autonomous_enabled` and `autonomous_confirmed` are true (CC6's two
-    guards). The daemon can never reach an autonomous posture by accident.
+    ALL THREE preconditions hold (CC6):
+      1. `autonomous_enabled`   — operator guard #1 (CC_AUTONOMOUS=1)
+      2. `autonomous_confirmed` — operator guard #2 (CC_AUTONOMOUS_CONFIRM=1)
+      3. `denylist_available`   — the CC5 command denylist is importable on the host
+    Autonomy is therefore UNREACHABLE until the denylist exists AND the operator
+    flips both guards — exactly the wallet-mainnet / machine_exec pattern. The
+    daemon can never reach an autonomous posture by accident or without the
+    command-safety gate present.
     """
     req = str(requested or "plan").strip()
     if req not in VALID_MODES:
         return "plan"
     if req == "plan":
         return "plan"
-    if autonomous_enabled and autonomous_confirmed:
+    if autonomous_enabled and autonomous_confirmed and denylist_available:
         return req
     return "plan"
 

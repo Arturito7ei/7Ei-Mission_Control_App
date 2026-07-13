@@ -21,20 +21,22 @@ class PermissionModeGate(unittest.TestCase):
     def test_unknown_collapses_to_plan(self):
         self.assertEqual(cc.resolve_permission_mode("yolo"), "plan")
 
-    def test_autonomous_refused_without_both_guards(self):
+    def test_autonomous_refused_without_all_preconditions(self):
         for mode in ("bypassPermissions", "acceptEdits", "default", "auto", "dontAsk"):
             self.assertEqual(cc.resolve_permission_mode(mode), "plan")
-            self.assertEqual(cc.resolve_permission_mode(mode, autonomous_enabled=True), "plan")
-            self.assertEqual(cc.resolve_permission_mode(mode, autonomous_confirmed=True), "plan")
+            self.assertEqual(cc.resolve_permission_mode(mode, autonomous_enabled=True, denylist_available=True), "plan")
+            self.assertEqual(cc.resolve_permission_mode(mode, autonomous_confirmed=True, denylist_available=True), "plan")
+            # both guards but NO denylist → still plan (CC5 is a hard precondition)
+            self.assertEqual(cc.resolve_permission_mode(mode, autonomous_enabled=True, autonomous_confirmed=True), "plan")
 
-    def test_autonomous_allowed_only_with_both_guards(self):
+    def test_autonomous_allowed_only_with_both_guards_and_denylist(self):
         self.assertEqual(
-            cc.resolve_permission_mode("bypassPermissions", autonomous_enabled=True, autonomous_confirmed=True),
+            cc.resolve_permission_mode("bypassPermissions", autonomous_enabled=True, autonomous_confirmed=True, denylist_available=True),
             "bypassPermissions",
         )
         # plan is never "upgraded" by the guards
         self.assertEqual(
-            cc.resolve_permission_mode("plan", autonomous_enabled=True, autonomous_confirmed=True),
+            cc.resolve_permission_mode("plan", autonomous_enabled=True, autonomous_confirmed=True, denylist_available=True),
             "plan",
         )
 
