@@ -23,8 +23,21 @@ until that lands and you mean it.
 ## Files
 
 - `cc_adapter.py` — the daemon (IO: poll loop, subprocess, HTTP). Runnable: `python3 cc_adapter.py [--once]`.
-- `cc_headless.py` — pure, unit-tested helpers: argv builder, stream-json parser, result extractor, secret redaction, the permission-mode gate, workdir/worktree planning.
-- `test/test_cc_headless.py` — `python3 -m unittest discover -s adapters/claude-code/test`.
+- `cc_headless.py` — pure, unit-tested helpers: argv builder, stream-json parser, result extractor, secret redaction, the permission-mode gate, workdir/worktree planning, and the PreToolUse guard-hook helpers (CC2).
+- `cc_guard.py` — the **PreToolUse guard hook** (CC2). When Claude could attempt a command, this turns it into a `machine_exec` approval (verbatim argv → the office A2 gate) and **denies** the tool call — nothing runs on the host. Installed automatically via `--settings` whenever a non-`plan` posture is active (or `CC_GUARD=1`).
+- `test/` — `python3 -m unittest discover -s adapters/claude-code/test` (headless helpers + guard hook).
+
+## Propose-and-approve bridge (CC2)
+
+In `plan` mode Claude never calls tools, so it only ever proposes. If you run a
+tool-using posture, the guard hook makes it safe: **every `Bash` command becomes
+a `machine_exec` approval showing the verbatim `argv`**, and the tool call is
+**denied** — the office approves the exact command (with a fresh-session step-up)
+instead of Claude running it. The backend renders that approval from the
+structured `argv` (never the agent's prose) and fail-closes on a malformed
+payload (`prepareApprovalRecord`, shared by the human + agent approval routes).
+Autonomous execution (actually running an approved/allowlisted command) is CC6,
+off by default behind two guards + the CC5 denylist.
 
 ## Quick start
 
@@ -59,6 +72,7 @@ python3 cc_adapter.py --once   # smoke a single poll; drop --once to run the loo
 | `CC_TIMEOUT_SECONDS` | 1800 | per-run wall-clock cap |
 | `CC_ALLOWED_TOOLS` / `CC_DISALLOWED_TOOLS` | — | tool allow/deny lists passed to `claude` |
 | `CC_ATTACH_RESULT` | off | `1` → also post the result markdown as a task work product |
+| `CC_GUARD` | auto | `1` → force-install the propose-and-approve guard hook even in `plan` mode (default: installed whenever the posture is non-`plan`) |
 | `CC_AUTONOMOUS` / `CC_AUTONOMOUS_CONFIRM` | off | CC6 autonomous-exec guards (BOTH required; leave unset) |
 
 `mc.env` holds only non-secret config (chmod 600). LLM/host credentials for the

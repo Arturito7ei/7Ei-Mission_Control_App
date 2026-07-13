@@ -10,6 +10,7 @@ import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead
 import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
 import { agentRecentPath, appendSection, formatSessionSummary } from '../services/agent-memory'
 import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval } from '../services/governance2'
+import { prepareApprovalRecord } from '../services/dangerous-approvals'
 import { documentEndpoint } from '../services/openapi'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
@@ -421,15 +422,25 @@ export async function agentApiRoutes(app: FastifyInstance) {
   })
 
   // Request human sign-off for a sensitive action (MCA-PC B2).
+  //
+  // CC2 — for a DANGEROUS type (machine_exec / file_destructive / wallet_tx /
+  // email_send) the summary is MACHINE-rendered VERBATIM from the structured
+  // `action` (never the agent's prose), fail-closed on a bad payload, and tagged
+  // `requiresStepUp`. This is the propose-and-approve bridge: when the Claude
+  // Code adapter proposes a command it files `{type:'machine_exec', action:{argv,…}}`
+  // and the human approves the exact argv (with a fresh session), never model text.
   app.post('/api/agent/approvals', async (req, reply) => {
     const agent = (req as any).agent
-    const { type, summary, payload } = (req.body ?? {}) as any
-    if (!type || !summary) return reply.code(400).send({ error: 'type and summary required' })
-    await db.insert(schema.approvalRequests).values({
-      id: randomUUID(), orgId: agent.orgId, type, summary, payload: payload ?? null,
+    const b = (req.body ?? {}) as any
+    if (!b.type) return reply.code(400).send({ error: 'type is required' })
+    const prepared = prepareApprovalRecord({ type: b.type, summary: b.summary, action: b.action, payload: b.payload })
+    if (!prepared.ok) return reply.code(400).send({ error: prepared.error })
+    const approval = {
+      id: randomUUID(), orgId: agent.orgId, type: b.type, summary: prepared.summary, payload: prepared.payload ?? null,
       status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date(),
-    } as any)
-    return { ok: true }
+    }
+    await db.insert(schema.approvalRequests).values(approval as any)
+    return { ok: true, approval, warnings: prepared.warnings }
   })
 
   // Free-form progress / chatter message from the runtime.
