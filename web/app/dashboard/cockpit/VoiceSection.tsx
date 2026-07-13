@@ -20,6 +20,8 @@ import {
   decideSubmit, pickPlayback, toFeedItem, WAKE_WORD,
   type FeedItem, type VoiceMode, type VoiceResponse,
 } from './voicePanel.logic'
+import { classifySttError } from '@/lib/talkDiagnostics'
+import { detectBrave } from '@/lib/browserEnv'
 
 type Props = {
   orgId: string
@@ -43,12 +45,16 @@ export default function VoiceSection({ orgId, getToken, approvals = [], onDecide
   const [note, setNote] = useState('')
 
   const recogRef = useRef<any>(null)
+  const braveRef = useRef(false)
   const seqRef = useRef(0)
   const threadRef = useRef<string | null>(null)
   const wakeRef = useRef(wakeWord)
   const modeRef = useRef(mode)
   useEffect(() => { wakeRef.current = wakeWord }, [wakeWord])
   useEffect(() => { modeRef.current = mode }, [mode])
+  // Detect Brave once so a built-in-STT failure can name it (Brave disables the
+  // Google speech backend Web Speech relies on → a persistent `network` error).
+  useEffect(() => { let ok = true; detectBrave().then(b => { if (ok) braveRef.current = b }); return () => { ok = false } }, [])
 
   // ── Send a command (from speech or the typed fallback) ─────────────────────
   const send = useCallback(async (command: string, confidence: number | null) => {
@@ -101,11 +107,12 @@ export default function VoiceSection({ orgId, getToken, approvals = [], onDecide
       setInterim(live)
     }
     r.onerror = (ev: any) => {
-      if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') {
-        setErr('Microphone permission denied — allow mic access or type a command below.')
-      } else if (ev?.error && ev.error !== 'no-speech' && ev.error !== 'aborted') {
-        setErr(`Speech error: ${ev.error}`)
-      }
+      const st = classifySttError(ev?.error, { brave: braveRef.current })
+      if (!st.failed) return
+      // Built-in STT unusable here (Brave/network) or blocked/no-mic — all map to
+      // a specific, actionable line; typing the command below always works.
+      if (st.unavailable) { r.__active = false; try { r.stop() } catch { /* noop */ }; setListening(false); setInterim('') }
+      setErr(st.hint ? `${st.message} ${st.hint}` : st.message)
     }
     r.onend = () => {
       // Keep listening across natural pauses while the toggle is on.

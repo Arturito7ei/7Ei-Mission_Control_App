@@ -107,6 +107,81 @@ export function classifyTtsError(errorCode: string | null | undefined): TtsStatu
   }
 }
 
+// ─── Browser STT: classify a SpeechRecognition (mic capture) error ────────────
+// The push-to-talk path uses the Web Speech API `SpeechRecognition`. In Chromium
+// its backend is Google's cloud speech service — which BRAVE DISABLES. So in
+// Brave the constructor exists (feature-detect passes, the mic button enables)
+// but every `.start()` fires `onerror` with `error === 'network'`, dead-ending
+// voice input even while fully online. That used to surface as a bare
+// "Speech error: network". This maps each code to a specific, NON-FATAL status
+// (typing always works) and, when built-in STT is unusable, points the operator
+// at the free local-Whisper path. Distinct from `classifyTtsError` (the speak()
+// leg). Pure.
+
+export type SttFailure = 'permission' | 'no-mic' | 'network' | 'unknown'
+
+export interface SttStatus {
+  /** false for benign codes we ignore (`no-speech`, `aborted` on stop). */
+  failed: boolean
+  kind: SttFailure | null
+  /** true when the browser's built-in STT can't work here (Brave / STT backend
+   *  unreachable) — the caller should stop retrying and steer to typing/Whisper. */
+  unavailable: boolean
+  message: string | null
+  hint: string | null
+}
+
+const STT_OK: SttStatus = { failed: false, kind: null, unavailable: false, message: null, hint: null }
+
+/** The always-available fallbacks when built-in STT can't be used. Shared so the
+ *  panels + self-test say the same thing. */
+export const WHISPER_STT_HINT =
+  'Use the text box below (always available), or enable free local Whisper voice input — see ⚙ Pipeline config.'
+
+/**
+ * Map a `SpeechRecognitionErrorEvent.error` code to a specific, NON-FATAL
+ * operator status. `no-speech`/`aborted` are benign (we stop the recognizer on
+ * toggle-off and on natural pauses). `network` is the Brave / STT-backend-down
+ * case — the one that read as "Speech error: network"; pass `opts.brave` to name
+ * Brave explicitly. Pure.
+ */
+export function classifySttError(errorCode: string | null | undefined, opts: { brave?: boolean } = {}): SttStatus {
+  const code = String(errorCode ?? '').trim().toLowerCase()
+  switch (code) {
+    case '':
+    case 'no-speech':
+    case 'aborted':
+      return STT_OK
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return {
+        failed: true, kind: 'permission', unavailable: false,
+        message: 'Microphone access is blocked for this site.',
+        hint: 'Allow mic access in your browser’s site settings, or type your message below.',
+      }
+    case 'audio-capture':
+      return {
+        failed: true, kind: 'no-mic', unavailable: false,
+        message: 'No microphone was found.',
+        hint: 'Check that a mic is connected and enabled, or type your message below.',
+      }
+    case 'network':
+      return {
+        failed: true, kind: 'network', unavailable: true,
+        message: opts.brave
+          ? 'Voice input isn’t available in this browser — Brave disables the built-in speech recognition it relies on.'
+          : 'Voice input isn’t available — the browser’s built-in speech-recognition service couldn’t be reached.',
+        hint: WHISPER_STT_HINT,
+      }
+    default:
+      return {
+        failed: true, kind: 'unknown', unavailable: false,
+        message: `Voice input error (${code}).`,
+        hint: 'Type your message below, or try again.',
+      }
+  }
+}
+
 // ─── Converse leg: classify a caught fetch/HTTP error ─────────────────────────
 
 export type TalkLeg = 'backend' | 'local-ollama' | 'tts'
