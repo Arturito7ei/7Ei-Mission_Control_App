@@ -8,6 +8,7 @@ Loads on top of the root CLAUDE.md when working in `adapters/`.
 - `mac-mini/setup.sh` — one-command install: adapter + preset + launchd keep-alive + chmod-600 `mc.env` + `--once` smoke test.
 - `presets/*.env` — executor presets (codex, gemini, nvidia-minimax); all reuse the OpenAI-compatible llm loop.
 - `cursor/` — Cursor runtime notes.
+- `claude-code/` — the **Claude Code** executor (Epic CC): stdlib-only Python poll loop (`cc_adapter.py`) that runs a **headless `claude -p`** in the target `cc/`-worktree, streams stream-json to the task thread, and posts result + heartbeat. Pure core `cc_headless.py`; the `cc_guard.py` PreToolUse hook + `cc_denylist.py` (twin of `backend/src/services/cc-denylist.ts`) enforce the command allow/deny list. **Propose-and-approve by default**; autonomous host exec is OFF, fail-closed behind two operator guards **and** the denylist. `./setup.sh` for launchd keep-alive; `cc_adapter.py --doctor` prints the posture. Its own thing — never touches `~/.openclaw/`.
 
 ## Rules
 

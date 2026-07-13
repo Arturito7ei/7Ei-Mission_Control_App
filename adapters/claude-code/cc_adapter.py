@@ -8,14 +8,20 @@ tasks the office assigned to this `runtime:'claude_code'` agent, runs a HEADLESS
 `claude -p` in the target workspace / `cc/`-worktree, streams the run's
 stream-json output to the task thread, and posts the result + heartbeats.
 
-SAFETY — CC1 ships PROPOSE-AND-APPROVE only:
+SAFETY — default is PROPOSE-AND-APPROVE only:
   * `claude` runs in `--permission-mode plan` by default: it reads, analyses,
     and PROPOSES a plan; it does NOT edit files or run commands on the host.
-  * Autonomous host execution (`bypassPermissions`) is CC6 and is fail-closed
-    behind TWO explicit operator guards (CC_AUTONOMOUS=1 + CC_AUTONOMOUS_CONFIRM=1).
-    `cc_headless.resolve_permission_mode` is the single chokepoint — without both
-    guards, any non-`plan` request collapses to `plan`.
+  * Autonomous host execution (`bypassPermissions`) is OFF by default and
+    fail-closed behind THREE preconditions (CC6): guard #1 (CC_AUTONOMOUS=1),
+    guard #2 (CC_AUTONOMOUS_CONFIRM=1), AND the CC5 command denylist being
+    importable on the host. `cc_headless.resolve_permission_mode` is the single
+    chokepoint — miss any one and the posture collapses back to `plan`.
+  * Even in the autonomous posture, every command still passes the cc_guard.py
+    PreToolUse hook → the CC5 denylist: denylisted commands are refused,
+    unknown commands are proposed to the office (never auto-run), and only
+    fully-allowlisted commands run without a per-command approval.
   * This adapter never touches the live OpenClaw install; it is its own thing.
+  * `python3 cc_adapter.py --doctor` prints the exact resolved posture.
 
 Stdlib only (urllib, json, subprocess, threading) — no pip install.
 
@@ -41,6 +47,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cc_headless as cc
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+
+# CC5/CC6 — the command denylist is a HARD PRECONDITION for autonomous exec. If
+# it can't be imported, autonomy is unreachable (resolve_permission_mode forces
+# plan). This is the host-side twin of backend/src/services/cc-denylist.ts.
+try:
+    import cc_denylist  # noqa: F401
+    _DENYLIST_AVAILABLE = True
+except Exception:
+    _DENYLIST_AVAILABLE = False
 
 BASE = os.environ.get("MC_BASE_URL", "http://localhost:3001").rstrip("/")
 TOKEN = os.environ.get("MC_AGENT_TOKEN", "")
@@ -132,7 +147,8 @@ def run_claude(prompt, cwd, resume=None):
     (events, log_flushed). Fails closed: the permission mode is resolved through
     cc_headless so autonomous is impossible without both operator guards."""
     mode = cc.resolve_permission_mode(
-        PERMISSION_MODE, autonomous_enabled=AUTONOMOUS, autonomous_confirmed=AUTONOMOUS_CONFIRM)
+        PERMISSION_MODE, autonomous_enabled=AUTONOMOUS, autonomous_confirmed=AUTONOMOUS_CONFIRM,
+        denylist_available=_DENYLIST_AVAILABLE)
     # CC2 — whenever Claude could attempt commands (any non-plan posture, or when
     # forced with CC_GUARD=1), install the cc_guard.py PreToolUse hook so every
     # Bash call is proposed to the office as a machine_exec approval and denied
@@ -252,19 +268,59 @@ def poll_once():
     return len(tasks)
 
 
+def posture():
+    """The resolved autonomy posture + why (for the banner and `--doctor`)."""
+    resolved = cc.resolve_permission_mode(
+        PERMISSION_MODE, autonomous_enabled=AUTONOMOUS, autonomous_confirmed=AUTONOMOUS_CONFIRM,
+        denylist_available=_DENYLIST_AVAILABLE)
+    autonomous = cc.is_autonomous_mode(resolved)
+    # Why isn't autonomy active? (only meaningful when a non-plan mode was requested)
+    reasons = []
+    if not AUTONOMOUS:
+        reasons.append("CC_AUTONOMOUS not set")
+    if not AUTONOMOUS_CONFIRM:
+        reasons.append("CC_AUTONOMOUS_CONFIRM not set")
+    if not _DENYLIST_AVAILABLE:
+        reasons.append("cc_denylist not importable")
+    return {"resolved": resolved, "autonomous": autonomous, "requested": PERMISSION_MODE,
+            "denylist": _DENYLIST_AVAILABLE, "blocked_by": reasons}
+
+
+def doctor():
+    p = posture()
+    print("7Ei MC claude-code adapter — doctor")
+    print(f"  backend          {BASE}")
+    print(f"  token set        {'yes' if TOKEN else 'NO (MC_AGENT_TOKEN required)'}")
+    print(f"  claude bin       {CLAUDE_BIN}")
+    print(f"  workdir          {WORKDIR}")
+    print(f"  requested mode   {p['requested']}")
+    print(f"  resolved mode    {p['resolved']}")
+    print(f"  posture          {'AUTONOMOUS' if p['autonomous'] else 'propose-and-approve'}")
+    print(f"  CC5 denylist     {'present' if p['denylist'] else 'MISSING (autonomy impossible)'}")
+    print(f"  guard #1         {'set' if AUTONOMOUS else 'unset'} (CC_AUTONOMOUS)")
+    print(f"  guard #2         {'set' if AUTONOMOUS_CONFIRM else 'unset'} (CC_AUTONOMOUS_CONFIRM)")
+    if not p['autonomous'] and p['requested'] != 'plan':
+        print(f"  autonomy blocked by: {', '.join(p['blocked_by'])}")
+
+
 def main():
+    if "--doctor" in sys.argv:
+        doctor()
+        return
     if not TOKEN:
         print("MC_AGENT_TOKEN is required", file=sys.stderr)
         sys.exit(2)
     heartbeat("green")
     load_secrets()
-    resolved = cc.resolve_permission_mode(
-        PERMISSION_MODE, autonomous_enabled=AUTONOMOUS, autonomous_confirmed=AUTONOMOUS_CONFIRM)
-    autonomy = "AUTONOMOUS" if cc.is_autonomous_mode(resolved) else "propose-and-approve"
+    p = posture()
+    resolved = p["resolved"]
+    autonomy = "AUTONOMOUS" if p["autonomous"] else "propose-and-approve"
     print(f"7Ei MC claude-code adapter → {BASE}")
     print(f"  claude={CLAUDE_BIN} model={MODEL or '(default)'} permission-mode={resolved} [{autonomy}] workdir={WORKDIR}")
-    if cc.is_autonomous_mode(resolved):
-        print("  ⚠ AUTONOMOUS host execution is ON (both operator guards set). Commands still pass the CC5 denylist hook.")
+    if p["autonomous"]:
+        print("  ⚠ AUTONOMOUS host execution is ON (both guards + denylist present). Commands still pass the CC5 denylist hook.")
+    elif PERMISSION_MODE != "plan" and p["blocked_by"]:
+        print(f"  ℹ requested '{PERMISSION_MODE}' but staying propose-and-approve — blocked by: {', '.join(p['blocked_by'])}")
     if "--once" in sys.argv:
         n = poll_once()
         print(f"processed {n} task(s)")

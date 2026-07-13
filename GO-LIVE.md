@@ -6,7 +6,7 @@ console (Clerk, Google Cloud, NVIDIA, GitHub, the Mac mini) — the engineering 
 make each a one-step change is already shipped; this doc gives the exact steps,
 env-var names, and where they're consumed.
 
-Owner: Arturito · Last updated: 2026-07-02
+Owner: Arturito · Last updated: 2026-07-13 (added item 6 — Claude Code agent, Epic CC)
 
 | # | Item | Risk if skipped | Effort |
 |---|------|-----------------|--------|
@@ -15,6 +15,52 @@ Owner: Arturito · Last updated: 2026-07-02
 | 3 | Rotate exposed tokens (NVIDIA key, vault PAT) | Leaked creds usable by anyone who saw them | ~15 min |
 | 4 | Move OpenClaw to the Mac mini | Agent dies when the laptop sleeps/closes | ~10 min |
 | 5 | Set `SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET` on Fly | At-rest secret store & run-token HMAC fall back to a **public** default key → encrypted secrets decryptable / run-tokens forgeable | ~5 min |
+| 6 | Bring up a **Claude Code** engineering agent (Epic CC) | The office can't assign coding work to Claude Code | ~10 min |
+
+---
+
+## 6. Claude Code engineering agent (Epic CC)
+
+Makes Claude Code a first-class fleet member the office can assign tasks to
+(`docs/DESIGN-claude-code-agent.md`; adapter `adapters/claude-code/`). It runs on
+any host with the `claude` CLI — **not** the OpenClaw box; it never touches
+`~/.openclaw/`.
+
+**Prereqs (on the host that will run the agent):**
+1. Install + log in to the **Claude Code CLI** (`claude --version`; `claude` must
+   be authenticated — its own login or `ANTHROPIC_API_KEY`).
+2. `python3` on PATH (stdlib only; no pip).
+
+**Steps:**
+1. **Onboard** a `claude_code` agent (Cockpit → Add agent → 🤖 Claude Code, or
+   `npx @7ei/mc onboard --org <id> --runtime claude_code --name "Claude Code"`).
+   Copy the one-time `mca_` token. Registration is **secure-by-default** (CC3):
+   the agent lands `low_trust_review` with an explicit capability list + a
+   boundary from the target workspace — not allow-all.
+2. **Install** on the host:
+   ```bash
+   cd adapters/claude-code
+   MC_AGENT_TOKEN=mca_… MC_WORKDIR=/path/to/checkout ./setup.sh
+   ```
+   This writes a chmod-600 `mc.env`, prints the posture (`--doctor`), smoke-polls
+   once, and loads a launchd keep-alive — all **propose-and-approve**.
+3. The agent now claims assigned tasks and **proposes** — it runs **no host
+   commands without an A2 approval** (verbatim `argv` + fresh-session step-up).
+
+**Enabling autonomous execution (optional, later, OFF by default):**
+Autonomy is fail-closed behind **two operator guards + the CC5 command
+denylist**. Only when you deliberately choose to, add to `mc.env`:
+```
+CC_PERMISSION_MODE=bypassPermissions
+CC_AUTONOMOUS=1
+CC_AUTONOMOUS_CONFIRM=1
+```
+then `python3 cc_adapter.py --doctor` → posture `AUTONOMOUS`. Even then, every
+command passes the CC5 denylist (catastrophic/privilege/exfil/reverse-shell are
+**refused**; unknown commands are still **proposed**; only allowlisted read-only
+commands run un-attended). Run against an **isolated `cc/` worktree** so file
+edits are reviewable as a diff. Remove those three lines to revert; `/panic` or
+pausing the agent also stops it. Details: `adapters/claude-code/README.md`.
 
 ---
 

@@ -81,8 +81,54 @@ python3 cc_adapter.py --once   # smoke a single poll; drop --once to run the loo
 `GET /api/agent/secrets` at boot, or from the host's own Claude Code login —
 never write them into `mc.env`.
 
+## Install (macOS launchd keep-alive)
+
+```bash
+MC_AGENT_TOKEN=mca_… MC_WORKDIR=/path/to/checkout ./setup.sh
+```
+Writes a chmod-600 `~/.7ei-claude-code/mc.env`, prints the resolved posture
+(`--doctor`), runs one poll (`--once`), then loads a keep-alive launchd agent —
+all in **propose-and-approve** mode. It refuses to run without the `claude` CLI
+on PATH and an `mca_` token. It never touches `~/.openclaw/`.
+
+## Autonomous execution — advanced, OFF by default
+
+By default the agent only ever **proposes**. Autonomous host execution (Claude
+actually running commands) is fail-closed behind **three** preconditions — miss
+any one and the posture stays propose-and-approve:
+
+1. `CC_AUTONOMOUS=1`          — operator guard #1
+2. `CC_AUTONOMOUS_CONFIRM=1`  — operator guard #2
+3. the **CC5 command denylist** (`cc_denylist.py`) importable on the host
+4. plus a non-`plan` `CC_PERMISSION_MODE` (e.g. `bypassPermissions`)
+
+Check exactly what's resolved before trusting it:
+```bash
+python3 cc_adapter.py --doctor
+```
+
+**Even when autonomous**, every command still passes the `cc_guard.py` PreToolUse
+hook → the CC5 denylist: **denylisted** commands (`rm -rf /`, `curl|sh`, `sudo`,
+secret reads, reverse shells, …) are **refused**; **unknown** commands are
+**proposed** to the office as `machine_exec` approvals (never auto-run); only
+**fully-allowlisted** read-only commands (`git status`, `npm test`, …) run
+without a per-command approval. File edits happen in the agent's `cc/` worktree
+and are reviewable as a diff — run the agent against an isolated checkout.
+
+To turn it on (only when you mean it):
+```bash
+# in mc.env, add:
+CC_PERMISSION_MODE=bypassPermissions
+CC_AUTONOMOUS=1
+CC_AUTONOMOUS_CONFIRM=1
+# then: python3 cc_adapter.py --doctor   → posture AUTONOMOUS
+```
+To turn it back off: remove those three lines (or set them to 0). `--panic` /
+pausing the agent from the Cockpit also stops it (the `canAgentRun` gate).
+
 ## Smoke test
 
 ```bash
 cd backend && npm run smoke:claude-code   # drives the real adapter with a fake claude (no network)
+python3 -m unittest discover -s adapters/claude-code/test   # pure helpers + guard + denylist
 ```
