@@ -3,6 +3,7 @@
 // External-runtime hires return a one-time token + host run block.
 import { useState } from 'react'
 import { api, API } from '@/lib/api'
+import { adapterProfile, runBlock } from '@/lib/adapterProfile'
 import { tk, text, space } from '../tokens'
 import { Button, TextArea, TextInput } from '../ui'
 import { FormLabel, Modal, ModalTitle, RUNTIME_BADGE, sx, type Getter } from './shared'
@@ -38,15 +39,12 @@ export default function HireDialog({ orgId, getToken, onClose, onDone }: { orgId
     <Modal onClose={onClose}>
       {token ? (() => {
         const rt = proposal?.runtime || 'openclaw'
-        const adapter = rt === 'cursor' ? 'adapters/cursor/cursor_adapter.py' : 'adapters/openclaw/mc_adapter.py'
-        const env = rt === 'cursor'
-          ? `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_INBOX=$PWD/coordination/inbox`
-          : `MC_BASE_URL=${API}\nMC_AGENT_TOKEN=${token}\nMC_EXECUTOR=auto\nMC_ALLOW_SHELL=1\nMC_WORKDIR=/Users/artutito/7Ei-MC_TARCO`
-        const block = `# mc.env\n${env}\n\n# run on the ${rt} host:\nset -a; source mc.env; set +a\npython3 ${adapter}`
+        const block = runBlock(rt, API, token)
+        const note = adapterProfile(rt).note
         return (
           <>
             <ModalTitle>✓ {proposal?.name} imported</ModalTitle>
-            <p style={sx.hint}>One-time token (shown once). Copy the block, drop it on the {rt} host, and the agent is live.</p>
+            <p style={sx.hint}>One-time token (shown once). Copy the block, drop it on the {rt} host, and the agent is live. {note}</p>
             <Button style={{ color: tk.accent, alignSelf: 'flex-start', marginTop: space.md }} onClick={() => { navigator.clipboard?.writeText(block); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? '✓ Copied' : '📋 Copy env + run command'}</Button>
             <pre style={sx.pre}>{block}</pre>
             <Button variant="primary" style={{ marginTop: space.md }} onClick={onDone}>Done</Button>
