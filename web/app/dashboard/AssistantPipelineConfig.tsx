@@ -14,6 +14,8 @@ import {
   type Entry, type PipelineLayer, type LlmEntry,
 } from './assistantConfig.logic'
 import { probeOllama, DEFAULT_OLLAMA_URL } from '@/lib/ollama'
+import { probeWhisper, isWhisperEngine, WHISPER_DEFAULT_URL } from '@/lib/whisper'
+import { detectBrave, hasWebSpeechStt } from '@/lib/browserEnv'
 import { runSelfTest, overallSeverity, pickSpeechVoice, type LegResult } from '@/lib/talkDiagnostics'
 
 type Getter = () => Promise<string | null>
@@ -22,7 +24,7 @@ type PipelineResp = Chains & { defaults: Chains }
 
 const LAYERS: { key: PipelineLayer; label: string; hint: string }[] = [
   { key: 'llm', label: '🧠 Language model', hint: 'Local Ollama first; free-tier cloud + your paid keys as fallbacks.' },
-  { key: 'stt', label: '🎧 Speech-to-text', hint: 'Self-hosted Whisper first; browser Web Speech as the zero-install fallback.' },
+  { key: 'stt', label: '🎧 Speech-to-text', hint: 'Local Whisper first (free, on-device, works in Brave — run the arturita-stt bridge); browser Web Speech as the zero-install fallback; typing always works.' },
   { key: 'tts', label: '🔊 Text-to-speech', hint: 'Self-hosted Piper/Chatterbox first; browser voice + hosted Chatterbox as fallbacks.' },
 ]
 
@@ -87,16 +89,21 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
     // 3. local Ollama reachable? (+ configured primary model)
     const primary = (chains?.llm ?? []).find((e): e is LlmEntry => 'provider' in e && (e as LlmEntry).provider === 'ollama' && (e as LlmEntry).mode === 'local')
     const ollamaModels = await probeOllama(DEFAULT_OLLAMA_URL)
-    // 4/5. browser TTS + STT capabilities
+    // 4/5. browser TTS + STT capabilities, + the free local Whisper bridge.
     const hasTts = typeof window !== 'undefined' && 'speechSynthesis' in window
     const voices = hasTts ? (window.speechSynthesis.getVoices() ?? []) : []
     const localVoice = !!pickSpeechVoice(voices as any, 'en-US')?.localService
-    const hasStt = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+    const hasStt = hasWebSpeechStt()
+    const brave = await detectBrave()   // Brave disables built-in Web Speech STT
+    // Probe the local whisper bridge only when the STT chain asks for it.
+    const wantsWhisper = (chains?.stt ?? []).some(e => isWhisperEngine((e as any).engine))
+    const whisperReachable = wantsWhisper ? await probeWhisper(WHISPER_DEFAULT_URL) : false
     setSelfTest(runSelfTest({
       backendOk, backendDetail,
       ollamaModels, ollamaPrimaryModel: primary ? (primary as LlmEntry).model : null,
       cloudLlmUsable, cloudLlmDetail,
-      ttsSupported: hasTts, ttsLocalVoice: localVoice, sttSupported: hasStt,
+      ttsSupported: hasTts, ttsLocalVoice: localVoice,
+      sttSupported: hasStt, sttBlocked: brave, whisperReachable,
     }))
     setTesting(false)
   }

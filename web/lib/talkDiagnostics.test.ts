@@ -200,3 +200,34 @@ test('runSelfTest warns when TTS has no on-device voice (offline-fail risk)', ()
   const tts = r.find(x => x.leg === 'tts')!
   assert.equal(tts.severity, 'warn')
 })
+
+// ─── STT leg: local Whisper > browser Web Speech > typing ────────────────────
+
+test('runSelfTest STT leg is OK via local Whisper (free voice, works in Brave)', () => {
+  const r = runSelfTest({ ...BASE, whisperReachable: true, sttSupported: false })
+  const stt = r.find(x => x.leg === 'stt')!
+  assert.equal(stt.severity, 'ok')
+  assert.match(stt.label, /Whisper/)
+})
+
+test('runSelfTest STT leg is OK via browser voice when Whisper is down but Web Speech works', () => {
+  const r = runSelfTest({ ...BASE, whisperReachable: false, sttSupported: true, sttBlocked: false })
+  const stt = r.find(x => x.leg === 'stt')!
+  assert.equal(stt.severity, 'ok')
+  assert.match(stt.label, /Browser/)
+})
+
+test('runSelfTest STT leg WARNS with the Whisper start command when Web Speech is blocked (Brave) and no bridge', () => {
+  const r = runSelfTest({ ...BASE, whisperReachable: false, sttSupported: true, sttBlocked: true })
+  const stt = r.find(x => x.leg === 'stt')!
+  assert.equal(stt.severity, 'warn')
+  assert.match(stt.detail, /Brave|network/i)
+  assert.match(String(stt.hint), /arturita-stt|npm run stt/)
+})
+
+test('runSelfTest STT leg warns (with Whisper command) when nothing is available', () => {
+  const r = runSelfTest({ ...BASE, whisperReachable: false, sttSupported: false })
+  const stt = r.find(x => x.leg === 'stt')!
+  assert.equal(stt.severity, 'warn')
+  assert.match(String(stt.hint), /Whisper/)
+})

@@ -1,0 +1,13 @@
+{
+  "name": "@7ei/arturita-stt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Arturita local STT bridge — free, on-device speech-to-text over a local whisper CLI. The browser posts captured mic audio to 127.0.0.1; returns { text }. Makes voice input work in Brave (whose built-in Web Speech STT is blocked).",
+  "bin": { "arturita-stt": "src/server.mjs" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

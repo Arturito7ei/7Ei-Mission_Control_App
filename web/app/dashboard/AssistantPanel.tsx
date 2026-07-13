@@ -27,6 +27,8 @@ import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
 import { pickSpeechVoice, classifyTtsError, classifySttError, describeTalkError, NO_LLM_FIX_HINT } from '@/lib/talkDiagnostics'
 import { detectBrave } from '@/lib/browserEnv'
+import { probeWhisper, transcribeWithWhisper, pickRecorderMimeType, isWhisperEngine, WHISPER_DEFAULT_URL } from '@/lib/whisper'
+import { resolveSttEngine, sttEngineLabel } from '@/lib/sttEngine'
 
 type Getter = () => Promise<string | null>
 
@@ -49,6 +51,13 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // When that happens we stop steering the operator at the mic and point them at
   // the typed box / local Whisper instead.
   const [sttUnavailable, setSttUnavailable] = useState(false)
+  // Free local Whisper voice input (browser → the arturita-stt bridge on
+  // 127.0.0.1, same trust model as local Ollama). Resolved from the STT pipeline
+  // chain + a reachability probe; when reachable it's the primary capture engine
+  // and works even in Brave (where built-in Web Speech STT is blocked).
+  const [sttChain, setSttChain] = useState<{ engine: string; mode?: string }[]>([])
+  const [whisperReachable, setWhisperReachable] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const [listening, setListening] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
@@ -66,6 +75,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
 
   const recogRef = useRef<any>(null)
   const braveRef = useRef(false)
+  const mediaRecRef = useRef<any>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const whisperUrlRef = useRef(WHISPER_DEFAULT_URL)
   const voicesRef = useRef<SpeechSynthesisVoice[]>([])
   const threadRef = useRef<string | null>(null)
   const wakeRef = useRef(wakeWord)
@@ -80,6 +92,8 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
 
   // Detect Brave once (async) so a built-in-STT failure can name it specifically.
   useEffect(() => { let ok = true; detectBrave().then(b => { if (ok) braveRef.current = b }); return () => { ok = false } }, [])
+  // Release the mic if we unmount mid-recording (MediaRecorder path).
+  useEffect(() => () => { try { mediaRecRef.current?.stream?.getTracks?.().forEach((t: MediaStreamTrack) => t.stop()) } catch { /* noop */ } }, [])
 
   // Browser voices populate asynchronously (Chrome fires `voiceschanged` after
   // the list is ready). Cache them so `speak` can pick an on-device voice.
@@ -142,6 +156,28 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     })()
     return () => { cancelled = true }
   }, [orgId, getToken])
+
+  // Resolve the STT engine from the pipeline config: if the chain wants a local
+  // whisper engine, probe the browser-reachable bridge (127.0.0.1:8790).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const cfg = await api<{ stt: Array<{ engine: string; mode?: string }> }>(`/api/orgs/${orgId}/arturita/pipeline`, { token: await getToken() })
+        if (cancelled) return
+        const chain = cfg.stt ?? []
+        setSttChain(chain)
+        if (chain.some(e => isWhisperEngine(e.engine))) {
+          const ok = await probeWhisper(WHISPER_DEFAULT_URL)
+          if (!cancelled) setWhisperReachable(ok)
+        }
+      } catch { /* backend down → engine falls back to web speech / typing */ }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, getToken])
+
+  // Which capture engine push-to-talk uses right now (typing is always available).
+  const sttEngine = resolveSttEngine({ sttChain, whisperReachable, webSpeechAvailable: supported && !sttUnavailable })
 
   // ── Send a turn to the conversational front door ─────────────────────────────
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
@@ -276,7 +312,52 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     return () => { try { r.__active = false; r.stop() } catch { /* noop */ }; recogRef.current = null }
   }, [send])
 
+  // ── Local Whisper capture (free, on-device; works in Brave) ──────────────────
+  // Push-to-talk records mic audio with MediaRecorder; on stop the blob is POSTed
+  // to the local whisper bridge and the transcript feeds the same converse flow.
+  const startWhisperCapture = useCallback(async () => {
+    setErr(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mime = pickRecorderMimeType(m => (window as any).MediaRecorder?.isTypeSupported?.(m) ?? false)
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      chunksRef.current = []
+      rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size) chunksRef.current.push(e.data) }
+      rec.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mime || 'audio/webm' })
+        chunksRef.current = []
+        setListening(false)
+        if (!blob.size) return
+        setTranscribing(true)
+        try {
+          const text = (await transcribeWithWhisper({ baseUrl: whisperUrlRef.current, blob, language: 'en' })).trim()
+          if (text) send(text, delegateRef.current)
+          else setNotice({ tone: 'info', text: 'Didn’t catch that — try again, or type your message below.' })
+        } catch {
+          // bridge went away → drop to typing and steer the operator to restart it.
+          setWhisperReachable(false)
+          setNotice({ tone: 'warn', text: 'Local Whisper couldn’t transcribe that — is the arturita-stt bridge running? Type below meanwhile.' })
+        } finally { setTranscribing(false) }
+      }
+      mediaRecRef.current = rec
+      rec.start()
+      setListening(true)
+    } catch {
+      setErr('Microphone access is blocked or no mic was found — allow mic access, or type your message below.')
+      setListening(false)
+    }
+  }, [send])
+
   const toggleListen = () => {
+    // Whisper path: MediaRecorder start/stop (transcription happens on stop).
+    if (sttEngine === 'whisper') {
+      if (transcribing) return
+      if (listening) { try { mediaRecRef.current?.stop() } catch { /* noop */ } }
+      else startWhisperCapture()
+      return
+    }
+    // Web Speech path (browsers where it works).
     const r = recogRef.current
     if (!r) return
     setErr(null)
@@ -302,12 +383,13 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
         <div style={{ display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap', justifyContent: 'center' }}>
           <Button
             variant={listening ? 'default' : 'primary'}
-            disabled={!supported}
+            disabled={sttEngine === 'none' || transcribing}
             aria-pressed={listening}
+            aria-busy={transcribing}
             onClick={toggleListen}
             style={listening ? { borderColor: 'var(--accent-line)', color: tk.accent } : undefined}
           >
-            {listening ? '■ Stop' : '🎙 Push to talk'}
+            {transcribing ? '◐ Transcribing…' : listening ? '■ Stop' : '🎙 Push to talk'}
           </Button>
           <label style={s.toggle}>
             <input type="checkbox" checked={wakeWord} onChange={e => setWakeWord(e.target.checked)} />
@@ -318,10 +400,10 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             <span>🔊 Spoken replies</span>
           </label>
         </div>
-        {!supported && <p style={sxHint}>Speech capture isn’t available in this browser — type below.</p>}
-        {supported && sttUnavailable && (
-          <p style={sxHint}>🎙 Built-in voice input is blocked in this browser{braveRef.current ? ' (Brave)' : ''} — type below, or enable free local Whisper in ⚙ Pipeline config.</p>
-        )}
+        {/* Active capture engine — colorblind-safe (icon+label). Typing always works. */}
+        {sttEngine === 'none'
+          ? <p style={sxHint}>🎙 Voice input isn’t available in this browser{braveRef.current ? ' (Brave blocks built-in speech recognition)' : ''} — type below, or start the free local Whisper bridge (see ⚙ Pipeline config → self-test).</p>
+          : <p style={sxHint}>{sttEngineLabel(sttEngine)}{sttEngine === 'web_speech' && braveRef.current ? ' — may be blocked in Brave; start local Whisper for reliable voice.' : ''}</p>}
         <p style={sxHint}>
           {localLlm
             ? <>🔒 Running on your local <b>{localLlm.model}</b> (Ollama) — free &amp; on-device.</>
