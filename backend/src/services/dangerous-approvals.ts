@@ -159,6 +159,51 @@ export function renderActionSummary(type: string, action: any): RenderResult {
   }
 }
 
+// ─── Approval-record preparation (shared by the human + agent routes) ─────────
+
+export interface PreparedApproval {
+  ok: boolean
+  error?: string
+  /** machine-rendered summary (dangerous) or the caller's summary (safe) */
+  summary?: string
+  /** the row's payload — { action, warnings, requiresStepUp } for dangerous types */
+  payload?: any
+  warnings?: string[]
+}
+
+/**
+ * Prepare an `approval_requests` row's summary + payload, enforcing the A2 rule
+ * that a DANGEROUS approval's summary is machine-rendered VERBATIM from the
+ * structured `action` (never client/model prose) and is fail-closed on a bad
+ * payload. For `machine_exec` this means the human always sees the exact `argv`,
+ * whether the approval was filed by a human route or by an external runtime
+ * (e.g. the Claude Code adapter proposing a command — CC2).
+ *
+ * Non-dangerous types keep the caller-supplied summary + payload unchanged.
+ * The dangerous payload always carries `requiresStepUp:true` so the decide route
+ * demands a fresh command session to approve.
+ */
+export function prepareApprovalRecord(input: {
+  type: string
+  summary?: string | null
+  action?: any
+  payload?: any
+}): PreparedApproval {
+  if (isDangerousType(input.type)) {
+    const action = input.action ?? (input.payload && input.payload.action)
+    const rendered = renderActionSummary(input.type, action)
+    if (!rendered.ok) return { ok: false, error: `dangerous approval: ${rendered.error}` }
+    return {
+      ok: true,
+      summary: rendered.summary,
+      warnings: rendered.warnings,
+      payload: { action, warnings: rendered.warnings ?? [], requiresStepUp: true },
+    }
+  }
+  if (!input.summary) return { ok: false, error: 'type and summary are required' }
+  return { ok: true, summary: input.summary, payload: input.payload ?? null }
+}
+
 // ─── Step-up gate ────────────────────────────────────────────────────────────
 
 export interface StepUpEvaluation {

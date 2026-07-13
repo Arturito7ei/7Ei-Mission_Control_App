@@ -35,10 +35,12 @@ Stdlib only (urllib, json, subprocess, threading) — no pip install.
   CC_AUTONOMOUS          "1" enables the operator autonomous-exec guard #1
   CC_AUTONOMOUS_CONFIRM  "1" enables guard #2 (both → CC_PERMISSION_MODE honored)
 """
-import json, os, subprocess, sys, threading, time, urllib.request, urllib.error
+import json, os, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cc_headless as cc
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
 
 BASE = os.environ.get("MC_BASE_URL", "http://localhost:3001").rstrip("/")
 TOKEN = os.environ.get("MC_AGENT_TOKEN", "")
@@ -52,6 +54,7 @@ TIMEOUT = int(os.environ.get("CC_TIMEOUT_SECONDS", "1800"))
 ATTACH_RESULT = os.environ.get("CC_ATTACH_RESULT", "") in ("1", "true", "yes")
 AUTONOMOUS = os.environ.get("CC_AUTONOMOUS", "") in ("1", "true", "yes")
 AUTONOMOUS_CONFIRM = os.environ.get("CC_AUTONOMOUS_CONFIRM", "") in ("1", "true", "yes")
+GUARD_FORCE = os.environ.get("CC_GUARD", "") in ("1", "true", "yes")
 
 
 def _split_tools(v):
@@ -130,9 +133,23 @@ def run_claude(prompt, cwd, resume=None):
     cc_headless so autonomous is impossible without both operator guards."""
     mode = cc.resolve_permission_mode(
         PERMISSION_MODE, autonomous_enabled=AUTONOMOUS, autonomous_confirmed=AUTONOMOUS_CONFIRM)
+    # CC2 — whenever Claude could attempt commands (any non-plan posture, or when
+    # forced with CC_GUARD=1), install the cc_guard.py PreToolUse hook so every
+    # Bash call is proposed to the office as a machine_exec approval and denied
+    # (propose-and-approve). In plan mode Claude never calls tools, so the guard
+    # is not needed. This keeps "nothing runs un-approved" true off plan mode too.
+    extra = None
+    settings_path = None
+    if mode != "plan" or GUARD_FORCE:
+        settings = cc.build_guard_settings(os.path.join(_HERE, "cc_guard.py"))
+        fd, settings_path = tempfile.mkstemp(prefix="cc-guard-", suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(settings, f)
+        extra = ["--settings", settings_path]
     argv = cc.build_claude_argv(
         prompt, claude_bin=CLAUDE_BIN, permission_mode=mode, model=MODEL,
-        resume=resume, allowed_tools=ALLOWED_TOOLS, disallowed_tools=DISALLOWED_TOOLS)
+        resume=resume, allowed_tools=ALLOWED_TOOLS, disallowed_tools=DISALLOWED_TOOLS,
+        extra_args=extra)
     os.makedirs(cwd, exist_ok=True)
     proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
@@ -157,6 +174,11 @@ def run_claude(prompt, cwd, resume=None):
         proc.wait()
     finally:
         timer.cancel()
+        if settings_path:
+            try:
+                os.remove(settings_path)
+            except Exception:
+                pass
     if killed["flag"]:
         events.append({"type": "result", "subtype": "timeout", "is_error": True,
                        "result": f"claude run exceeded CC_TIMEOUT_SECONDS ({TIMEOUT}s) and was killed."})

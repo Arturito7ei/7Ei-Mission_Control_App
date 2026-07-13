@@ -22,7 +22,7 @@ import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../serv
 import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
-import { isDangerousType, renderActionSummary } from '../services/dangerous-approvals'
+import { isDangerousType, prepareApprovalRecord } from '../services/dangerous-approvals'
 import { evaluateLowTrustAction, buildReviewCaseRow, REVIEW_CASE_TYPE } from '../services/review'
 import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
@@ -129,22 +129,13 @@ export async function taskRoutes(app: FastifyInstance) {
     // Arturita A2: a dangerous approval's summary is MACHINE-regenerated from the
     // structured `action` payload (verbatim, never model prose). The action is
     // persisted so the card + audit show exactly what will run; any client-
-    // supplied `summary` is ignored for these types.
-    let summary = b.summary
-    let payload = b.payload ?? null
-    let warnings: string[] | undefined
-    if (isDangerousType(b.type)) {
-      const rendered = renderActionSummary(b.type, b.action)
-      if (!rendered.ok) return reply.code(400).send({ error: `dangerous approval: ${rendered.error}` })
-      summary = rendered.summary
-      warnings = rendered.warnings
-      payload = { action: b.action, warnings: rendered.warnings ?? [], requiresStepUp: true }
-    } else if (!summary) {
-      return reply.code(400).send({ error: 'type and summary are required' })
-    }
-    const approval = { id: randomUUID(), orgId, type: b.type, summary, payload, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
+    // supplied `summary` is ignored for these types. Shared with the agent-facing
+    // route via `prepareApprovalRecord` (single source of truth — CC2).
+    const prepared = prepareApprovalRecord({ type: b.type, summary: b.summary, action: b.action, payload: b.payload })
+    if (!prepared.ok) return reply.code(400).send({ error: prepared.error })
+    const approval = { id: randomUUID(), orgId, type: b.type, summary: prepared.summary, payload: prepared.payload ?? null, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
     await db.insert(schema.approvalRequests).values(approval as any)
-    reply.code(201); return { approval, warnings }
+    reply.code(201); return { approval, warnings: prepared.warnings }
   })
 
   // ─── Epic P / P1 — low-trust review queue + evaluation chokepoint ─────────

@@ -243,6 +243,94 @@ def redact(text, secret_values):
 
 # ── Workdir / worktree planning ──────────────────────────────────────────────
 
+# ── PreToolUse guard hook (CC2 propose-and-approve bridge) ───────────────────
+#
+# When the adapter runs `claude` in a posture where it could attempt commands,
+# it installs `cc_guard.py` as a Claude Code PreToolUse hook. For every Bash
+# tool call the guard turns the intended command into a `machine_exec` approval
+# (verbatim argv → the office A2 gate) and, in propose-and-approve mode, DENIES
+# the tool call so nothing runs on the host. These are the pure pieces the hook
+# imports; cc_guard.py does the stdin/HTTP IO. CC5 adds the denylist and CC6 the
+# (guarded, off-by-default) allow path — this hook is that shared chokepoint.
+
+# Tools whose calls are host command execution → routed to the machine_exec gate.
+EXEC_TOOL_NAMES = ("Bash", "BashOutput", "KillShell", "KillBash")
+
+
+def parse_hook_input(raw):
+    """Parse the JSON a Claude Code hook receives on stdin. Returns a dict (or {})."""
+    try:
+        obj = json.loads(str(raw or "").strip() or "{}")
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def hook_action_from_tool(tool_name, tool_input, cwd=None):
+    """Map a Claude tool call to the structured `machine_exec` action the office
+    approval card renders, or None for a non-command tool. The shell command is
+    represented as argv `['sh', '-lc', <command>]` so the human sees exactly what
+    would run (shell operators and all); the raw command + cwd ride along for the
+    audit trail. `allowlisted=False` until CC5 computes it, so the card warns."""
+    name = str(tool_name or "")
+    if name not in EXEC_TOOL_NAMES:
+        return None
+    ti = tool_input if isinstance(tool_input, dict) else {}
+    command = str(ti.get("command") or "").strip()
+    if not command:
+        return None
+    return {
+        "type": "machine_exec",
+        "action": {
+            "argv": ["sh", "-lc", command],
+            "command": command,
+            "cwd": str(cwd) if cwd else None,
+            "allowlisted": False,
+        },
+    }
+
+
+def propose_only_decision(reason):
+    """The PreToolUse hook output that DENIES a tool call (nothing runs on the
+    host) — the propose-and-approve posture. Serialize to stdout in cc_guard.py."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": str(reason),
+        }
+    }
+
+
+def allow_decision(reason):
+    """The PreToolUse hook output that ALLOWS a tool call. Only reachable in the
+    CC6 autonomous posture, and only after the CC5 denylist has passed."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": str(reason),
+        }
+    }
+
+
+def build_guard_settings(guard_path, *, python_bin="python3", matcher="Bash", timeout=30):
+    """Build the `--settings` JSON that registers cc_guard.py as a PreToolUse
+    hook for command tools. Pure — cc_adapter.py writes it to a temp file."""
+    return {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": str(matcher),
+                    "hooks": [
+                        {"type": "command", "command": f"{python_bin} {guard_path}", "timeout": int(timeout)}
+                    ],
+                }
+            ]
+        }
+    }
+
+
 def resolve_workdir(task, base_workdir, *, manage_worktree=False):
     """Decide where the `claude` run executes.
 

@@ -180,5 +180,44 @@ class ResolveWorkdir(unittest.TestCase):
         self.assertIn("cc/x-1", r["gitPlan"][0])
 
 
+class GuardHook(unittest.TestCase):
+    def test_parse_hook_input(self):
+        self.assertEqual(cc.parse_hook_input('{"tool_name":"Bash"}'), {"tool_name": "Bash"})
+        self.assertEqual(cc.parse_hook_input(""), {})
+        self.assertEqual(cc.parse_hook_input("not json"), {})
+        self.assertEqual(cc.parse_hook_input("[1]"), {})
+
+    def test_hook_action_from_bash(self):
+        a = cc.hook_action_from_tool("Bash", {"command": "npm test && rm -rf build"}, cwd="/repo")
+        self.assertEqual(a["type"], "machine_exec")
+        # command represented verbatim after `sh -lc` so the human sees exactly what runs
+        self.assertEqual(a["action"]["argv"], ["sh", "-lc", "npm test && rm -rf build"])
+        self.assertEqual(a["action"]["command"], "npm test && rm -rf build")
+        self.assertEqual(a["action"]["cwd"], "/repo")
+        self.assertFalse(a["action"]["allowlisted"])
+
+    def test_hook_action_non_command_tool_is_none(self):
+        self.assertIsNone(cc.hook_action_from_tool("Read", {"file_path": "/x"}))
+        self.assertIsNone(cc.hook_action_from_tool("Edit", {"file_path": "/x"}))
+
+    def test_hook_action_empty_command_is_none(self):
+        self.assertIsNone(cc.hook_action_from_tool("Bash", {"command": "  "}))
+        self.assertIsNone(cc.hook_action_from_tool("Bash", {}))
+
+    def test_propose_only_decision_denies(self):
+        d = cc.propose_only_decision("proposed")
+        self.assertEqual(d["hookSpecificOutput"]["hookEventName"], "PreToolUse")
+        self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_allow_decision(self):
+        self.assertEqual(cc.allow_decision("ok")["hookSpecificOutput"]["permissionDecision"], "allow")
+
+    def test_build_guard_settings(self):
+        s = cc.build_guard_settings("/x/cc_guard.py")
+        hooks = s["hooks"]["PreToolUse"]
+        self.assertEqual(hooks[0]["matcher"], "Bash")
+        self.assertIn("cc_guard.py", hooks[0]["hooks"][0]["command"])
+
+
 if __name__ == "__main__":
     unittest.main()
