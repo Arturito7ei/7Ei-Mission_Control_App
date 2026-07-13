@@ -1,6 +1,8 @@
 # Mission Control — Session Handoff (for a fresh agent)
 
-_Last updated: 2026-07-08 — **all four Paperclip-gap-bridge v2 epics complete** (MCA-82 Theme, MCA-83 Work surface, MCA-84 Visibility, MCA-85 DX), plus unplanned security hardening. The app is at a clean checkpoint, prepped for a **major update** (plan placeholder at the foot of this doc). Paste the "Kickoff prompt" below into a new session; the rest is detail to verify._
+_Last updated: 2026-07-13 — **CURRENT FOCUS: Epic CC — Claude Code as an office engineering agent** (`docs/DESIGN-claude-code-agent.md`, PLAN §0 CC1–CC6). Making Claude Code a first-class external fleet executor, staged for quality: one PR per story, propose-and-approve first, autonomous host exec shipped OFF by default behind two guards + a command denylist. See the "Epic CC — current focus" block below. Earlier context (the four Paperclip-gap-bridge v2 epics + Arturita epics) is preserved further down._
+
+> **Epic CC — current focus (2026-07-13).** Claude Code joins the office as a `runtime:'claude_code'` external agent. **Stage order:** CC1 host adapter (poll loop, propose-and-approve) → CC2 machine_exec approval bridge → CC3 secure-by-default registration → CC4 UI/CLI wiring → CC5 command denylist → CC6 autonomous-exec mode (OFF by default, two-guard, behind the denylist) + go-live docs. **Hard rules:** never disturb the live OpenClaw adapter; the CC agent defaults to `low_trust_review` trust + an explicit capability list; every run traverses the existing 9-gate chain; autonomous host execution is never on by default. **CC1 shipped (#CC1):** `adapters/claude-code/` — pure `cc_headless.py` (25 unittest) + `cc_adapter.py` daemon; headless contract nailed (`claude -p --output-format stream-json --verbose --permission-mode plan`); `npm run smoke:claude-code`. Invariant green: 882 backend tests · 11/11 evals · web build. **Next: CC2/CC3.**
 
 ## Kickoff prompt
 

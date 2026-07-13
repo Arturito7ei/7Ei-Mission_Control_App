@@ -12,6 +12,7 @@
     "smoke:openclaw": "node --import=tsx scripts/smoke-openclaw.ts",
     "smoke:openclaw:llm": "node --import=tsx scripts/smoke-openclaw-llm.ts",
     "smoke:cursor": "node --import=tsx scripts/smoke-cursor.ts",
+    "smoke:claude-code": "node --import=tsx scripts/smoke-claude-code.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
