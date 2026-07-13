@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  pickSpeechVoice, classifyTtsError, describeTalkError, runSelfTest, overallSeverity,
+  pickSpeechVoice, classifyTtsError, classifySttError, describeTalkError, runSelfTest, overallSeverity,
   type VoiceLike,
 } from './talkDiagnostics.ts'
 
@@ -61,6 +61,56 @@ test('classifyTtsError maps an unknown code to a generic non-fatal failure', () 
   const s = classifyTtsError('weird-new-code')
   assert.equal(s.failed, true)
   assert.equal(s.kind, 'unknown')
+})
+
+// ─── classifySttError (mic capture / SpeechRecognition) ──────────────────────
+
+test('classifySttError treats a network error as unavailable + hinted (the Brave root cause), never a bare code', () => {
+  const s = classifySttError('network')
+  assert.equal(s.failed, true)
+  assert.equal(s.kind, 'network')
+  assert.equal(s.unavailable, true)               // stop steering to the mic
+  assert.doesNotMatch(String(s.message), /^Speech error/i) // no more bare "Speech error: network"
+  assert.match(String(s.hint), /Whisper|text box/i)
+})
+
+test('classifySttError names Brave specifically when told it is Brave', () => {
+  const brave = classifySttError('network', { brave: true })
+  assert.match(String(brave.message), /Brave/)
+  const other = classifySttError('network', { brave: false })
+  assert.doesNotMatch(String(other.message), /Brave/)
+  assert.equal(other.unavailable, true)           // still unavailable, just not named Brave
+})
+
+test('classifySttError maps not-allowed / service-not-allowed to a permission status (not unavailable)', () => {
+  for (const c of ['not-allowed', 'service-not-allowed']) {
+    const s = classifySttError(c)
+    assert.equal(s.kind, 'permission')
+    assert.equal(s.unavailable, false)
+    assert.match(String(s.message), /mic|microphone/i)
+  }
+})
+
+test('classifySttError maps audio-capture to a no-mic status', () => {
+  const s = classifySttError('audio-capture')
+  assert.equal(s.kind, 'no-mic')
+  assert.equal(s.failed, true)
+})
+
+test('classifySttError does NOT report benign no-speech / aborted / empty codes', () => {
+  for (const c of ['no-speech', 'aborted', '', null, undefined]) {
+    const s = classifySttError(c as any)
+    assert.equal(s.failed, false, `code ${c} should be benign`)
+    assert.equal(s.kind, null)
+    assert.equal(s.unavailable, false)
+  }
+})
+
+test('classifySttError maps an unknown code to a generic non-fatal, non-unavailable failure', () => {
+  const s = classifySttError('weird-stt-code')
+  assert.equal(s.failed, true)
+  assert.equal(s.kind, 'unknown')
+  assert.equal(s.unavailable, false)              // don't over-claim "unavailable" for unknowns
 })
 
 // ─── describeTalkError ───────────────────────────────────────────────────────

@@ -25,7 +25,8 @@ import {
 } from './assistant.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
-import { pickSpeechVoice, classifyTtsError, describeTalkError, NO_LLM_FIX_HINT } from '@/lib/talkDiagnostics'
+import { pickSpeechVoice, classifyTtsError, classifySttError, describeTalkError, NO_LLM_FIX_HINT } from '@/lib/talkDiagnostics'
+import { detectBrave } from '@/lib/browserEnv'
 
 type Getter = () => Promise<string | null>
 
@@ -43,6 +44,11 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [typed, setTyped] = useState('')
   const [interim, setInterim] = useState('')
   const [supported, setSupported] = useState(false)
+  // Built-in Web Speech STT feature-detects as present but can't actually work
+  // here (Brave disables its Google STT backend → a persistent `network` error).
+  // When that happens we stop steering the operator at the mic and point them at
+  // the typed box / local Whisper instead.
+  const [sttUnavailable, setSttUnavailable] = useState(false)
   const [listening, setListening] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
@@ -59,6 +65,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [localLlm, setLocalLlm] = useState<{ model: string; baseUrl: string } | null>(null)
 
   const recogRef = useRef<any>(null)
+  const braveRef = useRef(false)
   const voicesRef = useRef<SpeechSynthesisVoice[]>([])
   const threadRef = useRef<string | null>(null)
   const wakeRef = useRef(wakeWord)
@@ -70,6 +77,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   useEffect(() => { voiceRef.current = voiceReplies }, [voiceReplies])
 
   const voiceState = resolveVoiceState({ speaking, thinking, listening })
+
+  // Detect Brave once (async) so a built-in-STT failure can name it specifically.
+  useEffect(() => { let ok = true; detectBrave().then(b => { if (ok) braveRef.current = b }); return () => { ok = false } }, [])
 
   // Browser voices populate asynchronously (Chrome fires `voiceschanged` after
   // the list is ready). Cache them so `speak` can pick an on-device voice.
@@ -245,8 +255,21 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       setInterim(live)
     }
     r.onerror = (ev: any) => {
-      if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') setErr('Microphone permission denied — allow mic access or type below.')
-      else if (ev?.error && ev.error !== 'no-speech' && ev.error !== 'aborted') setErr(`Speech error: ${ev.error}`)
+      const st = classifySttError(ev?.error, { brave: braveRef.current })
+      if (!st.failed) return
+      // `network` = built-in STT can't reach its backend (Brave disables it).
+      // Non-fatal: stop listening, mark it unavailable, and steer to typing /
+      // Whisper via the colorblind-safe notice (icon+label) — never a bare error.
+      if (st.unavailable) {
+        setSttUnavailable(true)
+        recogRef.current && (recogRef.current.__active = false)
+        try { r.stop() } catch { /* noop */ }
+        setListening(false); setInterim('')
+        setNotice({ tone: 'warn', text: st.hint ? `${st.message} ${st.hint}` : st.message! })
+      } else {
+        // permission / no-mic / unknown — actionable, typed input still works.
+        setErr(st.hint ? `${st.message} ${st.hint}` : st.message)
+      }
     }
     r.onend = () => { if (recogRef.current?.__active) { try { r.start() } catch { /* restarting */ } } else setListening(false) }
     recogRef.current = r
@@ -296,6 +319,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
           </label>
         </div>
         {!supported && <p style={sxHint}>Speech capture isn’t available in this browser — type below.</p>}
+        {supported && sttUnavailable && (
+          <p style={sxHint}>🎙 Built-in voice input is blocked in this browser{braveRef.current ? ' (Brave)' : ''} — type below, or enable free local Whisper in ⚙ Pipeline config.</p>
+        )}
         <p style={sxHint}>
           {localLlm
             ? <>🔒 Running on your local <b>{localLlm.model}</b> (Ollama) — free &amp; on-device.</>
