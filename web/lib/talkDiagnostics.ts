@@ -258,7 +258,16 @@ export interface SelfTestInput {
   ttsLocalVoice: boolean
   /** SpeechRecognition (mic capture) present. */
   sttSupported: boolean
+  /** built-in Web Speech STT is known-blocked here (e.g. Brave). Optional. */
+  sttBlocked?: boolean
+  /** local Whisper bridge reachable (free voice input). Optional. */
+  whisperReachable?: boolean | null
 }
+
+/** How the operator starts the free local Whisper STT bridge — the ONE command,
+ *  shared by the self-test + docs. Mirrors the OLLAMA_ORIGINS trust model. */
+export const WHISPER_START_HINT =
+  'Start it with `npm run stt` in adapters/arturita-stt (set ARTURITA_STT_ORIGINS=https://app.7ei.ai to lock down CORS), then re-run the self-test.'
 
 /** The single actionable fix when NO language model can answer — names both
  *  operator options. Shared so the self-test + panel notice say the same thing. */
@@ -332,10 +341,20 @@ export function runSelfTest(input: SelfTestInput): LegResult[] {
     out.push(leg('tts', 'ok', 'Spoken replies ready', 'An on-device voice is available.'))
   }
 
-  // 4. Mic capture (browser STT) — optional; typing always works.
-  out.push(input.sttSupported
-    ? leg('stt', 'ok', 'Voice capture ready', 'Push-to-talk is available.')
-    : leg('stt', 'warn', 'Voice capture unavailable', 'This browser has no SpeechRecognition.', 'Type your message instead, or use Chrome/Edge.'))
+  // 4. Voice input (STT) — local Whisper preferred (free, works in Brave), else
+  // browser Web Speech, else typing. Optional; typing always works.
+  if (input.whisperReachable) {
+    out.push(leg('stt', 'ok', 'Local Whisper ready', 'Free, on-device voice input via the arturita-stt bridge — works in Brave.'))
+  } else if (input.sttSupported && !input.sttBlocked) {
+    out.push(leg('stt', 'ok', 'Browser voice input ready', 'Push-to-talk via Web Speech is available.'))
+  } else if (input.sttSupported && input.sttBlocked) {
+    // constructor present but its backend is blocked (Brave disables Google STT).
+    out.push(leg('stt', 'warn', 'Browser voice input blocked', 'This browser (e.g. Brave) disables built-in speech recognition — it fails with a network error.',
+      'Type your message, or start free local Whisper. ' + WHISPER_START_HINT))
+  } else {
+    out.push(leg('stt', 'warn', 'Voice input unavailable', 'No local Whisper bridge and no browser SpeechRecognition here.',
+      'Type your message, or start free local Whisper. ' + WHISPER_START_HINT))
+  }
 
   return out
 }
