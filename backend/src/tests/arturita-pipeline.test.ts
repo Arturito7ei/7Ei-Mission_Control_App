@@ -17,6 +17,41 @@ test('[J2] unconfigured org gets the free-first defaults (local Ollama/whisper/P
   assert.equal(DEFAULT_TTS_CHAIN[0].engine, 'piper')
 })
 
+// Lock the LLM default as strictly LOCAL-FIRST: the two Ollama models lead (fast
+// primary, then heavier), and NO cloud/provider entry ever precedes a local one.
+// This is the shipped guarantee that the invalid cloud key is only a fallback.
+test('[J2] LLM default is strictly local-first: Ollama primary + no cloud before local', () => {
+  assert.equal(DEFAULT_LLM_CHAIN[0].provider, 'ollama')
+  assert.equal(DEFAULT_LLM_CHAIN[0].model, 'llama3.2:3b')   // fast primary
+  assert.equal(DEFAULT_LLM_CHAIN[0].mode, 'local')
+  assert.equal(DEFAULT_LLM_CHAIN[1].provider, 'ollama')
+  assert.equal(DEFAULT_LLM_CHAIN[1].model, 'qwen3:8b')      // heavier local next
+  assert.equal(DEFAULT_LLM_CHAIN[1].mode, 'local')
+  // Every local entry precedes every provider entry (no cloud jumps the queue).
+  const firstProvider = DEFAULT_LLM_CHAIN.findIndex(e => e.mode === 'provider')
+  const lastLocal = DEFAULT_LLM_CHAIN.map(e => e.mode).lastIndexOf('local')
+  assert.ok(firstProvider === -1 || firstProvider > lastLocal, 'a provider entry precedes a local one')
+  // No cloud provider is anthropic (the bad-key provider) — it only ever enters
+  // at runtime as the appended `guaranteed` last-resort hop, never in the default.
+  assert.ok(!DEFAULT_LLM_CHAIN.some(e => e.provider === 'anthropic'))
+})
+
+// With the default chain and no cloud keys, the usable chain keeps both local
+// Ollama hops FIRST and puts the guaranteed cloud hop (bad key) strictly LAST.
+test('[J2] usable default chain: local Ollama hops first, cloud guarantee strictly last', () => {
+  const chain = usableLlmChain({
+    entries: DEFAULT_LLM_CHAIN,
+    keyAvailable: () => false,                                   // off-Mac, no free-tier keys
+    guaranteed: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
+  })
+  assert.equal(chain[0].provider, 'ollama')
+  assert.equal(chain[1].provider, 'ollama')
+  assert.equal(chain[chain.length - 1].provider, 'anthropic')   // last resort only
+  const firstCloud = chain.findIndex(c => c.provider !== 'ollama')
+  const lastLocal = chain.map(c => c.provider === 'ollama').lastIndexOf(true)
+  assert.ok(firstCloud > lastLocal, 'a cloud hop precedes a local one')
+})
+
 // ─── Parsing configured chains (array or JSON string) ────────────────────────
 
 test('[J2] parses a configured LLM chain and infers mode from provider', () => {

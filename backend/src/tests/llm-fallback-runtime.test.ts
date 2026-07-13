@@ -35,6 +35,29 @@ test('[F1] single-hop chain: one call, returns the result (identical to bare str
   assert.equal(r.attempts[0].ok, true)
 })
 
+test('[J2] local primary success short-circuits — a later cloud hop (bad key) is never called', async () => {
+  // The Arturita default chain shape: local Ollama first, cloud last-resort.
+  const LOCAL_FIRST = [
+    { provider: 'ollama', model: 'llama3.2:3b' },
+    { provider: 'anthropic', model: 'claude-sonnet-4-20250514' }, // invalid/expired key IRL
+  ]
+  const breakers = new Map<string, BreakerState>()
+  const called: string[] = []
+  const streamFn: (o: LLMStreamOpts) => Promise<LLMResult> = async (o) => {
+    called.push(o.provider)
+    if (o.provider === 'ollama') return { output: 'ok:local', model: o.model, provider: o.provider, usage: { inputTokens: 10, outputTokens: 5 } }
+    throw new Error('anthropic error 401 invalid api key') // must never be reached
+  }
+  const r = await streamLLMWithFallback({
+    base, chain: LOCAL_FIRST, resolveCreds: creds, inputTokens: 100, capUsd: null,
+    now: 1000, breakers, streamFn,
+  })
+  assert.equal(r.used.provider, 'ollama')
+  assert.equal(r.result.output, 'ok:local')
+  assert.equal(r.attempts.length, 1)            // stopped at the first success
+  assert.deepEqual(called, ['ollama'])          // anthropic (bad key) never invoked
+})
+
 test('[P2] reasoningEffort in base opts flows through to the LLM call', async () => {
   const breakers = new Map<string, BreakerState>()
   let seenEffort: string | undefined
