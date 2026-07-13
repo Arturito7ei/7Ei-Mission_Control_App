@@ -52,6 +52,25 @@ test('[J2] usable default chain: local Ollama hops first, cloud guarantee strict
   assert.ok(firstCloud > lastLocal, 'a cloud hop precedes a local one')
 })
 
+// Lock the STT default as strictly WHISPER-FIRST: a local whisper engine leads,
+// browser Web Speech is only a fallback, and no provider entry ever precedes the
+// local one. This is the shipped guarantee that the operator's reachable local
+// whisper bridge is used automatically without flipping a switch (typed input is
+// always available as the UI's final fallback, not modelled in the chain).
+test('[J2] STT default is strictly whisper-first: local whisper primary + no provider before local', () => {
+  const LOCAL_STT = new Set(['whisper_cpp', 'faster_whisper', 'whisper'])
+  assert.ok(LOCAL_STT.has(DEFAULT_STT_CHAIN[0].engine), 'primary STT engine must be a local whisper engine')
+  assert.equal(DEFAULT_STT_CHAIN[0].mode, 'local')
+  assert.equal(DEFAULT_STT_CHAIN[DEFAULT_STT_CHAIN.length - 1].engine, 'web_speech') // browser fallback last
+  // Every local entry precedes every provider entry (no cloud/provider jumps the queue).
+  const firstProvider = DEFAULT_STT_CHAIN.findIndex(e => e.mode === 'provider')
+  const lastLocal = DEFAULT_STT_CHAIN.map(e => e.mode).lastIndexOf('local')
+  assert.ok(firstProvider === -1 || firstProvider > lastLocal, 'a provider STT entry precedes a local one')
+  // An unconfigured org (no stored arturita_stt_chain override) gets this default.
+  assert.deepEqual(parseSttChain(null), DEFAULT_STT_CHAIN)
+  assert.deepEqual(parseSttChain({}), DEFAULT_STT_CHAIN)
+})
+
 // ─── Parsing configured chains (array or JSON string) ────────────────────────
 
 test('[J2] parses a configured LLM chain and infers mode from provider', () => {
