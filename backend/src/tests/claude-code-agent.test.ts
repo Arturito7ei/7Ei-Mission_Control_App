@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { prepareApprovalRecord, renderActionSummary } from '../services/dangerous-approvals.ts'
+import { secureRegistration, isCodeExecutorRuntime, CODE_EXECUTOR_DEFAULT_PERMISSIONS, MACHINE_EXEC_CAPABILITY } from '../services/code-executor.ts'
 
 // Epic CC / CC2 — the propose-and-approve machine_exec bridge. When the Claude
 // Code adapter proposes a command it files `{type:'machine_exec', action:{argv}}`
@@ -74,5 +75,59 @@ describe('[CC2] prepareApprovalRecord — other dangerous + safe types', () => {
   it('matches renderActionSummary for the dangerous summary (single source of truth)', () => {
     const action = { argv: ['ls', '-la'] }
     assert.equal(prepareApprovalRecord({ type: 'machine_exec', action }).summary, renderActionSummary('machine_exec', action).summary)
+  })
+})
+
+describe('[CC3] secureRegistration — code executors land contained', () => {
+  it('claude_code with no options → low_trust_review + explicit caps + explicit boundary', () => {
+    const r = secureRegistration({ runtime: 'claude_code' })
+    assert.equal(r.trustMode, 'low_trust_review')
+    // NOT allow-all: an explicit, non-empty capability list
+    const caps = JSON.parse(r.permissions!)
+    assert.ok(Array.isArray(caps) && caps.length > 0)
+    assert.deepEqual(caps, CODE_EXECUTOR_DEFAULT_PERMISSIONS)
+    assert.ok(caps.includes(MACHINE_EXEC_CAPABILITY))
+    // an explicit (empty = most restrictive) boundary is always persisted
+    assert.deepEqual(JSON.parse(r.trustBoundary!), { projects: [], tasks: [], agents: [] })
+  })
+
+  it('claude_code seeds the boundary from the target project', () => {
+    const r = secureRegistration({ runtime: 'claude_code', projectId: 'proj-1' })
+    assert.deepEqual(JSON.parse(r.trustBoundary!).projects, ['proj-1'])
+  })
+
+  it('explicit caller values always win', () => {
+    const r = secureRegistration({
+      runtime: 'claude_code', permissions: ['memory:write'], trustMode: 'standard',
+      trustBoundary: { projects: ['p'], tasks: ['t'], agents: [] },
+    })
+    assert.deepEqual(JSON.parse(r.permissions!), ['memory:write'])
+    assert.equal(r.trustMode, 'standard')
+    assert.deepEqual(JSON.parse(r.trustBoundary!), { projects: ['p'], tasks: ['t'], agents: [] })
+  })
+
+  it('non-code runtimes keep legacy allow-all/standard (no regression)', () => {
+    for (const runtime of ['openclaw', 'cursor', 'custom']) {
+      const r = secureRegistration({ runtime })
+      assert.equal(r.permissions, null, `${runtime} should stay allow-all`)
+      assert.equal(r.trustMode, 'standard')
+      assert.equal(r.trustBoundary, null)
+    }
+  })
+
+  it('a non-code runtime with an explicit boundary still persists it', () => {
+    const r = secureRegistration({ runtime: 'custom', projectId: 'p9' })
+    assert.deepEqual(JSON.parse(r.trustBoundary!).projects, ['p9'])
+  })
+
+  it('isCodeExecutorRuntime only claude_code (today)', () => {
+    assert.equal(isCodeExecutorRuntime('claude_code'), true)
+    assert.equal(isCodeExecutorRuntime('openclaw'), false)
+    assert.equal(isCodeExecutorRuntime(null), false)
+  })
+
+  it('empty explicit permissions falls back to the secure default (not allow-all)', () => {
+    const r = secureRegistration({ runtime: 'claude_code', permissions: [] })
+    assert.deepEqual(JSON.parse(r.permissions!), CODE_EXECUTOR_DEFAULT_PERMISSIONS)
   })
 })

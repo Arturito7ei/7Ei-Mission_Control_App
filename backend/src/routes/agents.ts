@@ -14,6 +14,7 @@ import { mergeActivity, buildHeartbeatTimeline, TIMELINE_WINDOW_MS } from '../se
 import { unreadTaskIds } from '../services/receipts'
 import { validateRoster, parseCapUsd, CHEAP_OUTPUT_RATE } from '../services/preflight'
 import { parseTrustMode, parseBoundary, serializeBoundary, TRUST_MODES } from '../services/review'
+import { secureRegistration } from '../services/code-executor'
 import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parseReasoningEffort } from '../services/model-profile'
 import { parseLlmChain } from '../services/arturita-pipeline'
 import { requireOrgRole } from '../middleware/rbac'
@@ -352,6 +353,13 @@ export async function agentRoutes(app: FastifyInstance) {
     avatarEmoji: z.string().default('🤖'),
     externalEndpoint: z.string().url().optional(),
     contactChannel: z.string().optional(),  // telegram chat id / email for pings
+    // CC3 — secure-by-default overrides (a code executor lands contained even
+    // when these are omitted; explicit values always win).
+    permissions: z.array(z.string()).optional(),
+    trustMode: z.string().optional(),
+    trustBoundary: z.object({ projects: z.array(z.string()).optional(), tasks: z.array(z.string()).optional(), agents: z.array(z.string()).optional() }).optional(),
+    workspaceId: z.string().optional(),
+    projectId: z.string().optional(),
   })
 
   // Onboard an external agent. Returns the agent token ONCE — only its hash is stored.
@@ -359,6 +367,14 @@ export async function agentRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const body = ExternalAgentSchema.parse(req.body)
     const { token, hash } = generateAgentToken()
+    // CC3 — a code-executor runtime (claude_code) is registered CONTAINED:
+    // low_trust_review + an explicit non-empty capability list + a boundary
+    // seeded from the target workspace/project. Non-code runtimes keep legacy
+    // allow-all/standard unless explicit values are supplied.
+    const sec = secureRegistration({
+      runtime: body.runtime, permissions: body.permissions, trustMode: body.trustMode,
+      trustBoundary: body.trustBoundary as any, workspaceId: body.workspaceId, projectId: body.projectId,
+    })
     const agent = {
       id: randomUUID(), orgId, departmentId: null, name: body.name, role: body.role,
       personality: null, cv: null, termsOfReference: body.termsOfReference ?? null,
@@ -367,9 +383,10 @@ export async function agentRoutes(app: FastifyInstance) {
       advisorPersona: null, memoryLongTerm: null, runtime: body.runtime,
       externalEndpoint: body.externalEndpoint ?? null, apiTokenHash: hash,
       heartbeatStatus: 'unknown', contactChannel: body.contactChannel ?? null,
+      permissions: sec.permissions, trustMode: sec.trustMode, trustBoundary: sec.trustBoundary,
       createdAt: new Date(),
     }
-    await db.insert(schema.agents).values(agent)
+    await db.insert(schema.agents).values(agent as any)
     reply.code(201)
     // Never echo the hash; the raw token is shown exactly once here.
     return { agent: { ...agent, apiTokenHash: undefined }, agentToken: token }
@@ -403,6 +420,8 @@ export async function agentRoutes(app: FastifyInstance) {
       }
       const external = isExternalRuntime(p.runtime)
       const tok = external ? generateAgentToken() : null
+      // CC3 — a hired code executor (claude_code) is contained by default too.
+      const sec = secureRegistration({ runtime: p.runtime, projectId: body.projectId })
       const agent = {
         id: randomUUID(), orgId, departmentId: null, name: p.name, role: p.role,
         personality: null, cv: null, termsOfReference: p.termsOfReference || null,
@@ -411,6 +430,7 @@ export async function agentRoutes(app: FastifyInstance) {
         advisorPersona: null, memoryLongTerm: null, runtime: p.runtime,
         externalEndpoint: null, apiTokenHash: tok ? tok.hash : null,
         heartbeatStatus: external ? 'unknown' : null, contactChannel: null,
+        permissions: sec.permissions, trustMode: sec.trustMode, trustBoundary: sec.trustBoundary,
         reportsTo, title: p.title, jobDescription: p.jobDescription, createdAt: new Date(),
       }
       await db.insert(schema.agents).values(agent as any)
