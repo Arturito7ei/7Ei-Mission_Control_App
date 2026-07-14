@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { AGENT_TABS, AGENT_TAB_LABEL, type AgentTab } from '@/lib/agentRoute'
-import { Button, Card, Skeleton, TextInput } from '../ui'
+import { Button, Skeleton, TextInput } from '../ui'
 import { Modal, ModalTitle, FormLabel } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { AgentAvatar, StatusPill, ax, type DAgent, type Getter } from './shared'
@@ -13,6 +13,8 @@ import DashboardTab from './DashboardTab'
 import InstructionsTab from './InstructionsTab'
 import SkillsTab from './SkillsTab'
 import ConfigurationTab from './ConfigurationTab'
+import RunsTab from './RunsTab'
+import BudgetTab from './BudgetTab'
 
 export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask, onOpenLibrary }: {
   orgId: string
@@ -137,7 +139,8 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
         {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'skills' && <SkillsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenLibrary={onOpenLibrary} />}
         {tab === 'configuration' && <ConfigurationTab orgId={orgId} agentId={agentId} getToken={getToken} onSaved={load} />}
-        {(tab === 'runs' || tab === 'budget') && <TabPanel tab={tab} />}
+        {tab === 'runs' && <RunsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenTask={onOpenTask} />}
+        {tab === 'budget' && <BudgetTab orgId={orgId} agentId={agentId} agentName={agent.name} getToken={getToken} />}
       </div>
 
       {assignOpen && (
@@ -158,21 +161,3 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
   )
 }
 
-// Each tab's real panel lands in its own story (AG3–AG6); Dashboard shipped in AG2.
-const PENDING: Record<AgentTab, string> = {
-  dashboard: '',
-  instructions: '',
-  skills: '',
-  configuration: '',
-  runs: 'Run history with per-run logs.',
-  budget: 'This agent’s budget and spend.',
-}
-
-function TabPanel({ tab }: { tab: AgentTab }) {
-  return (
-    <Card style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>
-      <h2 style={ax.sectionTitle}>{AGENT_TAB_LABEL[tab]}</h2>
-      <p style={{ ...ax.empty, fontSize: text.sm.fontSize }}>Coming in this wave — {PENDING[tab]}</p>
-    </Card>
-  )
-}
