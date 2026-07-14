@@ -17,6 +17,8 @@ import {
 import { resolveSelection, splitSkills } from '../services/agent-skills'
 import { validateConfigPatch } from '../services/agent-config'
 import { buildAvatarDataUri } from '../services/agent-avatar'
+import { summariseAgentBudget } from '../services/agent-budget'
+import { spendForScope } from '../services/budget'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
 export async function agentInOrg(orgId: string, agentId: string) {
@@ -260,5 +262,65 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     await db.update(schema.agents).set({ avatarUrl: null }).where(eq(schema.agents.id, agentId))
     await snapshot(orgId, agentId, { avatarUrl: agent.avatarUrl }, { avatarUrl: null }, req)
     return reply.code(204).send()
+  })
+
+  // ─── AG6 — Budget: this agent's cap + spend ───────────────────────────────
+  // A per-agent cap is just a scoped budget policy (scope:'agent'), which the
+  // existing `enforceAgentBudget` hard-stop already honours — no parallel store.
+
+  const agentBudget = async (orgId: string, agentId: string) => {
+    const [policies, tasks] = await Promise.all([
+      db.select().from(schema.budgetPolicies).where(eq(schema.budgetPolicies.orgId, orgId)),
+      db.select({ costUsd: schema.tasks.costUsd, agentId: schema.tasks.agentId })
+        .from(schema.tasks).where(eq(schema.tasks.orgId, orgId)),
+    ])
+    const policy = policies.find(p => p.scope === 'agent' && p.scopeId === agentId) ?? null
+    const spend = spendForScope(tasks as any, 'agent', agentId)
+    return summariseAgentBudget(policy as any, spend)
+  }
+
+  app.get('/api/orgs/:orgId/agents/:agentId/budget', async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    return { agentId, agentName: agent.name, budget: await agentBudget(orgId, agentId) }
+  })
+
+  // Set (or clear) the cap. `limitUsd: null | 0` removes the policy → unlimited.
+  app.put('/api/orgs/:orgId/agents/:agentId/budget', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const body = (req.body ?? {}) as { limitUsd?: unknown; hardStop?: unknown; warnPct?: unknown }
+    const raw = body.limitUsd
+    if (raw !== null && raw !== undefined && typeof raw !== 'number') return reply.code(400).send({ error: 'limitUsd must be a number or null' })
+    const limitUsd = typeof raw === 'number' ? raw : null
+    if (limitUsd != null && (!Number.isFinite(limitUsd) || limitUsd < 0)) return reply.code(400).send({ error: 'limitUsd must be zero or more' })
+
+    const existing = (await db.select().from(schema.budgetPolicies).where(eq(schema.budgetPolicies.orgId, orgId)))
+      .find(p => p.scope === 'agent' && p.scopeId === agentId)
+
+    if (limitUsd == null || limitUsd === 0) {
+      // No cap: drop the policy rather than storing a 0 that would read as
+      // "budget exhausted" to every consumer of the scoped-budget machinery.
+      if (existing) await db.delete(schema.budgetPolicies).where(eq(schema.budgetPolicies.id, existing.id))
+    } else if (existing) {
+      await db.update(schema.budgetPolicies).set({
+        limitUsd,
+        ...(typeof body.hardStop === 'boolean' ? { hardStop: body.hardStop } : {}),
+        ...(typeof body.warnPct === 'number' ? { warnPct: body.warnPct } : {}),
+      }).where(eq(schema.budgetPolicies.id, existing.id))
+    } else {
+      await db.insert(schema.budgetPolicies).values({
+        id: randomUUID(), orgId, scope: 'agent', scopeId: agentId, limitUsd,
+        warnPct: typeof body.warnPct === 'number' ? body.warnPct : 0.8,
+        hardStop: typeof body.hardStop === 'boolean' ? body.hardStop : true,
+        createdAt: new Date(),
+      } as any)
+    }
+
+    await snapshot(orgId, agentId, { budgetLimitUsd: existing?.limitUsd ?? null }, { budgetLimitUsd: limitUsd }, req)
+    return { agentId, agentName: agent.name, budget: await agentBudget(orgId, agentId) }
   })
 }
