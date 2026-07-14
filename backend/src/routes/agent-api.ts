@@ -4,7 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, and, inArray, desc, isNull } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { agentAuth } from '../middleware/agent-token'
-import { decrypt, resolveSecretsForAgent } from '../services/secrets'
+import { decrypt, resolveSecretsForAgent, AGENT_RESOLVABLE_SCOPES } from '../services/secrets'
 import { workspaceRuntime } from '../services/workspaces'
 import { parseVaultConfig, isSafeVaultPath, isMarkdownPath, vaultList, vaultRead, vaultWrite } from '../services/vault-connector'
 import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../services/runs'
@@ -99,9 +99,18 @@ export async function agentApiRoutes(app: FastifyInstance) {
 
   // Scoped secrets for this runtime (MCA-PC D4) — decrypted, company+agent scope.
   // Lets a BYO runtime inject secrets as env without ever putting them in a prompt.
+  //
+  // AUDIT-ONB3 M-3: the scope filter is in the WHERE clause, not only in the resolver.
+  // ONB3 parks a PENDING joining agent's declared secrets in a `join_request` scope
+  // whose inertness depends on `resolveSecretsForAgent` ignoring it — so this query
+  // used to fetch and DECRYPT those rows on every agent poll before throwing them
+  // away. Filter first: an unapprovable secret is never read out of the DB at all.
   app.get('/api/agent/secrets', async (req) => {
     const agent = (req as any).agent
-    const rows = await db.select().from(schema.secrets).where(eq(schema.secrets.orgId, agent.orgId))
+    const rows = await db.select().from(schema.secrets).where(and(
+      eq(schema.secrets.orgId, agent.orgId),
+      inArray(schema.secrets.scope, [...AGENT_RESOLVABLE_SCOPES]),
+    ))
     const decrypted = rows.map(s => { try { return { scope: s.scope, scopeId: s.scopeId, key: s.key, value: decrypt(s.valueEncrypted) } } catch { return null } }).filter(Boolean) as any[]
     return { secrets: resolveSecretsForAgent(decrypted, agent.id) }
   })

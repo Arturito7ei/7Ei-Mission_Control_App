@@ -28,8 +28,22 @@ export function maskValue(v: string): string {
 
 export interface ScopedSecret { scope: string; scopeId?: string | null; key: string; value: string }
 
+/**
+ * The ONLY scopes an agent's secret bag may ever be resolved from. AUDIT-ONB3, M-3.
+ *
+ * ONB3 parks a not-yet-approved joining agent's declared secrets in a `join_request`
+ * scope, and its inertness rests entirely on the fact that this resolver ignores
+ * every scope but these two. That was true by convention — the loop below said
+ * `'company'` and `'agent'` in two `if`s, and nothing named the rule. Export the
+ * allow-list so the DB query can filter on it too (`GET /api/agent/secrets` used to
+ * SELECT every scope in the org and decrypt them all before discarding the parked
+ * ones), and so a future scope is opt-IN rather than opt-out.
+ */
+export const AGENT_RESOLVABLE_SCOPES = ['company', 'agent'] as const
+
 /** Resolve the effective secrets for an agent: company scope first, then agent
- *  scope overrides. Pure (takes already-decrypted values). */
+ *  scope overrides. Pure (takes already-decrypted values). Every other scope —
+ *  `join_request` above all — resolves to nothing. */
 export function resolveSecretsForAgent(secrets: ScopedSecret[], agentId: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const s of secrets) if (s.scope === 'company') out[s.key] = s.value
