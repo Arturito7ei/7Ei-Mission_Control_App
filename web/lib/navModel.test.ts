@@ -37,6 +37,20 @@ test('[AGFIX4] the assistant nav item reads "Command Center", keeping its id', (
   assert.equal(allNavItems().filter(i => i.label === 'Arturita').length, 0, 'no nav item is labelled with the persona')
 })
 
+// Command Center is the operator's primary way in, so it sits directly under
+// Dashboard in Overview and wears the microphone (it is voice-first).
+test('[AGFIX5] Command Center is second in Overview, right after Dashboard', () => {
+  const overview = NAV_GROUPS.find(g => g.id === 'overview')
+  assert.deepEqual(
+    overview?.items.slice(0, 2).map(i => i.id),
+    ['overview', 'assistant'],
+  )
+})
+
+test('[AGFIX5] Command Center carries the microphone icon', () => {
+  assert.equal(findNavItem('assistant')?.icon, '🎙️')
+})
+
 test('[P0-web] nav item ids are globally unique', () => {
   const ids = allNavItems().map(i => i.id)
   assert.equal(new Set(ids).size, ids.length)
