@@ -50,12 +50,21 @@ function baseUrl(): string {
  * `MC_BASE_URL_CANDIDATES` (comma-separated) lets a self-hosted operator add
  * addresses without a code change. Never a candidate we invent: an unreachable URL
  * in this list costs the agent a timeout and teaches it nothing.
+ *
+ * The server never fetches these — they are PRINTED into the document, and the
+ * joining agent is the one told to probe them. So there is no SSRF here. But the
+ * document instructs an agent to make a request to each, so we only ever print
+ * `http://`/`https://` origins: a `file:`/`javascript:`-shaped entry (a typo, or a
+ * bad value in an operator's env) must not become an instruction to a runtime that
+ * might honour it. Audit ONB2, LOW-2.
  */
-function baseUrlCandidates(): string[] {
+const HTTP_URL = /^https?:\/\/[^\s/$.?#].[^\s]*$/i
+
+export function baseUrlCandidates(): string[] {
   const extra = String(process.env.MC_BASE_URL_CANDIDATES ?? '')
     .split(',')
     .map((s) => s.trim().replace(/\/+$/, ''))
-    .filter((s) => s.length > 0)
+    .filter((s) => HTTP_URL.test(s))
   return Array.from(new Set([baseUrl(), ...extra]))
 }
 

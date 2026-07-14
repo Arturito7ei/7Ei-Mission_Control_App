@@ -24,7 +24,11 @@ export function sanitizeBody(body: unknown): Record<string, unknown> | null {
 
 function classifyAction(method: string, path: string): string {
   const m = method.toUpperCase()
-  if (path.includes('/api/orgs') && m === 'POST' && !path.includes('/')) return 'org.create'
+  // `/api/orgs` collection POST = org.create. The old guard was
+  // `path.includes('/api/orgs') && !path.includes('/')` — unsatisfiable (a path
+  // holding `/api/orgs` always holds `/`), so org.create was never classified and
+  // a create fell through to the generic `post.orgs`. Match the collection path.
+  if (m === 'POST' && (path === '/api/orgs' || path === '/api/orgs/')) return 'org.create'
   if (path.includes('/api/orgs') && m === 'DELETE') return 'org.delete'
   if (path.includes('/agents') && m === 'POST') return 'agent.create'
   if (path.includes('/agents') && m === 'DELETE') return 'agent.delete'
