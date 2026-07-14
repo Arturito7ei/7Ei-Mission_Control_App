@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   createInvite, generateInviteToken, isInviteTokenShaped, hashToken, hashesEqual,
   inviteStatus, isInviteUsable, checkInviteAccepts, consumeUsePatch, inviteView, inviteUrls,
+  parseAllowedAdapterTypes,
   INVITE_TOKEN_PREFIX, DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS, DEFAULT_MAX_USES, MAX_MAX_USES,
   type InviteRecord,
 } from '../services/agent-invites'
@@ -156,6 +157,30 @@ describe('[ONB1] checkInviteAccepts — who may walk through', () => {
       const res = checkInviteAccepts(rec, 'claude_code', at)
       assert.equal(res.ok, false)
       assert.equal(res.ok === false && res.publicReason, 'not_found', 'must not leak WHY — that is an enumeration oracle')
+    }
+  })
+})
+
+describe('[ONB1-audit] parseAllowedAdapterTypes — a corrupt allow-list must not WIDEN the invite', () => {
+  it('null/absent means "any joinable adapter" (the operator never restricted it)', () => {
+    assert.equal(parseAllowedAdapterTypes(null), null)
+    assert.equal(parseAllowedAdapterTypes(undefined), null)
+    assert.equal(parseAllowedAdapterTypes(''), null)
+  })
+
+  it('round-trips a stored allow-list, de-duplicated', () => {
+    assert.deepEqual(parseAllowedAdapterTypes(JSON.stringify(['cursor', 'claude_code', 'cursor'])), ['cursor', 'claude_code'])
+  })
+
+  it('a corrupt / non-array / empty column FAILS CLOSED to an empty allow-list, never to null', () => {
+    for (const raw of ['{ not json', '{"cursor":true}', '"cursor"', '[]', '[""]', 'null', '42']) {
+      const parsed = parseAllowedAdapterTypes(raw)
+      assert.deepEqual(parsed, [], `${raw} must yield a deny-all allow-list, not "any adapter"`)
+      // And a deny-all allow-list must actually deny — no adapter walks through.
+      const r = mint().record
+      r.allowedAdapterTypes = parsed
+      assert.equal(checkInviteAccepts(r, 'claude_code', NOW).ok, false)
+      assert.equal(checkInviteAccepts(r, 'cursor', NOW).ok, false)
     }
   })
 })

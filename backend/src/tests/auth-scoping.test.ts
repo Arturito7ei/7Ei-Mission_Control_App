@@ -36,6 +36,8 @@ import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
+import { agentInviteRoutes, adapterRegistryRoutes } from '../routes/agent-invites'
+import { PUBLIC_JOIN_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
 
@@ -86,11 +88,13 @@ async function bootLikeIndex() {
     await secured.register(arturitaRoutes)
     await secured.register(arturitaWalletRoutes)
     await secured.register(arturitaVoiceRoutes)
+    await secured.register(agentInviteRoutes)   // Epic ONB — owner-gated invites
   })
 
   await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
   await app.register(arturitaPublicRoutes)
+  await app.register(adapterRegistryRoutes)     // Epic ONB — the ONLY public onboarding route
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)
@@ -143,6 +147,69 @@ test('[MCA-85] no tenant-scoped route is publicly reachable outside the allowlis
   secured('DELETE', '/api/agents/:agentId/memory')
   secured('POST', '/api/orgs/:orgId/webhooks')
   secured('GET', '/api/orgs/:orgId/usage')
+})
+
+// ─── Epic ONB — the onboarding surface is shut (audit of ONB1) ───────────────
+//
+// ONB1 ships the invite OBJECT, not the flow: every invite route is owner-gated
+// and the only public onboarding route is the static adapter registry. Two things
+// were previously true only by inspection, and are now enforced here:
+//
+//  1. `PUBLIC_JOIN_IMPLEMENTED` is a hand-maintained constant that holds the join
+//     surface shut. A constant promises; a test enforces. While it is false, NO
+//     join/claim route may be registered in any scope — so the day someone wires
+//     one without flipping the constant (or without ONB3/ONB4's approval gate and
+//     rate limit), this fails instead of quietly opening an unauthenticated door.
+//  2. The invite routes carry an org-scoped `:orgId`, so the MCA-85 leak guard
+//     above already covers them — but only because they are now registered here.
+//     They were absent from both guard suites until this audit.
+test('[ONB1-audit] the onboarding surface is shut: invites are Clerk-gated, only GET /api/adapters is public', async () => {
+  resetOpenApi()
+  const app = await bootLikeIndex()
+  await app.close()
+
+  const routes = collectedRoutes()
+  const find = (method: string, url: string) => routes.find(r => r.method === method && r.url === url)
+
+  for (const [method, url] of [
+    ['POST', '/api/orgs/:orgId/agent-invites'],
+    ['GET', '/api/orgs/:orgId/agent-invites'],
+    ['POST', '/api/orgs/:orgId/agent-invites/:inviteId/revoke'],
+    ['GET', '/api/orgs/:orgId/onboarding-posture'],
+  ] as const) {
+    const r = find(method, url)
+    assert.ok(r, `route missing: ${method} ${url}`)
+    assert.equal(r!.auth, 'clerk', `${method} ${url} must be Clerk-secured (and owner-gated), got '${r!.auth}'`)
+  }
+
+  const registry = find('GET', '/api/adapters')
+  assert.ok(registry, 'GET /api/adapters must exist — a joining agent reads the taxonomy before it holds any credential')
+  assert.equal(registry!.auth, 'none', 'the adapter registry is public by design: static, org-agnostic, secret-free')
+
+  // No invite/onboarding route other than the registry may be public.
+  const publicOnboarding = routes
+    .filter(r => r.auth === 'none' && /agent-invite|onboarding|\/join|\/claim/.test(r.url))
+    .map(r => `${r.method} ${r.url}`)
+  assert.deepEqual(publicOnboarding, [], 'no onboarding route may be public except GET /api/adapters')
+})
+
+test('[ONB1-audit] while PUBLIC_JOIN_IMPLEMENTED is false, no join/claim route exists at all', async () => {
+  resetOpenApi()
+  const app = await bootLikeIndex()
+  await app.close()
+
+  if (PUBLIC_JOIN_IMPLEMENTED) return // ONB4 landed: the surface is built, and its own tests own it.
+
+  // Scoped to the ONBOARDING namespace: `POST /api/agent/tasks/:taskId/claim` is
+  // the long-standing agent-token task claim and has nothing to do with onboarding.
+  const joinish = collectedRoutes()
+    .filter(r => /^\/api\/agent-invites\/.*\/(join|claim)\b/.test(r.url) || /join-request/.test(r.url))
+    .map(r => `${r.method} ${r.url}`)
+  assert.deepEqual(
+    joinish, [],
+    'a join/claim route is registered while PUBLIC_JOIN_IMPLEMENTED is false — the posture reports the surface as closed, ' +
+    'so it must not exist. Land ONB3/ONB4 (approval gate + one-time claim + per-IP rate limit) and flip the constant in that PR.',
+  )
 })
 
 test('[MCA-85] secured scope enforces 401; public webhook receiver is not gated', async () => {

@@ -20,7 +20,7 @@ import { documentEndpoint } from '../services/openapi'
 import { publicRegistry, invitableAdapterTypes, joinableAdapterTypes } from '../services/adapter-registry'
 import { onboardingPosture } from '../services/deployment-profile'
 import {
-  createInvite, inviteView, inviteUrls, inviteStatus,
+  createInvite, inviteView, inviteUrls, parseAllowedAdapterTypes,
   DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS, DEFAULT_MAX_USES, MAX_MAX_USES, MAX_MESSAGE_CHARS,
   type InviteRecord,
 } from '../services/agent-invites'
@@ -37,20 +37,16 @@ function baseUrl(): string {
   return String(process.env.PUBLIC_URL ?? 'https://7ei-backend.fly.dev').replace(/\/+$/, '')
 }
 
-/** DB row → the pure service's record shape (JSON columns parsed, dates hydrated). */
+/** DB row → the pure service's record shape (JSON columns parsed, dates hydrated).
+ *  The allow-list parse is fail-CLOSED (`parseAllowedAdapterTypes`): a corrupt
+ *  column yields an empty allow-list, never `null` — `null` means "any adapter",
+ *  and a parse failure must not widen an invite the operator narrowed. */
 function toRecord(row: typeof schema.agentInvites.$inferSelect): InviteRecord {
-  let allowed: string[] | null = null
-  if (row.allowedAdapterTypes) {
-    try {
-      const parsed = JSON.parse(row.allowedAdapterTypes)
-      if (Array.isArray(parsed)) allowed = parsed.map(String)
-    } catch { allowed = null }
-  }
   return {
     id: row.id,
     orgId: row.orgId,
     tokenHash: row.tokenHash,
-    allowedAdapterTypes: allowed,
+    allowedAdapterTypes: parseAllowedAdapterTypes(row.allowedAdapterTypes),
     maxUses: row.maxUses,
     usedCount: row.usedCount,
     message: row.message ?? null,
