@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
+import { corsOptions } from './middleware/cors'
 import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
 import multipart from '@fastify/multipart'
@@ -60,15 +61,9 @@ async function start() {
     crossOriginEmbedderPolicy: false,
   })
 
-  await app.register(cors, {
-    origin: process.env.ALLOWED_ORIGINS?.split(',') ?? [
-      'http://localhost:3000',
-      'http://localhost:8081',
-      'https://7ei.ai',
-      'https://app.7ei.ai',
-    ],
-    credentials: true,
-  })
+  // Method list is explicit — the @fastify/cors default is GET,HEAD,POST, which
+  // silently breaks every PUT/PATCH/DELETE from the dashboard. See middleware/cors.ts.
+  await app.register(cors, corsOptions())
 
   await app.register(websocket)
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } })  // 25 MB document uploads
