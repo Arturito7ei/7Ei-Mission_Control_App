@@ -47,13 +47,14 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Overview',
     items: [
       { id: 'overview', label: 'Dashboard', icon: '🏠', kind: 'tab', paperclip: 'Dashboard' },
-      { id: 'cockpit', label: 'Operations', icon: '🛰️', kind: 'tab', paperclip: 'Dashboard / live' },
-      { id: 'inbox', label: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox' },
-      { id: 'activity', label: 'Activity', icon: '📈', kind: 'section', section: 'activity', paperclip: 'Activity' },
       // The nav label is the surface, not the persona: the tab is the operator's
       // Command Center. The assistant answering inside it is still Arturita, and
       // the id stays `assistant` — it is the dashboard Tab value and is deep-linked.
-      { id: 'assistant', label: 'Command Center', icon: '🌸', kind: 'tab', paperclip: 'Board Chat', beyond: true },
+      // It sits directly under Dashboard: it is the operator's primary way in.
+      { id: 'assistant', label: 'Command Center', icon: '🎙️', kind: 'tab', paperclip: 'Board Chat', beyond: true },
+      { id: 'cockpit', label: 'Operations', icon: '🛰️', kind: 'tab', paperclip: 'Dashboard / live' },
+      { id: 'inbox', label: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox' },
+      { id: 'activity', label: 'Activity', icon: '📈', kind: 'section', section: 'activity', paperclip: 'Activity' },
       { id: 'search', label: 'Search', icon: '🔍', kind: 'placeholder', paperclip: 'Search', note: 'Global search page. Today: press ⌘K for the command palette. A dedicated search surface is an Epic-P gap.' },
     ],
   },
