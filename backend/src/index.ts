@@ -2,6 +2,7 @@ import 'dotenv/config'
 import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import { corsOptions } from './middleware/cors'
+import { registerJsonBodyParser } from './middleware/body-parser'
 import helmet from '@fastify/helmet'
 import websocket from '@fastify/websocket'
 import multipart from '@fastify/multipart'
@@ -65,6 +66,11 @@ async function start() {
   // Method list is explicit — the @fastify/cors default is GET,HEAD,POST, which
   // silently breaks every PUT/PATCH/DELETE from the dashboard. See middleware/cors.ts.
   await app.register(cors, corsOptions())
+
+  // A bodiless DELETE that still declares `Content-Type: application/json` (what
+  // the dashboard's shared client sends) must reach its handler, not 400 in the
+  // parser. See middleware/body-parser.ts — this is the avatar-Remove bug.
+  registerJsonBodyParser(app)
 
   await app.register(websocket)
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } })  // 25 MB document uploads

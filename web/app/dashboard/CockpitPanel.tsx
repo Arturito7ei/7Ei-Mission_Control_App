@@ -31,7 +31,7 @@ export type CockpitSectionKey =
   | 'inbox' | 'voice' | 'agents' | 'activity' | 'org' | 'goals'
   | 'budgets' | 'secrets' | 'workspaces' | 'plugins' | 'tasks'
 
-export default function CockpitPanel({ orgId, getToken, onOpenTask, only, title }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void; only?: CockpitSectionKey[]; title?: string }) {
+export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent, only, title }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void; onOpenAgent?: (agentId: string) => void; only?: CockpitSectionKey[]; title?: string }) {
   const [data, setData] = useState<Cockpit | null>(null)
   const [chart, setChart] = useState<OrgNode[] | null>(null)
   const [timeline, setTimeline] = useState<Timeline | null>(null)
@@ -135,7 +135,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, only, title 
   const sections: { key: CockpitSectionKey; node: React.ReactNode }[] = [
     { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} /> },
     { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
-    { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} /> },
+    { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} onOpenAgent={onOpenAgent} /> },
     { key: 'activity', node: <TimelineSection timeline={timeline} /> },
     { key: 'org', node: <OrgChart chart={chart} /> },
     { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },

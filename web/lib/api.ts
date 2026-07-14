@@ -27,15 +27,28 @@ export function transportError(method: string, path: string): string {
     : `Network error — the browser could not send ${where}. The backend is either unreachable or is refusing this request before it arrives (a CORS policy that does not allow ${m} does exactly this).`
 }
 
+/**
+ * The headers for one call. `Content-Type: application/json` is a claim about a
+ * body — so it only goes on a request that HAS one. Sending it on a bodiless
+ * DELETE is what broke the avatar Remove: Fastify's JSON parser refused the
+ * request before the handler ran (FST_ERR_CTP_EMPTY_JSON_BODY → a bare
+ * "HTTP 400: Bad Request" that named neither the layer nor the reason).
+ */
+export function apiHeaders(init?: ApiInit): Record<string, string> {
+  const { token, body, headers } = init ?? {}
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+    ...((headers ?? {}) as Record<string, string>),
+  }
+}
+
 export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   const { token, ...opts } = init ?? {}
   const method = (opts.method ?? 'GET').toUpperCase()
   let res: Response
   try {
-    res = await fetch(`${API}${path}`, {
-      ...opts,
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
-    })
+    res = await fetch(`${API}${path}`, { ...opts, headers: apiHeaders(init) })
   } catch {
     // fetch rejects (TypeError) on network-level failure AND on a blocked
     // preflight — the browser gives JS no way to tell them apart.

@@ -20,7 +20,13 @@ export const AGENT_TAB_LABEL: Record<AgentTab, string> = {
   budget: 'Budget',
 }
 
-export const DEFAULT_AGENT_TAB: AgentTab = 'dashboard'
+/**
+ * Where opening an agent lands. Configuration, not Dashboard: an operator who
+ * clicks an agent is nearly always going to its settings, and the fleet already
+ * shows the at-a-glance state the Dashboard tab repeats. Every tab stays
+ * reachable from the tab bar; only the default destination changed.
+ */
+export const DEFAULT_AGENT_TAB: AgentTab = 'configuration'
 
 export interface AgentRoute {
   agentId: string

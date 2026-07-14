@@ -4,18 +4,21 @@
 // (⬡ active purple / ⏸ paused / ✕ stale-failed) — shape + color, never color
 // alone. `agents` is null while the cockpit payload loads so the empty state
 // only shows after data arrives.
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { tk, text, space } from '../tokens'
 import { Button, Card, IconButton, SectionLabel, TextInput } from '../ui'
 import { statusColor, statusIcon, HEARTBEAT_STATUS } from '../status'
 import { RUNTIME_BADGE, sx, type CAgent } from './shared'
+import { AgentAvatar } from '../agent/shared'
 
-export default function AgentFleet({ agents, onControl, onAsk }: {
+export default function AgentFleet({ agents, onControl, onAsk, onOpenAgent }: {
   agents: CAgent[] | null
   onControl: (id: string, verb: 'pause' | 'resume' | 'terminate') => void
   // W5 ask-mode: fire a single-turn question at an agent; the answer opens in the
   // task drawer thread. Undefined = the ask affordance is hidden.
   onAsk?: (agentId: string, question: string) => Promise<void>
+  /** Open the agent's detail page (lands on Configuration). Undefined = not clickable. */
+  onOpenAgent?: (agentId: string) => void
 }) {
   // Which card's ask composer is open, its draft, and whether it's in flight.
   const [askId, setAskId] = useState<string | null>(null)
@@ -37,14 +40,30 @@ export default function AgentFleet({ agents, onControl, onAsk }: {
         {(agents ?? []).map(a => (
           <Card key={a.id} style={{ display: 'flex', flexDirection: 'column', gap: space.md, padding: space.lg }}>
            <div style={{ display: 'flex', alignItems: 'center', gap: space.lg }}>
-            <span style={{ fontSize: 24 }}>{a.avatarEmoji || '🤖'}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: text.lg.fontSize, display: 'flex', alignItems: 'center', gap: space.sm }}>
-                {a.name}
-                <span title={a.runtime} style={sx.badge}>{RUNTIME_BADGE[a.runtime] ?? '⚙️'} {a.runtime}</span>
+            {/* Identity block — opens the agent (on its Configuration tab). It is
+                its own control, not the whole card, because the card also carries
+                the pause/terminate buttons.
+                The avatar is the agent's CONFIGURED one (uploaded picture, else
+                the icon), rendered by the same component as the Staff grid and
+                the agent header, so the fleet can never disagree with them. */}
+            <div
+              {...(onOpenAgent ? {
+                role: 'button' as const, tabIndex: 0, 'aria-label': `Open ${a.name}`,
+                onClick: () => onOpenAgent(a.id),
+                onKeyDown: (e: KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenAgent(a.id) }
+                },
+              } : {})}
+              style={{ display: 'flex', alignItems: 'center', gap: space.lg, flex: 1, minWidth: 0, cursor: onOpenAgent ? 'pointer' : 'default' }}>
+              <AgentAvatar agent={a} size={36} radius={8} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: text.lg.fontSize, display: 'flex', alignItems: 'center', gap: space.sm }}>
+                  {a.name}
+                  <span title={a.runtime} style={sx.badge}>{RUNTIME_BADGE[a.runtime] ?? '⚙️'} {a.runtime}</span>
+                </div>
+                <div style={{ fontSize: text.sm.fontSize, color: tk.muted, marginTop: 2 }}>{a.role}</div>
+                <div style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft, marginTop: 2 }}>{a.llmProvider} · {a.llmModel}</div>
               </div>
-              <div style={{ fontSize: text.sm.fontSize, color: tk.muted, marginTop: 2 }}>{a.role}</div>
-              <div style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft, marginTop: 2 }}>{a.llmProvider} · {a.llmModel}</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: space.sm, flexShrink: 0 }}>
               {(() => {

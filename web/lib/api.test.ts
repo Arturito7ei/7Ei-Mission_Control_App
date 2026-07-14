@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { transportError } from './api.ts'
+import { apiHeaders, transportError } from './api.ts'
 
 // The message the operator actually reads when a write fails before it leaves
 // the browser. It used to be a bare "Network error — backend unreachable" for
@@ -21,4 +21,23 @@ test('[AGFIX1] a failed read stays a plain unreachable message', () => {
 
 test('[AGFIX1] the method is normalised', () => {
   assert.match(transportError('delete', '/x'), /DELETE \/x/)
+})
+
+// Content-Type is a claim about a body. Putting it on a bodiless DELETE made the
+// backend's JSON parser reject the avatar Remove before the handler saw it.
+
+test('[AGFIX4] a bodiless request does not claim a JSON body', () => {
+  const h = apiHeaders({ method: 'DELETE', token: 't' })
+  assert.equal(h['Content-Type'], undefined)
+  assert.equal(h.Authorization, 'Bearer t')
+})
+
+test('[AGFIX4] a request with a body still declares JSON', () => {
+  const h = apiHeaders({ method: 'PUT', token: 't', body: JSON.stringify({ a: 1 }) })
+  assert.equal(h['Content-Type'], 'application/json')
+})
+
+test('[AGFIX4] an explicit Content-Type still wins', () => {
+  const h = apiHeaders({ method: 'POST', body: 'x', headers: { 'Content-Type': 'text/plain' } })
+  assert.equal(h['Content-Type'], 'text/plain')
 })
