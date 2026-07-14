@@ -19,6 +19,7 @@ import { parseFallbackChain } from './llm-fallback'
 import { streamLLMWithFallback } from './llm-fallback-runtime'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
+import { renderInstructionsBundle } from './agent-files'
 import { planWakeModel, parseTierOverrideConfig } from './model-profile'
 
 export interface ExecuteResult {
@@ -220,7 +221,16 @@ export async function executeAgentTask(opts: {
       }
     } catch { /* non-critical */ }
 
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory)
+    // AG3 — the managed instructions bundle (AGENTS.md & co). Only files the
+    // operator actually SAVED are rendered: an agent whose bundle was never
+    // edited has no rows, renders '', and keeps exactly the prompt it had before.
+    let instructionsBundle = ''
+    try {
+      const fileRows = await db.select().from(schema.agentFiles).where(eq(schema.agentFiles.agentId, agentId))
+      instructionsBundle = renderInstructionsBundle(fileRows)
+    } catch { /* non-critical — the agent still runs on its profile fields */ }
+
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory, instructionsBundle)
     // P2 — the routed tier (computed above) is the model for this wake. For an
     // execute turn this is the profile's primary; a cheap-tier turn only happens
     // via ask-mode (handled earlier) or an explicit override. reasoningEffort
@@ -460,6 +470,8 @@ export function buildSystemPrompt(
   hierarchy?: { title?: string | null; manager?: string | null; reports?: string[] },
   goalContext?: string,
   sharedMemory?: string,
+  /** AG3 — rendered managed instructions bundle; '' when the agent has none. */
+  instructionsBundle?: string,
 ): string {
   const lines: string[] = []
 
@@ -500,6 +512,10 @@ export function buildSystemPrompt(
   if (agent.expertise)        lines.push('\nYOUR AREAS OF EXPERTISE:\n' + agent.expertise, '')
   if (agent.cv)               lines.push(`Background: ${agent.cv}`, '')
   if (agent.termsOfReference) lines.push(`Terms of Reference: ${agent.termsOfReference}`, '')
+  // AG3 — the operator's own instructions files outrank the profile fields above
+  // (they are the thing the operator edits directly), so they land last and closest
+  // to the task. Empty unless a file has been saved.
+  if (instructionsBundle) lines.push(instructionsBundle, '')
   const skills = (agent.skills as string[]) ?? []
   if (skills.length > 0) lines.push(`Active skills: ${skills.join(', ')}`, '')
   if (memoryBlock) lines.push(memoryBlock)

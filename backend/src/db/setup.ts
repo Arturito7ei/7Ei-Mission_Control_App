@@ -170,6 +170,16 @@ export async function setupDatabase() {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
   }
 
+  // Epic AG / AG3: agent_files — the managed instructions bundle (one row per
+  // saved markdown file). Nothing is backfilled: an agent with no rows keeps the
+  // exact prompt it had before, and the editor falls back to generated defaults.
+  // The unique index makes save an upsert on (agent_id, path).
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_files (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_files_agent_path ON agent_files(agent_id, path)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_files_org ON agent_files(org_id)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)
