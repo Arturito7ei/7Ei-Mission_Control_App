@@ -135,12 +135,14 @@ async function start() {
     await secured.register(agentInviteRoutes)         // Epic ONB — owner-gated invite create/list/revoke + posture
     // ONB2 audit H-2 — these two READ endpoints used to be registered inside the
     // hook plugins below, i.e. in the PUBLIC block: `GET /api/orgs/:orgId/audit-log`
-    // was an unauthenticated cross-tenant audit read, and `GET /api/traces` served
-    // real spans to anyone. They are now Clerk-gated (audit-log additionally
-    // owner-gated), and `auth-scoping.test.ts` boots both plugins so the MCA-85
-    // leak guard covers them from now on.
+    // was an unauthenticated cross-tenant audit read, and the traces route served
+    // real spans to anyone. Both are now Clerk- AND owner-gated on an `:orgId`, and
+    // `auth-scoping.test.ts` boots both plugins so the MCA-85 leak guard covers them
+    // from now on. (The re-audit of #248 moved traces from a bare `/api/traces` —
+    // authenticated but tenant-blind, one process-wide span buffer readable by any
+    // Clerk user — to the org-scoped, org-filtered path. See docs/AUDIT-ONB2-hardening.md.)
     await secured.register(auditLogQueryRoutes)       // GET /api/orgs/:orgId/audit-log (owner)
-    await secured.register(telemetryQueryRoutes)      // GET /api/traces
+    await secured.register(telemetryQueryRoutes)      // GET /api/orgs/:orgId/traces  (owner)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────

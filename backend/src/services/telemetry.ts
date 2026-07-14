@@ -7,6 +7,7 @@
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
 import { redactPath } from './log-redaction'
+import { requireOrgRole } from '../middleware/rbac'
 
 export interface Span {
   traceId: string
@@ -66,6 +67,27 @@ export function getRecentSpans(limit = 50): Span[] {
 }
 
 /**
+ * The spans ATTRIBUTABLE TO ONE ORG.
+ *
+ * `spans` is a single process-wide buffer shared by every tenant on the machine,
+ * so `getRecentSpans` is not a safe thing to serve to a tenant — see
+ * `telemetryQueryRoutes`. A span belongs to an org only if the org id was written
+ * onto it (`org.id`, set from the route's `:orgId` param by the `onResponse` hook).
+ *
+ * A span with no `org.id` is UNATTRIBUTED and is returned to nobody. That is the
+ * whole point: an unattributed span cannot be shown to one tenant without risking
+ * showing them another's. Today `llm.call` spans (`services/llm-router.ts`) are
+ * unattributed — `LLMStreamOpts` carries no org id — so they are excluded. Giving
+ * them one is the follow-up that restores this endpoint's usefulness; until then
+ * it under-reports, which is the correct direction to fail.
+ */
+export function getSpansForOrg(orgId: string, limit = 50): Span[] {
+  if (!orgId) return []
+  const n = Math.min(Math.max(Number(limit) || 50, 1), MAX_SPANS)
+  return spans.filter(s => s.attributes['org.id'] === orgId).slice(-n).reverse()
+}
+
+/**
  * Fastify plugin — creates a span per HTTP request.
  *
  * ⚠️ Like `auditLogPlugin`, this hook is a NO-OP in production (ONB2 audit H-1):
@@ -100,18 +122,37 @@ export async function telemetryPlugin(app: FastifyInstance) {
 }
 
 /**
- * The trace QUERY route — split out of the hook plugin (ONB2 audit finding H-2).
+ * The trace QUERY route — `GET /api/orgs/:orgId/traces`.
  *
- * `GET /api/traces` served real spans (path, provider, model, duration, org id,
- * user id) to ANY unauthenticated caller, because `telemetryPlugin` is registered
- * in the public block of `src/index.ts`. Register this in the SECURED scope so it
- * requires a Clerk session. It is not org-scoped (spans are process-wide), so
- * there is no `:orgId` to hang `requireOrgRole` on — Clerk is the gate.
+ * History, because the shape of this route is the fix:
+ *
+ * 1. It was `GET /api/traces`, registered INSIDE `telemetryPlugin`, which lives in
+ *    the PUBLIC block of `src/index.ts` — so it served real spans to any
+ *    unauthenticated caller (ONB2 audit H-2).
+ * 2. PR #248 moved it into the SECURED scope. That narrowed it from *public* to
+ *    *any authenticated Clerk user* — but `spans` is one process-wide buffer shared
+ *    by every tenant, so an authenticated user of org A could still read org B's
+ *    span metadata (paths, org ids, user ids, providers, models, timings). A
+ *    narrowing, not an isolation.
+ * 3. This route is now ORG-SCOPED and owner-gated, and returns only the spans
+ *    attributable to that org (`getSpansForOrg`).
+ *
+ * Why the path had to change, rather than just adding a preHandler: `requireOrgRole`
+ * reads the org from `req.params.orgId` and **returns without checking anything** if
+ * there is none (`middleware/rbac.ts` — "No org context — skip RBAC"). Hanging
+ * `requireOrgRole('owner')` on a path with no `:orgId` is a NO-OP — a gate that
+ * looks like one and is not. An `:orgId` in the path is what makes the gate real.
+ *
+ * It also puts the route inside the MCA-85 leak guard's net for good: that guard
+ * only inspects routes matching `:orgId|:agentId`, so a bare `/api/traces` serving
+ * cross-tenant data was invisible to it by construction and could only ever be
+ * caught by a hand-written spot-check.
  */
 export async function telemetryQueryRoutes(app: FastifyInstance) {
-  app.get('/api/traces', async (req) => {
+  app.get('/api/orgs/:orgId/traces', { preHandler: requireOrgRole('owner') }, async (req) => {
+    const { orgId } = req.params as any
     const { limit = '50' } = req.query as any
-    return { spans: getRecentSpans(Number(limit)) }
+    return { spans: getSpansForOrg(orgId, Number(limit)) }
   })
 }
 

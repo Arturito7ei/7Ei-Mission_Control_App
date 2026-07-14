@@ -135,7 +135,7 @@
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/orgs/:orgId/audit-log` | Yes (owner) | Query audit logs. `?action=X&limit=N`. **Note:** the audit hook is not enabled (ONB2 audit H-1 — operator decision), so this returns `{ logs: [] }` today. |
-| GET | `/api/traces` | Yes | Recent telemetry spans |
+| GET | `/api/orgs/:orgId/traces` | Yes (owner) | Recent telemetry spans **for that org**. Was `GET /api/traces` (removed): one process-wide span buffer served to any authenticated caller is a cross-tenant metadata leak. Spans with no `org.id` (today: every `llm.call` span) are attributable to no org and are returned to nobody. |
 | GET | `/api/orgs/:orgId/usage` | Yes | Current usage stats |
 | GET | `/api/orgs/:orgId/limits` | Yes | Rate limit configuration |
 
