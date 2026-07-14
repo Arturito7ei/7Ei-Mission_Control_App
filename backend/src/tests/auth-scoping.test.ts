@@ -37,6 +37,8 @@ import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from '../routes/agent-invites'
+import { auditLogPlugin, auditLogQueryRoutes } from '../middleware/audit-log'
+import { telemetryPlugin, telemetryQueryRoutes } from '../services/telemetry'
 import { PUBLIC_JOIN_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
@@ -89,6 +91,13 @@ async function bootLikeIndex() {
     await secured.register(arturitaWalletRoutes)
     await secured.register(arturitaVoiceRoutes)
     await secured.register(agentInviteRoutes)   // Epic ONB — owner-gated invites
+    // ONB2 audit H-2 — the audit-log + trace READ routes. They were registered
+    // inside the hook plugins, in the public block, and this guard never booted
+    // those plugins — which is exactly why it missed an unauthenticated,
+    // `:orgId`-scoped audit read. Both plugins are booted below now, so the guard
+    // can never again be blind to a plugin-registered route.
+    await secured.register(auditLogQueryRoutes)
+    await secured.register(telemetryQueryRoutes)
   })
 
   await app.register(commsWebhookRoutes)
@@ -102,6 +111,10 @@ async function bootLikeIndex() {
   })
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
+  // The hook plugins, in the public block, exactly as src/index.ts registers them.
+  // A no-op sink so the guard never reaches Turso; the ROUTES are what it tags.
+  await app.register(telemetryPlugin)
+  await app.register(auditLogPlugin, { sink: () => {} })
 
   await app.ready()
   return app
@@ -148,6 +161,9 @@ test('[MCA-85] no tenant-scoped route is publicly reachable outside the allowlis
   secured('DELETE', '/api/agents/:agentId/memory')
   secured('POST', '/api/orgs/:orgId/webhooks')
   secured('GET', '/api/orgs/:orgId/usage')
+  // ONB2 audit H-2 — the two routes this guard used to be blind to.
+  secured('GET', '/api/orgs/:orgId/audit-log')
+  secured('GET', '/api/traces')
 })
 
 // ─── Epic ONB — the onboarding surface is shut (audit of ONB1) ───────────────

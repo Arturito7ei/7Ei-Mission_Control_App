@@ -224,6 +224,42 @@ guard so `NODE_ENV=production` refuses to start on the default key.
 
 ---
 
+## 7. DECIDE: turn the audit trail on (or leave it off) — Epic ONB, audit H-1
+
+**Today `audit_logs` records nothing, and has not since this wiring existed.**
+`auditLogPlugin` and `telemetryPlugin` add their `onResponse` hooks inside an
+encapsulated `app.register()` child, so the hooks never fire for the plugins'
+siblings — i.e. for any route in the app (`docs/AUDIT-ONB2.md` H-1, confirmed
+empirically). The table that exists to answer "who did what" answers nothing.
+
+**The hardening PR (#248) made the trail safe to enable, and stopped there — on
+purpose.** The three things that had to be true first are now true: the query
+routes are Clerk/owner-gated (H-2), `sanitizeBody` recurses so a secret nested in
+`agentDefaultsPayload` cannot reach a row (H-3), and the telemetry span URL is
+redacted (M-1). What remains is **not** an engineering call:
+
+**Enabling it = one Turso `INSERT` per HTTP request, forever.** That is an ongoing
+cost line (row writes + unbounded storage growth — there is **no retention policy**
+on `audit_logs` today) and a per-request latency/connection-pressure cost on the
+hosted Fly/Turso deployment.
+
+**Your options:**
+- **(a) leave it off** — the honest status quo; ONB3/ONB4 will mint credentials with no audit trail.
+- **(b) enable it for `SENSITIVE_METHODS` (POST/PUT/PATCH/DELETE) + `/api/agent-invites/*` only** — *recommended*: the read-only `GET` flood is the expensive, low-value half.
+- **(c) enable it for everything, with a retention/rollup job.**
+
+If you choose (b) or (c): the fix is to hoist the hooks (wrap in `fastify-plugin`,
+or add them at the root instance **before** any `register()` call, mirroring the
+already-correct `onRoute` hook at `src/index.ts`), **and add the retention policy in
+the same PR**. A tripwire test (`audit-onb2-fix.test.ts` `[ONB2-H1]`) currently fails
+if the hooks are hoisted, so it cannot happen by accident — flip it with the decision.
+
+> ⚠️ Before enabling, also check whether `audit_logs` holds **historical rows** from an
+> earlier (working) wiring. If it does, they were readable **unauthenticated** for as long
+> as the old public query route was live (H-2, now closed).
+
+---
+
 ## Assistant boundaries (why some steps are yours)
 
 Per the operating rules, I don't create accounts, enter passwords/keys, complete
