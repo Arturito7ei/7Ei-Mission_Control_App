@@ -358,7 +358,41 @@ One PR per story, squash-merged `--admin`; pure helpers + `node --test`; idempot
 
 ---
 
-## 8. Verdict recap
+## 8. ADDENDUM (2026-07-14) — deployment profiles, the config bundle, and the four locked defaults
+
+> **Status: OPERATOR-APPROVED.** This addendum supersedes §7's open questions Q1–Q4 and is binding on ONB1–ONB7. It also makes Epic ONB and **Epic H — Packaging & Distribution** (`docs/PLAN-arturita.md` §Epic H) a *joint* design rather than two epics that happen to touch the same machine. Shipped in ONB1 (PR #244).
+
+### 8.1 The deployment-profile abstraction
+
+Mission Control runs in exactly one of **two profiles, chosen by config**, and **the onboarding posture is derived from the profile — never hardcoded at a call site**:
+
+| Profile | What it is | Onboarding posture |
+|---|---|---|
+| **`hosted`** (default) | Multi-tenant, on a public URL. What we run today (`7ei-backend.fly.dev`). | Public join is **OFF**. Enabling it requires an explicit operator enable **and** every hardening requirement satisfied. A public join endpoint on a public backend is a real attack surface (§4.2). |
+| **`packaged`** | Single-tenant, installed on the operator's own machine — the future `.dmg` (Epic H, H1/H4). | **Loopback-trusted**, exactly like Paperclip's `local_trusted`. Onboarding is reachable from localhost; nothing is exposed publicly. |
+
+Shipped as pure `backend/src/services/deployment-profile.ts`: `resolveDeploymentProfile(env)` (`MC_DEPLOYMENT_PROFILE`, **safe default `hosted`** — an unset or garbage value must resolve to the *harder* posture, because mis-reading a hosted deployment as packaged would trust a loopback we do not own) and `onboardingPosture(env)`, which returns the derived posture **plus a hardening checklist that reports, per control, whether it is satisfied and why not**. The checklist is computed, never asserted: `PUBLIC_JOIN_IMPLEMENTED` is `false` while ONB3/ONB4 are unbuilt, so **no env var can talk the posture into being open before the controls that make it safe exist.** It flips in the PR that lands ONB4, and only then.
+
+### 8.2 The config bundle (and where Epic H picks it up)
+
+Every system setting/parameter should be expressible as **one declarative, versioned CONFIG BUNDLE** that (a) Export/Import — the org portability we already ship (`services/portability.ts`) — can move between machines, and (b) the future `.dmg` installer **seeds a fresh machine from** (Epic H, **H4 "fresh-machine config/secret bootstrap"**).
+
+**Secrets are never in the bundle.** They stay in the encrypted store (`services/secrets.ts`, AES-256-GCM) and are re-supplied per machine. Shipped as pure `backend/src/services/config-bundle.ts`: `CONFIG_BUNDLE_VERSION`, the deployment slice, `buildConfigBundle()`/`validateConfigBundle()` (refuses a bundle newer than this build understands), and `assertNoSecrets()` — a **hard throw**, not a warning, on any secret-shaped key anywhere in the object graph. The same detector (`isSecretShapedKey`, token-based so it catches `apiKey`, `x-openclaw-token` and `webhookAuthHeader` while leaving `sessionKeyStrategy` and `paperclipApiUrl` alone) is what the adapter registry uses to route `agentDefaultsPayload` fields into the encrypted store — **one detector, so the bundle rule and the payload rule can never drift apart**. Epic H's H4 story consumes this bundle rather than inventing a second config format; ONB1 ships the spine (version + deployment slice + the no-secrets enforcement), and the org/agent/budget/routine slices fold in from `portability.ts` under Epic H.
+
+### 8.3 The four locked posture defaults (baked in as invariants)
+
+These four are **not env-tunable**. They are constants in `deployment-profile.ts`, restated declaratively in the config bundle so an importing machine can *verify* it agrees with them rather than assume, and each is locked by a test:
+
+1. **Public join endpoint OFF by default, gated by the profile.** `packaged` = loopback-trusted; `hosted` = requires enabling remote onboarding **and** full hardening. (Resolves Q1: yes to a public join endpoint on the hosted backend — but only behind the gate chain, and off until it exists.)
+2. **Invites are SINGLE-USE by default.** Multi-use is an explicit, bounded per-invite opt-in (`maxUses` ≤ 50). *(We invert Paperclip's multi-use default: a reusable door on a public backend is a standing risk.)* (Resolves Q2.)
+3. **Every invite-created agent lands in `LOW_TRUST_REVIEW`, regardless of runtime** — extending CC3 beyond `claude_code`. Invite-onboarded means self-declared and remotely-attached: contain it. Existing agents are untouched. (Resolves Q3.)
+4. **The raw claimed token is NEVER shown in the UI or the clipboard.** Only the claiming agent reads it, once, from the raw HTTP response. `AddAgentWizard`'s show-once behaviour stays for the *manual* path; the invite path never reveals it to an operator or a log. (Resolves Q4.)
+
+*(A small vindication of control 4, worth recording: the config bundle's secret detector rejected our own first name for this invariant — `revealClaimedTokenInUi` — because it contains "token". The field is now `operatorCanSeeClaimedKey`. The detector works.)*
+
+---
+
+## 9. Verdict recap
 
 Paperclip's onboarding is worth copying because of *what it moves*, not what it builds: it moves the credential to the **end** of the flow and puts a **human decision** in the middle, and it makes the whole contract **self-describing** so any HTTP-capable agent can drive it. We already own the post-onboarding half of that contract (`agent-api.ts` and the entire gate chain). The epic is four net-new objects — **invite · join request · claim · adapter registry** — plus a generated document and one dialog.
 
