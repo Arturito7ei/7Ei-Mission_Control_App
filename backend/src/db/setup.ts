@@ -165,6 +165,9 @@ export async function setupDatabase() {
     `ALTER TABLE tasks ADD COLUMN input_tokens INTEGER`,
     `ALTER TABLE tasks ADD COLUMN output_tokens INTEGER`,
     `ALTER TABLE tasks ADD COLUMN cached_tokens INTEGER`,
+    // Epic AG / AG5 — uploaded agent avatar (data URI). Null for every existing
+    // agent, which keeps rendering its emoji exactly as before.
+    `ALTER TABLE agents ADD COLUMN avatar_url TEXT`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

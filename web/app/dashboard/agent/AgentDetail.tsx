@@ -12,6 +12,7 @@ import { AgentAvatar, StatusPill, ax, type DAgent, type Getter } from './shared'
 import DashboardTab from './DashboardTab'
 import InstructionsTab from './InstructionsTab'
 import SkillsTab from './SkillsTab'
+import ConfigurationTab from './ConfigurationTab'
 
 export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask, onOpenLibrary }: {
   orgId: string
@@ -135,7 +136,8 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
           onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />}
         {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'skills' && <SkillsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenLibrary={onOpenLibrary} />}
-        {tab !== 'dashboard' && tab !== 'instructions' && tab !== 'skills' && <TabPanel tab={tab} />}
+        {tab === 'configuration' && <ConfigurationTab orgId={orgId} agentId={agentId} getToken={getToken} onSaved={load} />}
+        {(tab === 'runs' || tab === 'budget') && <TabPanel tab={tab} />}
       </div>
 
       {assignOpen && (
@@ -161,7 +163,7 @@ const PENDING: Record<AgentTab, string> = {
   dashboard: '',
   instructions: '',
   skills: '',
-  configuration: 'Identity, avatar, reports-to, adapter and model.',
+  configuration: '',
   runs: 'Run history with per-run logs.',
   budget: 'This agent’s budget and spend.',
 }

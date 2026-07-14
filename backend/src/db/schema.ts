@@ -47,6 +47,9 @@ export const agents = sqliteTable('agents', {
   skills: text('skills', { mode: 'json' }).$type<string[]>().default([]),
   status: text('status').notNull().default('idle'),
   avatarEmoji: text('avatar_emoji').default('🤖'),
+  // Epic AG / AG5 — uploaded picture, stored as a capped data URI (the backend has
+  // no blob store; see services/agent-avatar.ts). Null → the emoji above is used.
+  avatarUrl: text('avatar_url'),
   agentType: text('agent_type').notNull().default('standard'),
   advisorPersona: text('advisor_persona'),
   memoryLongTerm: text('memory_long_term', { mode: 'json' }).$type<Record<string, unknown>>(),
