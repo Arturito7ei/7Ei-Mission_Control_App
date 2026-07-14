@@ -6,9 +6,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, API } from '@/lib/api'
 import { ACCEPTED_UPLOAD_TYPES, downscaleAvatar, isAcceptedUpload } from '@/lib/avatarImage'
 import { Button, Card, Select, Skeleton, TextArea, TextInput } from '../ui'
-import { FormLabel } from '../cockpit/shared'
+import { FormLabel, sx } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { AgentAvatar, ax, type DAgent, type Getter } from './shared'
+import CustomModelDialog, { type CustomModel } from './CustomModelDialog'
 
 type Roster = { id: string; name: string; role: string; avatarEmoji?: string | null; reportsTo?: string | null }
 type ModelOption = { id: string; label: string; provider: string; tier: string; custom?: boolean }
@@ -30,6 +31,8 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [roster, setRoster] = useState<Roster[]>([])
   const [models, setModels] = useState<ModelOption[]>([])
+  const [custom, setCustom] = useState<CustomModel[]>([])
+  const [dialog, setDialog] = useState<{ open: boolean; editing: CustomModel | null }>({ open: false, editing: null })
   const [form, setForm] = useState({ name: '', title: '', role: '', jobDescription: '', avatarEmoji: '', reportsTo: '', runtime: 'internal', model: '', contactChannel: '' })
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -55,8 +58,12 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
         contactChannel: a.contactChannel ?? '',
       })
       try {
-        const { models: m } = await api<{ models: ModelOption[] }>(`/api/orgs/${orgId}/available-models`, { token })
+        const [{ models: m }, { models: c }] = await Promise.all([
+          api<{ models: ModelOption[] }>(`/api/orgs/${orgId}/available-models`, { token }),
+          api<{ models: CustomModel[] }>(`/api/orgs/${orgId}/custom-models`, { token }),
+        ])
         setModels(m)
+        setCustom(c)
       } catch { /* the model picker degrades to the current value */ }
     } catch (e: any) { setErr(e?.message ?? 'Could not load this agent’s configuration.') }
   }, [orgId, agentId, getToken])
@@ -101,6 +108,32 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
       onSaved?.()
     } catch (e: any) { setErr(e?.message ?? 'Could not upload that picture.') }
     setUploading(false)
+  }
+
+  // A model saved from the dialog is immediately selected as this agent's model:
+  // adding one and then having to find it in the dropdown is a step with no
+  // purpose. It is not persisted on the agent until Save changes — same as every
+  // other field on this page.
+  const onCustomSaved = async (m: CustomModel) => {
+    setDialog({ open: false, editing: null })
+    await load()
+    setForm(f => ({ ...f, model: m.model }))
+    setSaved(false)
+  }
+
+  const removeCustom = async (provider: string) => {
+    setBusy(true); setErr(null)
+    try {
+      const r = await api<{ stranded: { id: string; name: string }[] }>(`/api/orgs/${orgId}/custom-models/${encodeURIComponent(provider)}`,
+        { token: await getToken(), method: 'DELETE' })
+      await load()
+      // Deleting the endpoint does not un-point the agents at it — say so rather
+      // than let them fail at run time.
+      if (r.stranded?.length) {
+        setErr(`Removed. ${r.stranded.map(a => a.name).join(', ')} ${r.stranded.length === 1 ? 'is' : 'are'} still set to this model and will fail to run until you pick another.`)
+      }
+    } catch (e: any) { setErr(e?.message ?? 'Could not remove that model.') }
+    setBusy(false)
   }
 
   const removeAvatar = async () => {
@@ -201,6 +234,40 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
           A local/BYO adapter (OpenClaw, Claude Code, Cursor) runs on the operator’s machine and claims tasks over the
           agent API; the internal adapter runs on the 7Ei backend.
         </p>
+
+        {/* ── Custom models ──────────────────────────────────────────────
+            An operator-defined OpenAI-compatible endpoint. It is a MODEL, not a
+            runtime: the internal executor calls it. Kept next to the picker it
+            feeds, rather than buried in org settings. */}
+        <Card style={{ display: 'flex', flexDirection: 'column', gap: space.md, marginTop: space.lg, padding: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md, padding: `${space.md}px ${space.lg}px`, borderBottom: `1px solid ${tk.line}` }}>
+            <span style={{ fontSize: text.sm.fontSize, fontWeight: 700 }}>Custom models</span>
+            <Button onClick={() => setDialog({ open: true, editing: null })}>＋ Add a custom model</Button>
+          </div>
+
+          {custom.length === 0 ? (
+            <p style={{ ...ax.empty, fontSize: text.xs.fontSize, padding: `0 ${space.lg}px ${space.lg}px` }}>
+              None yet. Add any OpenAI-compatible endpoint — NVIDIA NIM, Together, vLLM, a local server, or an
+              OpenAI-standard provider — and it becomes selectable in the Model list above.
+            </p>
+          ) : custom.map(m => (
+            <div key={m.provider} style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.md}px ${space.lg}px`, borderTop: `1px solid ${tk.line}` }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: text.md.fontSize, fontWeight: 600 }}>{m.label || m.model}</span>
+                  {form.model === m.model && <span style={{ ...sx.badge, color: tk.accent, borderColor: 'var(--accent-line)' }}>IN USE</span>}
+                  {/* Whether a key is stored is a fact the operator needs; the key itself never comes back. */}
+                  <span style={sx.badge}>{m.hasKey ? '🔒 key stored' : 'no key'}</span>
+                </div>
+                <div style={{ fontSize: text.xs.fontSize, color: tk.muted, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {m.model} · {m.baseUrl}
+                </div>
+              </div>
+              <Button onClick={() => setDialog({ open: true, editing: m })} disabled={busy}>Edit</Button>
+              <Button variant="danger" onClick={() => removeCustom(m.provider)} disabled={busy}>Remove</Button>
+            </div>
+          ))}
+        </Card>
       </section>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: space.lg }}>
@@ -209,6 +276,11 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
         </Button>
         {saved && <span style={{ color: tk.green, fontSize: text.sm.fontSize }}>✓ Saved</span>}
       </div>
+
+      {dialog.open && (
+        <CustomModelDialog orgId={orgId} getToken={getToken} existing={dialog.editing}
+          onClose={() => setDialog({ open: false, editing: null })} onSaved={onCustomSaved} />
+      )}
     </div>
   )
 }

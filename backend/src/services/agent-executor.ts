@@ -16,6 +16,12 @@ import { canAgentRun } from './governance'
 import { enforceAgentBudget } from './budget'
 import { preflightWake, parseCapUsd, estimateInputTokens } from './preflight'
 import { parseFallbackChain } from './llm-fallback'
+// One credential resolver for every provider, built-in or operator-defined. It
+// reads BOTH the legacy plaintext `<slug>_api_key` and the AES-256-GCM
+// `<slug>_api_key_enc` — reading only the plaintext key (as this file used to)
+// meant a custom model saved with a key could never authenticate on a run, since
+// the save path only ever writes the encrypted form.
+import { resolveLlmCreds } from './custom-model'
 import { streamLLMWithFallback } from './llm-fallback-runtime'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
@@ -238,8 +244,7 @@ export async function executeAgentTask(opts: {
     const model    = wakePlan.model
     const provider = wakePlan.provider
     const reasoningEffort = wakePlan.reasoningEffort ?? undefined
-    const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
-    const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
+    const { orgApiKey, baseURL } = resolveLlmCreds(org?.deployConfig as any, provider)
     const messages = [...conversationHistory, { role: 'user' as const, content: input }]
     const start = Date.now()
     let rawOutput = ''
@@ -256,10 +261,7 @@ export async function executeAgentTask(opts: {
     const fb = await streamLLMWithFallback({
       base: { system: systemPrompt, messages, reasoningEffort, onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) } },
       chain: effectiveChain,
-      resolveCreds: (prov) => ({
-        orgApiKey: org?.deployConfig?.[`${prov}_api_key`] as string | undefined,
-        baseURL: org?.deployConfig?.[`${prov}_base_url`] as string | undefined,
-      }),
+      resolveCreds: (prov) => resolveLlmCreds(org?.deployConfig as any, prov),
       inputTokens: wakeInputTokens,
       capUsd: wakeCapUsd,
     })
@@ -403,8 +405,7 @@ export async function answerAskTask(opts: {
     })
     const model    = wakePlan.model
     const provider = wakePlan.provider
-    const orgApiKey = org?.deployConfig?.[`${provider}_api_key`] as string | undefined
-    const baseURL   = org?.deployConfig?.[`${provider}_base_url`] as string | undefined
+    const { orgApiKey, baseURL } = resolveLlmCreds(org?.deployConfig as any, provider)
     const messages  = [...conversationHistory, { role: 'user' as const, content: input }]
     const start = Date.now()
 

@@ -17,7 +17,7 @@ import { documentEndpoint } from '../services/openapi'
 import { parseLlmChain } from '../services/arturita-pipeline'
 import {
   validateCustomModel, applyCustomModel, removeCustomModel,
-  resolveLlmCreds, hasStoredKey,
+  resolveLlmCreds, hasStoredKey, probeEndpoint,
 } from '../services/custom-model'
 
 const CustomModelBody = z.object({
@@ -36,42 +36,6 @@ const TestBody = z.object({
   /** existing slug — test with the stored key when apiKey is omitted. */
   provider: z.string().optional(),
 })
-
-/** Reachability probe for an OpenAI-compatible endpoint. Tries GET /models, then
- *  a 1-token POST /chat/completions. Never logs the key. Returns a plain result. */
-async function probeEndpoint(input: { baseUrl: string; apiKey?: string; model: string }, timeoutMs = 6000): Promise<{ ok: boolean; status: number | null; detail: string }> {
-  const base = input.baseUrl.replace(/\/$/, '')
-  const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (input.apiKey) authHeaders.Authorization = `Bearer ${input.apiKey}`
-  const withTimeout = async (fn: (signal: AbortSignal) => Promise<Response>): Promise<Response> => {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), timeoutMs)
-    try { return await fn(ctrl.signal) } finally { clearTimeout(t) }
-  }
-  // 1) GET /models — cheapest liveness + auth check.
-  try {
-    const res = await withTimeout(s => fetch(`${base}/models`, { headers: authHeaders, signal: s }))
-    if (res.ok) return { ok: true, status: res.status, detail: 'reachable (GET /models)' }
-    if (res.status === 401 || res.status === 403) return { ok: false, status: res.status, detail: 'authentication failed — check the API key' }
-    // 404/405 → server may not expose /models; fall through to a chat probe.
-  } catch (e: any) {
-    if (e?.name !== 'AbortError') return { ok: false, status: null, detail: `unreachable — ${e?.message ?? 'network error'}` }
-  }
-  // 2) POST /chat/completions with a 1-token request.
-  try {
-    const res = await withTimeout(s => fetch(`${base}/chat/completions`, {
-      method: 'POST', headers: authHeaders, signal: s,
-      body: JSON.stringify({ model: input.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
-    }))
-    if (res.ok) return { ok: true, status: res.status, detail: 'reachable (chat/completions)' }
-    if (res.status === 401 || res.status === 403) return { ok: false, status: res.status, detail: 'authentication failed — check the API key' }
-    if (res.status === 404) return { ok: false, status: res.status, detail: 'model or endpoint not found — check the base URL + model id' }
-    return { ok: false, status: res.status, detail: `endpoint returned ${res.status}` }
-  } catch (e: any) {
-    if (e?.name === 'AbortError') return { ok: false, status: null, detail: `timed out after ${timeoutMs}ms` }
-    return { ok: false, status: null, detail: `unreachable — ${e?.message ?? 'network error'}` }
-  }
-}
 
 export async function arturitaCustomModelRoutes(app: FastifyInstance) {
   // Add / update a custom model → persists base URL (+ encrypted key) and upserts
