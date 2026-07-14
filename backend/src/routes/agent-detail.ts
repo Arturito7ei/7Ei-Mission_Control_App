@@ -15,6 +15,8 @@ import {
   MAX_EXTRA_FILES, isManaged, listBundle, normalizeFileName, readFile, validateContent,
 } from '../services/agent-files'
 import { resolveSelection, splitSkills } from '../services/agent-skills'
+import { validateConfigPatch } from '../services/agent-config'
+import { buildAvatarDataUri } from '../services/agent-avatar'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
 export async function agentInOrg(orgId: string, agentId: string) {
@@ -192,5 +194,71 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     }).catch(() => {})
 
     return { ...splitSkills(library, resolved.names), adapter: agent.runtime, model: agent.primaryModel || agent.llmModel }
+  })
+
+  // ─── AG5 — Configuration: identity, reports-to, adapter/model, avatar ──────
+
+  /** Snapshot every config change for audit + rollback (MCA-GOV2 S4.1). */
+  const snapshot = async (orgId: string, agentId: string, before: unknown, after: unknown, req: unknown) =>
+    db.insert(schema.configRevisions).values({
+      id: randomUUID(), orgId, entity: 'agent', entityId: agentId,
+      before: JSON.stringify(before), after: JSON.stringify(after),
+      actor: (req as { userId?: string }).userId ?? 'human', createdAt: new Date(),
+    }).catch(() => {})
+
+  // Owner-gated + field-allowlisted. Deliberately NOT the legacy
+  // `PATCH /api/agents/:agentId`, which takes an unvalidated body straight into
+  // db.update and is not owner-gated — the config surface must not widen that.
+  app.put('/api/orgs/:orgId/agents/:agentId/config', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const roster = await db.select({ id: schema.agents.id, reportsTo: schema.agents.reportsTo })
+      .from(schema.agents).where(eq(schema.agents.orgId, orgId))
+
+    const result = validateConfigPatch((req.body ?? {}) as Record<string, unknown>, { agentId, agents: roster })
+    if (result.ok === false) return reply.code(400).send({ error: result.error })
+
+    await db.update(schema.agents).set(result.fields).where(eq(schema.agents.id, agentId))
+    const after = await agentInOrg(orgId, agentId)
+    await snapshot(orgId, agentId, agent, after, req)
+    return { agent: after }
+  })
+
+  // Avatar upload (multipart). The image is stored as a capped data URI on the
+  // agent row — see services/agent-avatar.ts for why there is no blob store.
+  app.post('/api/orgs/:orgId/agents/:agentId/avatar', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const file = await (req as any).file?.()
+    if (!file) return reply.code(400).send({ error: 'No image uploaded.' })
+
+    let data: Buffer
+    try {
+      data = await file.toBuffer()
+    } catch {
+      // @fastify/multipart throws when the 25MB transport limit is exceeded.
+      return reply.code(400).send({ error: 'That image is too large to upload.' })
+    }
+
+    const built = buildAvatarDataUri(file.mimetype, data)
+    if (built.ok === false) return reply.code(400).send({ error: built.error })
+
+    await db.update(schema.agents).set({ avatarUrl: built.dataUri }).where(eq(schema.agents.id, agentId))
+    await snapshot(orgId, agentId, { avatarUrl: agent.avatarUrl }, { avatarUrl: '(image updated)' }, req)
+    return { avatarUrl: built.dataUri, bytes: built.bytes, contentType: built.contentType }
+  })
+
+  // Remove the picture — the agent falls back to its icon/emoji.
+  app.delete('/api/orgs/:orgId/agents/:agentId/avatar', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    await db.update(schema.agents).set({ avatarUrl: null }).where(eq(schema.agents.id, agentId))
+    await snapshot(orgId, agentId, { avatarUrl: agent.avatarUrl }, { avatarUrl: null }, req)
+    return reply.code(204).send()
   })
 }
