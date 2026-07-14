@@ -15,7 +15,32 @@
 collapsed/expanded state persists per browser (`localStorage["mc.nav.collapsed"]`). The whole rail
 also **folds to icons** (`localStorage["mc.nav.railFolded"]`).
 
+## The rail after P1 (current)
+
+P1 shortened the rail. **No surface was deleted** — every one of them is still routable (⌘K palette
++ any deep link to its id still renders it). A surface now lives in exactly one of three places, and
+`navModel` enforces that partition (`allSurfaces() = rail ∪ hosted tabs ∪ off-rail`):
+
+| Group | Rail item | Tabs it hosts |
+|---|---|---|
+| **Overview** | Dashboard · 🎙️ Command Center · Operations · **Inbox / Comms** · Activity | Inbox / Comms → `Inbox` \| `Comms` |
+| **Workspace** | Agents · Projects · Org · Routines _(soon)_ | — |
+| **Operate** | Governance · Review Queue _(soon)_ | — |
+| **Delivery** | **Costs** · Skills · Memory | Costs → `Costs` \| `Budgets` |
+| **Company** | **Connectors** · Members & Access _(soon)_ | Connectors → `Connectors` \| `Plugins` |
+| **General** | Usage · **Settings** | Settings → `Settings` \| `Adapters` \| `Secrets` |
+
+**Off the rail, still routable** (`HIDDEN_ITEMS` — reachable via ⌘K, code untouched):
+`Search`, `Issues`, `Goals`, `Pipelines`, `Workspaces`, `Artifacts`.
+
+Selecting a hosted tab keeps its **parent** lit in the rail (`navSelectedId`), so the rail never
+"loses" the user inside a tabbed page.
+
 ## Mapping — Paperclip area → our surface
+
+> The `Our surface` column below records the **original** re-home (P0a/P0b). Where P1 moved a surface
+> into a tab bar or off the rail, the P1 table above is the authority on **where it appears**; the
+> surface itself is unchanged.
 
 | Group | Paperclip area | Our surface | How it's fulfilled |
 |---|---|---|---|
@@ -65,6 +90,13 @@ analog; they're mounted in the nearest-fit group and clearly ours.
   section filter — the same composition root renders either the full **Operations** stack or a single
   focused area, reusing every existing section component (no rebuild). Approvals stay in Inbox +
   Governance (see note above).
+- **P1 — shorten the rail (shipped):** P0b made every surface first-class, which made the rail long.
+  P1 folds five surfaces into their parent's **tab bar** (`Budgets`→Costs, `Plugins`→Connectors,
+  `Comms`→Inbox _(now "Inbox / Comms")_, `Adapters` + `Secrets`→Settings) via a new `PageTabs.tsx`
+  driven by `navPageTabs()`, and takes six off the rail entirely (`Search`, `Issues`, `Goals`,
+  `Pipelines`, `Workspaces`, `Artifacts` → `HIDDEN_ITEMS`). **Nothing was deleted and nothing became
+  unreachable** — the palette walks `allSurfaces()`, and the nav tests assert the removals, each fold
+  target, and the "every prior surface still reachable" invariant.
 
 ## Non-negotiables carried through
 Colorblind-safe (icon + label + tone, never color alone), **design tokens only** (no raw hex in new
