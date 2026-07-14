@@ -123,8 +123,31 @@ export async function applyJoinDecision(input: {
   if (input.decision === 'approved' && agentId) {
     // Created CONTAINED, and with NO api_token_hash — there is no credential to
     // claim until ONB4, which is the whole point of the gate.
+    //
+    // AUDIT-ONB3 M-1: this is NOT one transaction (libSQL/Turso gives us `db.transaction`,
+    // but it opens a second connection — which the `:memory:` test DB cannot follow — so
+    // wrapping this is a change to the test harness, not a one-liner: see the audit doc).
+    // The ordering is deliberately fail-CLOSED — the status CAS first, the agent second —
+    // so a crash here can never leave an agent nobody approved. What it CAN leave is the
+    // mirror image: a request marked `approved` pointing at an agent that was never
+    // inserted, unrecoverable because a second approve is a 409. So an insert failure
+    // COMPENSATES: the CAS is rolled back to `pending_approval` (guarded on the agent id
+    // we just claimed, so a concurrent decision cannot be clobbered) and the error is
+    // re-thrown. The operator retries; nothing is half-approved.
     const agent = buildApprovedAgent({ id: agentId, record, now })
-    await database.insert(schema.agents).values(agent as any)
+    try {
+      await database.insert(schema.agents).values(agent as any)
+    } catch (err) {
+      await database.update(schema.agentJoinRequests)
+        .set({ status: 'pending_approval', decidedBy: null, decidedAt: null, agentId: null } as any)
+        .where(and(
+          eq(schema.agentJoinRequests.id, record.id),
+          eq(schema.agentJoinRequests.status, 'approved'),
+          eq(schema.agentJoinRequests.agentId, agentId),
+        ))
+        .catch(() => { /* the compensation is best-effort; the throw below is the truth */ })
+      throw err
+    }
 
     // The parked secrets become the agent's. They were inert until this moment:
     // `resolveSecretsForAgent` only resolves `company` + `agent` scopes, so nothing

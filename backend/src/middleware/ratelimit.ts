@@ -162,9 +162,46 @@ export function checkIpRate(ip: string, maxPerMinute: number): { allowed: boolea
   return { allowed: true }
 }
 
+/**
+ * The client address a per-IP limiter may key on. AUDIT-ONB3, M-2.
+ *
+ * NOT `req.ip`: the app boots with `trustProxy: true` (index.ts — it must, behind
+ * Fly), so Fastify resolves `req.ip` to the LEFTMOST `X-Forwarded-For` entry, which
+ * is whatever the caller typed. A caller rotating that header gets a fresh bucket per
+ * request, and the limit is not a limit. Proven against the ONB3 join route: 14/14
+ * requests admitted from one socket with a rotating XFF, while the same socket
+ * without the header is cut off at the 11th.
+ *
+ * The order below is "most trustworthy first", and `X-Forwarded-For` is NOT in it by
+ * default — a header the caller can type is not an identity, and we cannot tell a hop
+ * a proxy appended from one the caller invented:
+ *   1. `Fly-Client-IP` — written by OUR proxy, which overwrites whatever the caller
+ *      sent. This is production.
+ *   2. the raw socket address — no proxy in front of us (dev / packaged / direct).
+ *
+ * `MC_TRUSTED_PROXY=1` is the escape hatch for a self-hosted deployment behind a
+ * reverse proxy that is NOT Fly: it opts into the RIGHTMOST `X-Forwarded-For` entry —
+ * the one the nearest (trusted) proxy appended, never the leftmost one the caller led
+ * with. Without it, everyone behind an unknown proxy shares the proxy's bucket, which
+ * throttles onboarding rather than opening it: fail-closed, on purpose.
+ */
+export function rateLimitClientIp(req: any): string {
+  const fly = req?.headers?.['fly-client-ip']
+  if (typeof fly === 'string' && fly.trim()) return fly.trim()
+
+  if (['1', 'true', 'yes', 'on'].includes(String(process.env.MC_TRUSTED_PROXY ?? '').trim().toLowerCase())) {
+    const xff = req?.headers?.['x-forwarded-for']
+    const chain = (Array.isArray(xff) ? xff.join(',') : String(xff ?? ''))
+      .split(',').map((s: string) => s.trim()).filter(Boolean)
+    if (chain.length > 0) return chain[chain.length - 1]
+  }
+
+  return req?.socket?.remoteAddress || 'unknown'
+}
+
 export function perIpRateLimit(maxPerMinute: number) {
   return async (req: any, reply: any) => {
-    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown'
+    const ip = rateLimitClientIp(req)
     const check = checkIpRate(ip, maxPerMinute)
     if (!check.allowed) {
       reply.header('Retry-After', String(check.retryAfter))
