@@ -569,12 +569,18 @@ export async function agentRoutes(app: FastifyInstance) {
   // Org chart & hierarchy (MCA-PC A1): reporting tree built from agents.reportsTo.
   app.get('/api/orgs/:orgId/orgchart', async (req) => {
     const { orgId } = req.params as any
+    // P2 — the canvas cards also render the uploaded avatar, the runtime/model
+    // line and a truncated job description, so those columns ship with the tree.
     const rows = await db.select({
       id: schema.agents.id, name: schema.agents.name, role: schema.agents.role,
       title: schema.agents.title, reportsTo: schema.agents.reportsTo,
-      avatarEmoji: schema.agents.avatarEmoji, status: schema.agents.status,
-      runtime: schema.agents.runtime,
+      avatarEmoji: schema.agents.avatarEmoji, avatarUrl: schema.agents.avatarUrl,
+      status: schema.agents.status, runtime: schema.agents.runtime,
+      llmModel: schema.agents.llmModel, jobDescription: schema.agents.jobDescription,
     }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
-    return { tree: buildOrgChart(rows), count: rows.length }
+    // `agents` is the flat roster: the canvas derives its own tree (web/lib/orgLayout)
+    // so layout and cycle-breaking are testable client-side. `tree` stays for callers
+    // that want the nesting done for them.
+    return { tree: buildOrgChart(rows), agents: rows, count: rows.length }
   })
 }
