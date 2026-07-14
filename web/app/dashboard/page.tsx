@@ -10,9 +10,10 @@ import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
 import Sidebar from './Sidebar'
 import PlaceholderView from './PlaceholderView'
+import PageTabs from './PageTabs'
 import AgentDetail from './agent/AgentDetail'
 import StaffGrid from './agent/StaffGrid'
-import { allNavItems, isPlaceholder, isSection, navSectionKey, findNavItem } from '@/lib/navModel'
+import { allSurfaces, isPlaceholder, isSection, navSectionKey, navPageTabs, navSelectedId, navSurfaceTitle } from '@/lib/navModel'
 import { DEFAULT_AGENT_TAB, agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
 import { AgentAvatar } from './agent/shared'
 import { useTheme } from '../theme'
@@ -329,8 +330,11 @@ export default function DashboardPage() {
   // T2 command-palette shell — navigation + theme. Nav entries come from the
   // Paperclip-style nav model (P0a); selecting a "coming soon" area lands on its
   // placeholder view. Epic V extends this list (jump to task/agent/approval).
+  // P1 — this walks *every* surface, not just the rail: the surfaces we folded
+  // into tabs (Budgets, Plugins, Comms, Adapters, Secrets) and the ones we took
+  // off the rail entirely (Issues, Goals, Workspaces, …) stay one ⌘K away.
   const commands: Command[] = [
-    ...allNavItems().map(n => ({ id: `nav-${n.id}`, label: n.kind === 'placeholder' ? `${n.label} (soon)` : n.label, icon: n.icon, group: 'Navigate', keywords: `go to open view tab ${n.paperclip}`, run: () => selectTab(n.id) })),
+    ...allSurfaces().map(n => ({ id: `nav-${n.id}`, label: n.kind === 'placeholder' ? `${n.label} (soon)` : n.label, icon: n.icon, group: 'Navigate', keywords: `go to open view tab ${n.paperclip}`, run: () => selectTab(n.id) })),
     // AG1 — jump straight to an agent's detail page.
     ...agents.map(a => ({ id: `agent-${a.id}`, label: a.name, icon: a.avatarEmoji || '🤖', group: 'Agents', keywords: `agent open ${a.role}`, run: () => openAgent(a.id) })),
     { id: 'theme-light', label: 'Light theme', icon: '☀', group: 'Theme', keywords: 'appearance mode', run: () => setMode('light') },
@@ -341,10 +345,15 @@ export default function DashboardPage() {
   return (
     <div className="mc-layout" style={s.layout}>
       <CommandPalette commands={commands} open={paletteOpen} onOpenChange={setPaletteOpen} />
-      {/* P0a — Paperclip-style folded, grouped, collapsible nav rail. */}
-      <Sidebar orgName={org.name} selected={tab} onSelect={selectTab} onOpenPalette={() => setPaletteOpen(true)} unread={unread} />
+      {/* P0a — Paperclip-style folded, grouped, collapsible nav rail. P1: when a
+          hosted tab is open (e.g. Budgets), the rail keeps its parent (Costs) lit. */}
+      <Sidebar orgName={org.name} selected={navSelectedId(tab)} onSelect={selectTab} onOpenPalette={() => setPaletteOpen(true)} unread={unread} />
 
       <main className="mc-main" style={s.main}>
+
+        {/* P1 — a page that hosts other surfaces as tabs shows them above its body.
+            Selecting one swaps the body; the rail selection doesn't move. */}
+        <PageTabs tabs={navPageTabs(navSelectedId(tab))} active={tab} onSelect={selectTab} />
 
         {/* P0a — Paperclip areas not yet built land on an honest "coming soon" view. */}
         {isPlaceholder(tab) && <PlaceholderView id={tab} />}
@@ -353,7 +362,7 @@ export default function DashboardPage() {
             reusing the CockpitPanel composition root (no rebuild). */}
         {isSection(tab) && (
           <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} onOpenAgent={openAgent}
-            only={[navSectionKey(tab) as CockpitSectionKey]} title={findNavItem(tab)?.label} />
+            only={[navSectionKey(tab) as CockpitSectionKey]} title={navSurfaceTitle(tab)} />
         )}
 
         {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} onOpenAgent={openAgent} />}

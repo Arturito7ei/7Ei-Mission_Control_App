@@ -5,6 +5,18 @@
 //   Overview · Workspace · Operate · Delivery · Company · General
 // with our existing surfaces re-homed under it. See docs/IA-paperclip-mapping.md.
 //
+// P1 — the rail is deliberately short. Two mechanisms keep it that way without
+// losing a surface:
+//   * hosted tabs (`tabs`)  — a child surface renders as a tab on its parent's
+//     page (Budgets under Costs, Plugins under Connectors, Comms under Inbox,
+//     Adapters + Secrets under Settings). One rail entry, two-plus surfaces.
+//   * HIDDEN_ITEMS        — surfaces dropped from the rail but still routable:
+//     the command palette lists them and the dashboard still renders them, so
+//     nothing is deleted and no deep link dies.
+// Every surface in the app is therefore in exactly one of NAV_GROUPS (rail),
+// a parent's `tabs`, or HIDDEN_ITEMS — `allSurfaces()` is the union, and the
+// tests assert that union still covers every dashboard tab.
+//
 // Kept pure so the structure + collapse/fold logic is unit-testable under
 // `node --test` (web has no jest/vitest). The dashboard page renders from this.
 
@@ -29,12 +41,28 @@ export interface NavItem {
   note?: string
   /** Beyond-Paperclip surface kept + re-homed (Arturita/Memory/Comms). */
   beyond?: boolean
+  /**
+   * P1 — surfaces this page hosts as tabs, after its own. The parent stays the
+   * single rail entry; `navPageTabs(parent.id)` builds the page's tab bar.
+   */
+  tabs?: NavItem[]
+  /**
+   * P1 — the parent's own tab label when it differs from the rail label
+   * (Inbox / Comms in the rail; the first tab just reads "Inbox").
+   */
+  tabLabel?: string
 }
 
 export interface NavGroup {
   id: NavGroupId
   label: string
   items: NavItem[]
+}
+
+/** One entry in a tabbed page's tab bar. */
+export interface PageTab {
+  id: string
+  label: string
 }
 
 // Epic-P gap plan the placeholders point at.
@@ -53,22 +81,24 @@ export const NAV_GROUPS: NavGroup[] = [
       // It sits directly under Dashboard: it is the operator's primary way in.
       { id: 'assistant', label: 'Command Center', icon: '🎙️', kind: 'tab', paperclip: 'Board Chat', beyond: true },
       { id: 'cockpit', label: 'Operations', icon: '🛰️', kind: 'tab', paperclip: 'Dashboard / live' },
-      { id: 'inbox', label: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox' },
+      // P1 — Comms folds in here: one "Inbox / Comms" rail entry, tabs Inbox | Comms.
+      {
+        id: 'inbox', label: 'Inbox / Comms', tabLabel: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox',
+        tabs: [
+          { id: 'comms', label: 'Comms', icon: '📬', kind: 'tab', paperclip: 'Communications', beyond: true },
+        ],
+      },
       { id: 'activity', label: 'Activity', icon: '📈', kind: 'section', section: 'activity', paperclip: 'Activity' },
-      { id: 'search', label: 'Search', icon: '🔍', kind: 'placeholder', paperclip: 'Search', note: 'Global search page. Today: press ⌘K for the command palette. A dedicated search surface is an Epic-P gap.' },
     ],
   },
   {
     id: 'workspace',
     label: 'Workspace',
     items: [
-      { id: 'tasks', label: 'Issues', icon: '📋', kind: 'tab', paperclip: 'Issues / Tasks' },
       { id: 'agents', label: 'Agents', icon: '🤖', kind: 'tab', paperclip: 'Agents' },
       { id: 'projects', label: 'Projects', icon: '📁', kind: 'tab', paperclip: 'Projects' },
-      { id: 'goals', label: 'Goals', icon: '🎯', kind: 'section', section: 'goals', paperclip: 'Goals' },
       { id: 'org', label: 'Org', icon: '🗂️', kind: 'section', section: 'org', paperclip: 'Org' },
       { id: 'routines', label: 'Routines', icon: '🔁', kind: 'placeholder', paperclip: 'Routines', note: 'Recurring scheduled tasks. Backend exists (routines.ts / scheduled_tasks); a dedicated web surface is an Epic-P gap.' },
-      { id: 'pipelines', label: 'Pipelines', icon: '🧩', kind: 'placeholder', paperclip: 'Pipelines', note: 'Multi-stage case pipelines. Not yet built (no pipeline/case entity) — Epic-P gap.' },
     ],
   },
   {
@@ -76,7 +106,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Operate',
     items: [
       { id: 'governance', label: 'Governance', icon: '🛡️', kind: 'tab', paperclip: 'Approvals · Review Queue · RBAC' },
-      { id: 'workspaces', label: 'Workspaces', icon: '🧱', kind: 'section', section: 'workspaces', paperclip: 'Workspaces' },
       { id: 'review-queue', label: 'Review Queue', icon: '🧪', kind: 'placeholder', paperclip: 'Review Queue', note: 'Low-trust quarantine review lives inside Governance today; a dedicated queue page is an Epic-P gap.' },
     ],
   },
@@ -84,22 +113,28 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'delivery',
     label: 'Delivery',
     items: [
-      { id: 'costs', label: 'Costs', icon: '💰', kind: 'tab', paperclip: 'Costs · Budgets · Preflight' },
-      { id: 'budgets', label: 'Budgets', icon: '💵', kind: 'section', section: 'budgets', paperclip: 'Budgets / Preflight' },
+      // P1 — Budgets folds in here: tabs Costs | Budgets.
+      {
+        id: 'costs', label: 'Costs', icon: '💰', kind: 'tab', paperclip: 'Costs · Budgets · Preflight',
+        tabs: [
+          { id: 'budgets', label: 'Budgets', icon: '💵', kind: 'section', section: 'budgets', paperclip: 'Budgets / Preflight' },
+        ],
+      },
       { id: 'skills', label: 'Skills', icon: '⚡', kind: 'tab', paperclip: 'Skills' },
       { id: 'memory', label: 'Memory', icon: '🧠', kind: 'tab', paperclip: 'Learnings', beyond: true },
-      { id: 'artifacts', label: 'Artifacts', icon: '📦', kind: 'placeholder', paperclip: 'Artifacts', note: 'Work-product / artifact stacks. Not yet built — Epic-P gap.' },
     ],
   },
   {
     id: 'company',
     label: 'Company',
     items: [
-      { id: 'connectors', label: 'Connectors', icon: '🔌', kind: 'tab', paperclip: 'Plugins / Connectors' },
-      { id: 'plugins', label: 'Plugins', icon: '🧰', kind: 'section', section: 'plugins', paperclip: 'Plugins' },
-      { id: 'secrets', label: 'Secrets', icon: '🔐', kind: 'section', section: 'secrets', paperclip: 'Secrets' },
-      { id: 'comms', label: 'Comms', icon: '📬', kind: 'tab', paperclip: 'Communications', beyond: true },
-      { id: 'adapters', label: 'Adapters', icon: '🧷', kind: 'placeholder', paperclip: 'Adapter registry', note: 'BYO-runtime adapter registry + model catalogs + probes. Not yet built — Epic-P gap.' },
+      // P1 — Plugins folds in here: tabs Connectors | Plugins.
+      {
+        id: 'connectors', label: 'Connectors', icon: '🔌', kind: 'tab', paperclip: 'Plugins / Connectors',
+        tabs: [
+          { id: 'plugins', label: 'Plugins', icon: '🧰', kind: 'section', section: 'plugins', paperclip: 'Plugins' },
+        ],
+      },
       { id: 'members', label: 'Members & Access', icon: '👥', kind: 'placeholder', paperclip: 'Members / Access', note: 'Per-resource RBAC grants ledger. We have org-level roles (org_members); the fine-grained ledger is an Epic-P gap.' },
     ],
   },
@@ -108,24 +143,93 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'General',
     items: [
       { id: 'usage', label: 'Usage', icon: '📊', kind: 'tab', paperclip: 'Usage' },
-      { id: 'settings', label: 'Settings', icon: '⚙️', kind: 'tab', paperclip: 'Settings (Company / Instance)' },
+      // P1 — Adapters + Secrets fold in here: tabs Settings | Adapters | Secrets.
+      {
+        id: 'settings', label: 'Settings', icon: '⚙️', kind: 'tab', paperclip: 'Settings (Company / Instance)',
+        tabs: [
+          { id: 'adapters', label: 'Adapters', icon: '🧷', kind: 'placeholder', paperclip: 'Adapter registry', note: 'BYO-runtime adapter registry + model catalogs + probes. Not yet built — Epic-P gap.' },
+          { id: 'secrets', label: 'Secrets', icon: '🔐', kind: 'section', section: 'secrets', paperclip: 'Secrets' },
+        ],
+      },
     ],
   },
 ]
 
-/** Flat list of every nav item, in render order. */
+/**
+ * P1 — surfaces removed from the rail but NOT from the app. They stay routable:
+ * the command palette lists them, the dashboard still renders them, and any
+ * deep link to their id keeps working. Nothing here is deleted; the rail is
+ * simply not where they live any more.
+ */
+export const HIDDEN_ITEMS: NavItem[] = [
+  { id: 'search', label: 'Search', icon: '🔍', kind: 'placeholder', paperclip: 'Search', note: 'Global search page. Today: press ⌘K for the command palette. A dedicated search surface is an Epic-P gap.' },
+  { id: 'tasks', label: 'Issues', icon: '📋', kind: 'tab', paperclip: 'Issues / Tasks' },
+  { id: 'goals', label: 'Goals', icon: '🎯', kind: 'section', section: 'goals', paperclip: 'Goals' },
+  { id: 'pipelines', label: 'Pipelines', icon: '🧩', kind: 'placeholder', paperclip: 'Pipelines', note: 'Multi-stage case pipelines. Not yet built (no pipeline/case entity) — Epic-P gap.' },
+  { id: 'workspaces', label: 'Workspaces', icon: '🧱', kind: 'section', section: 'workspaces', paperclip: 'Workspaces' },
+  { id: 'artifacts', label: 'Artifacts', icon: '📦', kind: 'placeholder', paperclip: 'Artifacts', note: 'Work-product / artifact stacks. Not yet built — Epic-P gap.' },
+]
+
+/** The rail's own items, in render order (top-level only — hosted tabs excluded). */
 export function allNavItems(): NavItem[] {
   return NAV_GROUPS.flatMap(g => g.items)
 }
 
-/** The tab ids the nav can route to (every `kind:'tab'` item). */
-export function navTabIds(): string[] {
-  return allNavItems().filter(i => i.kind === 'tab').map(i => i.id)
+/** Surfaces hosted as tabs on some parent page (Budgets, Plugins, Comms, …). */
+export function hostedTabItems(): NavItem[] {
+  return allNavItems().flatMap(i => i.tabs ?? [])
 }
 
-/** Look up an item by id (undefined if unknown). */
+/**
+ * Every routable surface: rail items + the tabs they host + the hidden ones.
+ * This is the "nothing is lost" set — the palette and the router use it.
+ */
+export function allSurfaces(): NavItem[] {
+  return [...allNavItems(), ...hostedTabItems(), ...HIDDEN_ITEMS]
+}
+
+/** The tab ids anything can route to (every `kind:'tab'` surface). */
+export function navTabIds(): string[] {
+  return allSurfaces().filter(i => i.kind === 'tab').map(i => i.id)
+}
+
+/** Look up any routable surface by id (undefined if unknown). */
 export function findNavItem(id: string): NavItem | undefined {
-  return allNavItems().find(i => i.id === id)
+  return allSurfaces().find(i => i.id === id)
+}
+
+/** True when this surface is reachable but no longer in the rail (P1 removals). */
+export function isHidden(id: string): boolean {
+  return HIDDEN_ITEMS.some(i => i.id === id)
+}
+
+/**
+ * The tab bar for a page that hosts tabs: the page itself first, then its
+ * children. Empty for a page with no hosted tabs (most of them).
+ */
+export function navPageTabs(id: string): PageTab[] {
+  const parent = allNavItems().find(i => i.id === id)
+  if (!parent?.tabs?.length) return []
+  return [
+    { id: parent.id, label: parent.tabLabel ?? parent.label },
+    ...parent.tabs.map(t => ({ id: t.id, label: t.label })),
+  ]
+}
+
+/** The rail item hosting this surface as a tab (undefined if it isn't hosted). */
+export function navParentId(id: string): string | undefined {
+  return allNavItems().find(i => i.tabs?.some(t => t.id === id))?.id
+}
+
+/** Which rail item should read as active while `id` is open. */
+export function navSelectedId(id: string): string {
+  return navParentId(id) ?? id
+}
+
+/** The heading a surface shows on its own page (tab label wins over rail label). */
+export function navSurfaceTitle(id: string): string | undefined {
+  const item = findNavItem(id)
+  return item ? (item.tabLabel ?? item.label) : undefined
 }
 
 /** True when selecting this id should show the "coming soon" placeholder view. */

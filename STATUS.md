@@ -1,8 +1,20 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-14 (Epic AG follow-up 2 — avatar-Remove 400 root cause + three UI fixes; prior: CORS PUT/DELETE fix + Skills editable + custom adapter; prior: Epic AG COMPLETE — Agents experience: Staff grid + six-tab agent detail page) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-14 (Epic P / P1 — sidebar restructure: six removals + five surfaces folded into tabs; prior: Epic AG follow-up 2 — avatar-Remove 400 root cause + three UI fixes; prior: Epic AG COMPLETE — Agents experience: Staff grid + six-tab agent detail page) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-14) — Epic AG follow-up 2: the avatar-Remove 400 + three UI fixes (#239):**
+**Latest (2026-07-14) — Epic P / P1: sidebar restructure — a shorter rail, nothing lost (#241):**
+
+P0b promoted every Cockpit section to a first-class nav area, which worked but left the rail **long**. P1 shortens it. The rule throughout: **remove from the rail, never from the app** — every surface stays routable (⌘K palette + any deep link to its id still renders it), and `web/lib/navModel.ts` remains the single IA source that `Sidebar.tsx` and the dashboard render from.
+
+**Six surfaces off the rail** (`HIDDEN_ITEMS`): **Search · Issues · Goals · Pipelines · Workspaces · Artifacts**. Search/Pipelines/Artifacts were "coming soon" placeholders; Issues/Goals/Workspaces are real surfaces whose components, routes and data are **untouched** — they simply aren't in the sidebar. All six still resolve through `findNavItem`, still appear in the command palette, and still render.
+
+**Five surfaces folded into a parent's tab bar** — new `PageTabs.tsx`, driven by `navPageTabs()`: **Costs → `Costs | Budgets`**, **Connectors → `Connectors | Plugins`**, **Inbox (renamed **Inbox / Comms**) → `Inbox | Comms`**, **Settings → `Settings | Adapters | Secrets`**. Opening a hosted tab keeps its **parent** lit in the rail (`navSelectedId`), so the rail can't lose the user inside a tabbed page. No panel was rebuilt: each tab renders the exact component it always did (a promoted Cockpit section, a dashboard tab, or the honest Adapters placeholder).
+
+The model now partitions every surface into exactly one of **rail · hosted tab · off-rail**, and the tests assert that partition — plus each removal, each fold target, the full rail order, and the carried-over **"every prior surface still reachable (nothing lost)"** invariant, which now spans all three homes. **17 nav tests** (was 10); the removals and folds can't silently regress.
+
+**Invariant green: web build · 161 web tests (+9) · backend untouched (1073 tests).**
+
+**Prior (2026-07-14) — Epic AG follow-up 2: the avatar-Remove 400 + three UI fixes (#239):**
 
 **BUG — avatar Remove returned `HTTP 400: Bad Request` (the layer under the CORS fix).** Once CORS stopped blocking the DELETE preflight, the request finally reached the backend — and was refused **before any handler ran**. `web/lib/api.ts` set **`Content-Type: application/json` on every request**, body or not. A DELETE has no body, and Fastify's stock JSON parser rejects exactly that pair: **`FST_ERR_CTP_EMPTY_JSON_BODY`** — *"Body cannot be empty when content-type is set to 'application/json'"* → 400, which the client surfaced as a bare `HTTP 400`. The route, the Zod validators and the owner gate were all innocent; `avatar_url` was never nullable-constrained and the DELETE handler was correct all along. **Why the existing route test passed:** it injected the DELETE **without a Content-Type**, so it never reproduced the browser's request. Fixed at both layers — the client no longer claims a JSON body it isn't sending (`apiHeaders`), and the API now installs a **tolerant JSON parser** (`middleware/body-parser.ts`, mirroring the `cors.ts` precedent: a transport default that breaks a healthy route belongs in a tested module) that parses an **empty body to `{}`** while still refusing genuinely broken JSON with a message that names the problem. This fixes **every** bodiless write across the dashboard, not just the avatar. Regression-guarded by a test that drives the real handler with the **browser's exact headers**, plus one that asserts the raw Fastify default still 400s — so the bug can't come back unnoticed.
 
