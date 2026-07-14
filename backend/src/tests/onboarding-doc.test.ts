@@ -168,11 +168,15 @@ test('[ONB2] the connectivity block tells the agent to probe /api/health and whe
   assert.ok(/do not guess a url/i.test(d.connectivity.guidance))
 })
 
-test('[ONB2] join and claim are DESCRIBED but honestly labelled not-open (ONB3/ONB4 build them)', () => {
+test('[ONB2/ONB3] the doc reports the join and the claim SEPARATELY, and never promises a key it cannot give', () => {
+  // `doc()` builds with the default (hosted, no enable) posture: the join is closed here
+  // by the PROFILE, not by the surface being unbuilt. The claim is closed because it does
+  // not exist — two different facts, and the doc must not collapse them into one.
   const d = doc()
-  assert.equal(d.posture.joinOpen, false, 'PUBLIC_JOIN_IMPLEMENTED is false — the doc must not claim the flow is live')
+  assert.equal(d.posture.joinOpen, false, 'hosted without MC_ENABLE_REMOTE_ONBOARDING — the doc must not claim the flow is live')
   assert.equal(d.endpoints.join.status, 'not_yet_open')
   assert.equal(d.endpoints.join.landsIn, 'ONB3')
+  assert.equal(d.posture.claimOpen, false)
   assert.equal(d.endpoints.claim.status, 'not_yet_open')
   assert.equal(d.endpoints.claim.landsIn, 'ONB4')
   assert.ok(d.text.includes('not open yet') || d.text.includes('NOT OPEN YET'))
@@ -236,10 +240,16 @@ test('[ONB2] onboardingDocAccess: packaged is open, hosted is closed unless remo
   assert.equal(onboardingDocAccess({ MC_DEPLOYMENT_PROFILE: 'hosted', MC_ENABLE_REMOTE_ONBOARDING: '1' }).allowed, true)
   assert.ok(onboardingDocAccess({}).reason)
 
-  // Opening the DOC must never open the JOIN surface — that stays behind ONB3/ONB4.
+  // ONB1/ONB2 asserted here that enabling remote onboarding could not open the JOIN
+  // surface — true then, because the join did not exist. ONB3 built it, so the same
+  // flag now opens both, and the surviving invariant is the one below it: opening the
+  // join surface still cannot produce a CREDENTIAL. The claim is ONB4, and no env var
+  // reaches it.
   const posture = onboardingPosture({ MC_DEPLOYMENT_PROFILE: 'hosted', MC_ENABLE_REMOTE_ONBOARDING: '1' })
   assert.equal(posture.onboardingDocPublic, true)
-  assert.equal(posture.publicJoinEnabled, false, 'enabling remote onboarding must not open the join endpoint')
+  assert.equal(posture.publicJoinEnabled, true, 'ONB3 built the join surface; the operator enable opens it')
+  assert.equal(posture.tokenClaimEnabled, false, 'no flag may open the token claim — it does not exist until ONB4')
+  assert.equal(posture.operatorCanSeeClaimedKey, false)
 })
 
 test('[ONB2] the public doc route answers ONE flat 404 for every closed state (no enumeration oracle)', async () => {

@@ -1,14 +1,20 @@
-// Epic ONB / ONB1 — invite management (owner-gated) + the public adapter registry.
+// Epic ONB / ONB1+ONB3 — invite management (owner-gated), the public adapter
+// registry, the public onboarding document (ONB2), and — since ONB3 — the public
+// JOIN REQUEST + the owner-gated BOARD-APPROVAL GATE.
 //
-// What this file deliberately does NOT do: there is no public join endpoint, no
-// join request, no claim, and no token minting here. ONB1 ships the *object* and
-// the *taxonomy*; the public surface lands in ONB3/ONB4 behind the board-approval
-// gate + the per-IP rate limit. `GET /api/adapters` is the only public route, and
-// it is a static, org-agnostic, secret-free description of the runtimes we support.
+// What this file still deliberately does NOT do: mint or return a credential.
+// There is no claim endpoint and no token anywhere in it. A join creates a row in a
+// human's approval queue; an approval creates a CONTAINED agent with a null
+// `api_token_hash`. The one-time claim is ONB4, and `TOKEN_CLAIM_IMPLEMENTED` is
+// false until it lands.
 //
 // Thin routes: every decision lives in the pure services
 // (`services/agent-invites.ts`, `services/adapter-registry.ts`,
-// `services/deployment-profile.ts`); this layer only does DB + HTTP.
+// `services/deployment-profile.ts`, `services/join-requests.ts`); this layer only
+// does DB + HTTP. The two DB-touching exceptions are deliberate and named:
+// `services/invite-consume.ts` (the atomic single-use CAS) and
+// `services/join-approvals.ts` (the one decision path) — both own a statement whose
+// correctness IS the security property, so neither may be re-implemented at a route.
 
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
@@ -16,15 +22,23 @@ import { eq, and, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { requireOrgRole } from '../middleware/rbac'
+import { perIpRateLimit } from '../middleware/ratelimit'
 import { documentEndpoint } from '../services/openapi'
 import { publicRegistry, invitableAdapterTypes, joinableAdapterTypes } from '../services/adapter-registry'
-import { onboardingPosture, onboardingDocAccess } from '../services/deployment-profile'
+import { onboardingPosture, onboardingDocAccess, JOIN_RATE_LIMIT_PER_MINUTE, TOKEN_CLAIM_IMPLEMENTED } from '../services/deployment-profile'
 import {
   createInvite, inviteView, inviteUrls, parseAllowedAdapterTypes, isInviteTokenShaped, hashToken, isInviteUsable,
   DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS, DEFAULT_MAX_USES, MAX_MAX_USES, MAX_MESSAGE_CHARS,
   type InviteRecord,
 } from '../services/agent-invites'
 import { buildOnboardingDoc, buildOnboardingPrompt } from '../services/onboarding-doc'
+import { consumeInviteUse } from '../services/invite-consume'
+import { applyJoinDecision, toJoinRecord } from '../services/join-approvals'
+import {
+  buildJoinRequest, buildJoinApprovalCard, joinRequestView, joinAcceptedResponse, parseJoinDecision,
+  JOIN_APPROVAL_TYPE, JOIN_SECRET_SCOPE, MAX_AGENT_NAME_CHARS, MAX_CAPABILITIES, JOINABLE_CAPABILITIES,
+} from '../services/join-requests'
+import { encrypt } from '../services/secrets'
 
 const CreateInviteBody = z.object({
   allowedAdapterTypes: z.array(z.string()).min(1).optional(),
@@ -138,6 +152,7 @@ export async function agentInviteRoutes(app: FastifyInstance) {
         allowedAdapterTypes: record.allowedAdapterTypes,
         message: record.message,
         joinOpen: posture.publicJoinEnabled,
+        claimOpen: posture.tokenClaimEnabled,
       }),
       // ONB3/ONB4 open the join + claim endpoints. Until then the invite is an
       // object and a document, not yet a flow — and the doc says so, in the doc.
@@ -188,6 +203,188 @@ export async function agentInviteRoutes(app: FastifyInstance) {
       joinableAdapterTypes: joinableAdapterTypes(),
       defaults: { expiresInHours: DEFAULT_INVITE_TTL_HOURS, maxUses: DEFAULT_MAX_USES },
     }
+  })
+
+  // ─── ONB3 — the BOARD-APPROVAL GATE (owner-gated) ─────────────────────────
+  //
+  // The pending join request is ALSO a card in the shipped tri-state approvals
+  // queue (`approval_requests`, type `agent_join_request`) — that is what the
+  // Inbox/Governance panel renders, and deciding it there runs the SAME
+  // `applyJoinDecision` path (wired in `routes/tasks.ts`). These routes are the
+  // API twin of that card, not a second decision mechanism.
+
+  documentEndpoint('GET', '/api/orgs/:orgId/agent-join-requests', {
+    summary: 'List agent join requests (owner). Self-declared, unverified data. Never contains a secret value or a token.',
+    tag: 'onboarding',
+  })
+  app.get('/api/orgs/:orgId/agent-join-requests', { preHandler: requireOrgRole('owner') }, async (req) => {
+    const { orgId } = req.params as any
+    const { status } = req.query as { status?: string }
+    const conds = [eq(schema.agentJoinRequests.orgId, orgId)]
+    if (status) conds.push(eq(schema.agentJoinRequests.status, status))
+    const rows = await db.select().from(schema.agentJoinRequests)
+      .where(and(...conds))
+      .orderBy(desc(schema.agentJoinRequests.createdAt))
+      .limit(100)
+    return { joinRequests: rows.map((r) => joinRequestView(toJoinRecord(r))) }
+  })
+
+  for (const decision of ['approve', 'reject'] as const) {
+    const path = `/api/orgs/:orgId/agent-join-requests/:requestId/${decision}`
+    documentEndpoint('POST', path, {
+      summary: decision === 'approve'
+        ? 'Approve a join request (owner): creates the agent CONTAINED (low_trust_review, explicit capabilities) — and mints NO token (the one-time claim is ONB4).'
+        : 'Reject a join request (owner): nothing is minted, and the secrets the agent supplied are deleted.',
+      tag: 'onboarding',
+    })
+    app.post(path, { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+      const { orgId, requestId } = req.params as any
+      const result = await applyJoinDecision({
+        joinRequestId: requestId,
+        orgId,
+        decision: decision === 'approve' ? 'approved' : 'rejected',
+        actor: (req as any).auth?.userId ?? 'unknown',
+      })
+      if (result.ok === false) return reply.code(result.code).send({ error: result.error })
+      return {
+        joinRequest: joinRequestView(result.record),
+        // Invariant #4, restated where an operator would look for a key: there is
+        // none, and there is nothing here that could ever be one.
+        agentToken: null,
+        note: 'The agent was created contained (low_trust_review) with NO API key. The one-time key claim lands in ONB4; until then this agent can authenticate to nothing.',
+      }
+    })
+  }
+}
+
+// ─── ONB3 — the PUBLIC JOIN REQUEST ─────────────────────────────────────────
+//
+// The first UNAUTHENTICATED WRITE in the system, and the reason every control in
+// this epic exists. What holds it safe, in order:
+//
+//  * **It cannot produce a credential.** Not a token, not a claim secret, not a
+//    parked hash. It produces a row in a human's queue. A leaked invite is worth an
+//    inbox item, not an agent.
+//  * **Its exposure follows the deployment profile** (`publicJoinEnabled`): packaged
+//    = loopback-trusted, open; hosted = closed unless the operator explicitly set
+//    `MC_ENABLE_REMOTE_ONBOARDING` — which is FALSE on our live backend today, so
+//    this route answers the same flat 404 as an unknown invite in production.
+//  * **The single use is spent atomically** (`consumeInviteUse` — ONB1 audit H1), and
+//    the join row is written only after that CAS is won.
+//  * **It is per-IP rate limited** (the ONB2 re-audit's M-3: rate limiting must exist
+//    before remote onboarding is ever enabled in prod). `perIpRateLimit` had zero
+//    call-sites since it was written; this is its caller.
+//  * **The body is strictly typed and registry-validated, with NO free-text field**
+//    (`.strict()` — an unknown key is refused, not ignored). A secret in free text
+//    under an innocuous key would reach `audit_logs.metadata` unredacted; the defence
+//    is that no such field exists (AUDIT-ONB2-hardening, ruling 3).
+//  * **Declared secrets go to the ENCRYPTED store**, scoped to the not-yet-approved
+//    request (an inert scope), never to a plaintext column and never to a log.
+//
+// Every closed state — bad shape, unknown/expired/revoked/exhausted invite, lost
+// consume race, posture closed — collapses to ONE identical flat 404.
+
+const JoinBody = z.object({
+  agentName: z.string().min(1).max(MAX_AGENT_NAME_CHARS),
+  adapterType: z.string().min(1).max(64),
+  capabilities: z.array(z.string().max(64)).min(1).max(MAX_CAPABILITIES),
+  agentDefaultsPayload: z.record(z.unknown()).optional(),
+}).strict() // ← the carried audit caveat: an undeclared (free-text) field is REFUSED.
+
+export async function agentJoinRoutes(app: FastifyInstance) {
+  documentEndpoint('POST', '/api/agent-invites/:token/join', {
+    summary: 'Submit a join request (public, invite-token-bearer, profile-gated, rate-limited). Creates NO agent and NO credential — it creates a pending board-approval item. Returns a requestId and the ONB4 claim path; NEVER a token.',
+    body: JoinBody,
+    tag: 'onboarding',
+  })
+  app.post('/api/agent-invites/:token/join', { preHandler: perIpRateLimit(JOIN_RATE_LIMIT_PER_MINUTE) }, async (req, reply) => {
+    const notFound = () => reply.code(404).send({ error: 'Not found' })
+    const posture = onboardingPosture(process.env)
+    // Closed by posture → indistinguishable from an unknown invite. A "this exists
+    // but the door is shut" would tell an attacker their token is real.
+    if (!posture.publicJoinEnabled) return notFound()
+
+    const { token } = req.params as { token: string }
+    // Shape-check BEFORE we hash attacker input or spend a DB round-trip.
+    if (!isInviteTokenShaped(token)) return notFound()
+
+    const parsed = JoinBody.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      // Field-level errors only — never an echo of the submitted values, which may
+      // carry a credential the sender put in the wrong field.
+      return reply.code(400).send({
+        error: 'Invalid join request',
+        details: parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`),
+        allowedCapabilities: JOINABLE_CAPABILITIES,
+      })
+    }
+
+    const row = await db.query.agentInvites.findFirst({
+      where: eq(schema.agentInvites.tokenHash, hashToken(token)),
+    })
+    if (!row) return notFound()
+    const invite = toRecord(row)
+    if (!isInviteUsable(invite)) return notFound()
+
+    const built = buildJoinRequest({
+      invite,
+      agentName: parsed.data.agentName,
+      adapterType: parsed.data.adapterType,
+      capabilities: parsed.data.capabilities,
+      agentDefaultsPayload: parsed.data.agentDefaultsPayload,
+    })
+    if (built.ok === false) {
+      // `not_found` (a closed invite) is the flat 404. `adapter_not_allowed` and
+      // `invalid` are safe to explain: the caller already holds a valid invite, and
+      // a silent 404 would send a legitimate agent chasing a ghost.
+      if (built.publicReason === 'not_found') return notFound()
+      return reply.code(400).send({ error: 'Join request refused', details: built.errors })
+    }
+
+    // ── ONB1 audit H1: the atomic single-use consume. Nothing is written until
+    //    this CAS is won, and a lost race is the same flat 404 as everything else. ──
+    const now = new Date()
+    const won = await consumeInviteUse(invite.id, now)
+    if (!won) return notFound()
+
+    const record = built.record
+
+    // The declared secrets, encrypted at rest, parked against the REQUEST (an inert
+    // scope: `resolveSecretsForAgent` resolves only `company` and `agent`, so no agent
+    // can read these). Approval re-scopes them to the agent that then exists; rejection
+    // deletes them. They are never written to a config column and never logged.
+    for (const [key, value] of Object.entries(built.secrets)) {
+      await db.insert(schema.secrets).values({
+        id: randomUUID(), orgId: record.orgId, scope: JOIN_SECRET_SCOPE, scopeId: record.id,
+        key, valueEncrypted: encrypt(value), createdAt: now,
+      } as any)
+    }
+
+    // The board's queue item — a row in the SHIPPED tri-state approvals store, with a
+    // MACHINE-GENERATED summary and every agent-authored value under `selfDeclared`
+    // and labelled unverified (audit R8).
+    const card = buildJoinApprovalCard(record)
+    const approvalId = randomUUID()
+    await db.insert(schema.approvalRequests).values({
+      id: approvalId, orgId: record.orgId, type: JOIN_APPROVAL_TYPE, summary: card.summary,
+      payload: card.payload, status: 'pending', requestedByAgentId: null,
+      decidedBy: null, decidedAt: null, createdAt: now,
+    } as any)
+    record.approvalRequestId = approvalId
+
+    await db.insert(schema.agentJoinRequests).values({
+      id: record.id, orgId: record.orgId, inviteId: record.inviteId, agentName: record.agentName,
+      adapterType: record.adapterType, runtime: record.runtime,
+      capabilities: JSON.stringify(record.capabilities),
+      config: JSON.stringify(record.config),
+      secretKeys: JSON.stringify(record.secretKeys),
+      status: record.status, approvalRequestId: approvalId, agentId: null,
+      decidedBy: null, decidedAt: null, createdAt: now,
+    } as any)
+
+    reply.code(201)
+    // A requestId and a path. No token, no claim secret, no agent id.
+    return joinAcceptedResponse(record, `/api/agent-join-requests/${record.id}/claim-api-key`, TOKEN_CLAIM_IMPLEMENTED)
   })
 }
 

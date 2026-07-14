@@ -196,6 +196,19 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_invites_org ON agent_invites(org_id)`)
   } catch { /* already exists */ }
 
+  // Epic ONB / ONB3: agent_join_requests — the self-description a joining agent
+  // submits, held for a human decision. Additive and idempotent: no existing table
+  // is touched, nothing is backfilled, and an org with no invites never grows a row.
+  // `status` defaults to `pending_approval` — the safe default is "a human has not
+  // decided yet", never "approved". No credential column exists here BY DESIGN: the
+  // one-time claim (and its hashed, expiring secret) lands in ONB4.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_join_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, invite_id TEXT NOT NULL, agent_name TEXT NOT NULL, adapter_type TEXT NOT NULL, runtime TEXT NOT NULL, capabilities TEXT NOT NULL, config TEXT NOT NULL, secret_keys TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending_approval', approval_request_id TEXT, agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_org ON agent_join_requests(org_id)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_invite ON agent_join_requests(invite_id)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_status ON agent_join_requests(status)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

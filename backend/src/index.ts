@@ -31,7 +31,7 @@ import { arturitaConverseRoutes } from './routes/arturita-converse'
 import { arturitaPipelineRoutes } from './routes/arturita-pipeline'
 import { arturitaCustomModelRoutes } from './routes/arturita-custom-model'
 import { customModelRoutes } from './routes/custom-models'
-import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from './routes/agent-invites'
+import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from './routes/agent-invites'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin, auditLogQueryRoutes } from './middleware/audit-log'
@@ -165,6 +165,16 @@ async function start() {
   // profile (`onboardingDocAccess`), and it mints nothing. The token is redacted out
   // of every log sink before persistence (services/log-redaction.ts).
   await app.register(agentInviteDocRoutes)
+  // Epic ONB / ONB3 — the public JOIN REQUEST. Unauthenticated by design (the invite
+  // token is the bearer) and the first unauthenticated WRITE in the app, so it ships
+  // with the controls that make that safe: it mints NO credential (it creates a row in
+  // the owner's approval queue), its exposure follows the deployment profile
+  // (`publicJoinEnabled` — a hosted deployment without MC_ENABLE_REMOTE_ONBOARDING
+  // answers a flat 404, which is production today), the single use is spent by an
+  // atomic conditional UPDATE, and it is per-IP rate limited. There is still NO claim
+  // endpoint: `TOKEN_CLAIM_IMPLEMENTED` is false and `auth-scoping.test.ts` fails if
+  // one appears before ONB4.
+  await app.register(agentJoinRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
   // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope

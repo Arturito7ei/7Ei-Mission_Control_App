@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createInvite, generateInviteToken, isInviteTokenShaped, hashToken, hashesEqual,
-  inviteStatus, isInviteUsable, checkInviteAccepts, consumeUsePatch, inviteView, inviteUrls,
+  inviteStatus, isInviteUsable, checkInviteAccepts, inviteView, inviteUrls,
   parseAllowedAdapterTypes,
   INVITE_TOKEN_PREFIX, DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS, DEFAULT_MAX_USES, MAX_MAX_USES,
   type InviteRecord,
@@ -89,6 +89,12 @@ describe('[ONB1] createInvite — the operator-approved defaults', () => {
 describe('[ONB1] invite state machine', () => {
   const base = (): InviteRecord => mint().record
 
+  // ONB1's `consumeUsePatch` is DELETED (its audit's H1: an advisory compare-and-set is
+  // not a compare-and-set). These tests are about the pure STATE MACHINE, so they move
+  // the counter themselves; the real consume is one atomic SQL UPDATE and is proven
+  // against a live database in `onb3-join-flow.test.ts`.
+  const spendOneUse = (r: InviteRecord) => { r.usedCount += 1; r.lastAcceptedAt = NOW }
+
   it('active while unrevoked, unexpired and unexhausted', () => {
     const r = base()
     assert.equal(inviteStatus(r, NOW), 'active')
@@ -104,7 +110,7 @@ describe('[ONB1] invite state machine', () => {
 
   it('is "accepted" once its uses are spent — and a single-use invite is spent after one', () => {
     const r = base()
-    Object.assign(r, consumeUsePatch(r, NOW))
+    spendOneUse(r)
     assert.equal(r.usedCount, 1)
     assert.equal(inviteStatus(r, NOW), 'accepted')
     assert.equal(isInviteUsable(r, NOW), false)
@@ -112,10 +118,10 @@ describe('[ONB1] invite state machine', () => {
 
   it('a multi-use invite stays active until the last use', () => {
     const r = mint({ maxUses: 3 }).record
-    Object.assign(r, consumeUsePatch(r, NOW))
+    spendOneUse(r)
     assert.equal(inviteStatus(r, NOW), 'active')
-    Object.assign(r, consumeUsePatch(r, NOW))
-    Object.assign(r, consumeUsePatch(r, NOW))
+    spendOneUse(r)
+    spendOneUse(r)
     assert.equal(inviteStatus(r, NOW), 'accepted')
   })
 

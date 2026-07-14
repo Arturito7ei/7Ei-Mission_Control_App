@@ -134,6 +134,10 @@
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| POST | `/api/agent-invites/:token/join` | **No** (the invite token is the bearer) | **Epic ONB / ONB3 — the join request.** Public, profile-gated (`publicJoinEnabled`: `packaged` open · `hosted` only with `MC_ENABLE_REMOTE_ONBOARDING` — **closed in production today**), per-IP rate limited (10/min). Body `{ agentName, adapterType, capabilities[], agentDefaultsPayload }` — **strictly typed; an unknown key is refused. There is no free-text field.** Creates **no agent and no credential**: it files a board-approval item and returns `{ requestId, status, claimPath }`. Unknown/expired/revoked/exhausted/lost-race → **one flat 404**. |
+| GET | `/api/orgs/:orgId/agent-join-requests` | Yes (owner) | List join requests (`?status=`). Self-declared, unverified data; never a secret value or a token. |
+| POST | `/api/orgs/:orgId/agent-join-requests/:requestId/approve` | Yes (owner) | **The board-approval gate.** Creates the agent **contained** (`low_trust_review` regardless of runtime, explicit capabilities) and **mints NO token** (`api_token_hash` is `NULL`; the one-time claim is ONB4). Also decidable from the Inbox card via `POST /api/approvals/:id/decide` — the same path. A second decision is a 409. |
+| POST | `/api/orgs/:orgId/agent-join-requests/:requestId/reject` | Yes (owner) | Nothing is minted; the secrets the joining agent supplied are deleted. |
 | GET | `/api/orgs/:orgId/audit-log` | Yes (owner) | Query audit logs. `?action=X&limit=N`. **Note:** the audit hook is not enabled (ONB2 audit H-1 — operator decision), so this returns `{ logs: [] }` today. |
 | GET | `/api/orgs/:orgId/traces` | Yes (owner) | Recent telemetry spans **for that org**. Was `GET /api/traces` (removed): one process-wide span buffer served to any authenticated caller is a cross-tenant metadata leak. Spans with no `org.id` (today: every `llm.call` span) are attributable to no org and are returned to nobody. |
 | GET | `/api/orgs/:orgId/usage` | Yes | Current usage stats |

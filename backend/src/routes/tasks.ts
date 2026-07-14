@@ -22,6 +22,10 @@ import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../serv
 import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
+// Epic ONB / ONB3 — deciding an `agent_join_request` card in this queue IS the
+// board-approval gate; it runs the same decision path as the dedicated owner routes.
+import { JOIN_APPROVAL_TYPE, joinRequestView, parseJoinDecision } from '../services/join-requests'
+import { applyJoinDecision } from '../services/join-approvals'
 import { isDangerousType, prepareApprovalRecord } from '../services/dangerous-approvals'
 import { evaluateLowTrustAction, buildReviewCaseRow, REVIEW_CASE_TYPE } from '../services/review'
 import { hashToken, isFresh } from '../services/arturita-session'
@@ -462,7 +466,33 @@ export async function taskRoutes(app: FastifyInstance) {
       return reply.code(code).send({ error: result.error })
     }
     await db.update(schema.approvalRequests).set(result.patch!).where(eq(schema.approvalRequests.id, id))
-    return { approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }) }
+
+    // Epic ONB / ONB3 — the board-approval gate. An `agent_join_request` card in this
+    // queue is not a note-to-self: deciding it is what creates (or refuses) the agent.
+    // We funnel it through the SAME `applyJoinDecision` the dedicated owner routes use,
+    // so an owner clicking Approve in the Inbox cannot mark a request approved without
+    // the contained agent actually being created — and there is no second code path to
+    // drift. `revision_requested` (the third tri-state) is not a join outcome: the card
+    // stays as the reviewer left it and no agent is created.
+    let joinRequest: unknown = undefined
+    if (approval.type === JOIN_APPROVAL_TYPE) {
+      const joinRequestId = String((approval.payload as any)?.joinRequestId ?? '')
+      const joinDecision = parseJoinDecision(decision)
+      if (joinRequestId && joinDecision) {
+        const applied = await applyJoinDecision({
+          joinRequestId, orgId: approval.orgId, decision: joinDecision,
+          actor: (req as any).auth?.userId ?? (req as any).userId ?? 'human',
+        })
+        // A 409 here means it was already decided (e.g. via the dedicated route) — the
+        // approval card is now closed either way, which is the state the operator wants.
+        joinRequest = applied.ok === true ? joinRequestView(applied.record) : { error: applied.error }
+      }
+    }
+
+    return {
+      approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }),
+      ...(joinRequest !== undefined ? { joinRequest, agentToken: null } : {}),
+    }
   })
 
   app.get('/api/orgs/:orgId/tasks', async (req) => {
