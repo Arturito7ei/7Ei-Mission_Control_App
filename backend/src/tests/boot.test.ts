@@ -29,6 +29,7 @@ import { telegramWebhookRoutes } from '../routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { customModelRoutes } from '../routes/custom-models'
+import { agentInviteRoutes, adapterRegistryRoutes } from '../routes/agent-invites'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
 
@@ -61,6 +62,7 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(arturitaWalletRoutes)
     await secured.register(customModelRoutes)
     await secured.register(arturitaVoiceRoutes)
+    await secured.register(agentInviteRoutes)
   })
 
   // Public / externally-called route groups.
@@ -68,6 +70,7 @@ test('app boots: all route groups register without collision', async () => {
   await app.register(jiraWebhookRoutes)
   await app.register(arturitaPublicRoutes)
   await app.register(modelRoutes)
+  await app.register(adapterRegistryRoutes)
   await app.register(telegramWebhookRoutes)
   await app.register(agentApiRoutes)
   await app.register(routineTriggerRoutes)

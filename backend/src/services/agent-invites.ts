@@ -60,6 +60,27 @@ export function isInviteTokenShaped(token: unknown): boolean {
   return t.startsWith(INVITE_TOKEN_PREFIX) && new RegExp(`^${INVITE_TOKEN_PREFIX}[0-9a-f]{${INVITE_TOKEN_BYTES * 2}}$`).test(t)
 }
 
+/**
+ * Parse the stored `allowed_adapter_types` JSON column into the record's field.
+ *
+ * FAIL-CLOSED, and the distinction matters: `null` means "any joinable adapter"
+ * (the operator never restricted this invite), so a *corrupt* value must NOT
+ * decay to null — that would silently WIDEN an invite the operator deliberately
+ * narrowed. Unparseable / non-array / empty content therefore yields `[]`, an
+ * allow-list that admits nothing, and the invite is inert until re-created.
+ */
+export function parseAllowedAdapterTypes(raw: string | null | undefined): string[] | null {
+  if (raw === null || raw === undefined || raw === '') return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const types = parsed.map(String).filter((t) => t.length > 0)
+    return types.length > 0 ? Array.from(new Set(types)) : []
+  } catch {
+    return []
+  }
+}
+
 /** The persisted row (mirrors the `agent_invites` table). */
 export interface InviteRecord {
   id: string
