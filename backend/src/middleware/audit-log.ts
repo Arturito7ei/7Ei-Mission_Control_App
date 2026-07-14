@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { redactPath } from '../services/log-redaction'
 
 // Fields that should never appear in audit metadata
 const SENSITIVE_KEYS = ['key', 'token', 'secret', 'password', 'apiKey', 'api_key', 'refreshToken', 'accessToken']
@@ -37,33 +38,79 @@ function classifyAction(method: string, path: string): string {
 
 const SENSITIVE_METHODS = ['POST', 'DELETE', 'PATCH', 'PUT']
 
-export async function auditLogPlugin(app: FastifyInstance) {
+/** The row the hook persists. Built by a pure function so the redaction is
+ *  testable without a DB, and so there is exactly ONE place a path is written. */
+export interface AuditRow {
+  id: string
+  orgId: string | null
+  userId: string | null
+  action: string
+  method: string
+  path: string
+  statusCode: number
+  durationMs: number
+  metadata: Record<string, unknown> | null
+  createdAt: Date
+}
+
+/**
+ * Build the audit row for one response.
+ *
+ * ONB2 / audit finding H2: the path is REDACTED here (`redactPath`) — invite
+ * tokens are bearer credentials carried in the URL (`/api/agent-invites/mci_inv_…`),
+ * and this row is persisted into a queryable table. A raw token must never reach
+ * `audit_logs.path`. The redaction happens before the value is used at all — not
+ * even the derived `action` sees the raw URL.
+ */
+export function buildAuditRow(input: {
+  method: string
+  url: string
+  statusCode: number
+  durationMs: number
+  userId?: string | null
+  orgId?: string | null
+  body?: unknown
+  now?: Date
+}): AuditRow {
+  const path = redactPath(input.url)
+  return {
+    id: randomUUID(),
+    orgId: input.orgId ?? null,
+    userId: input.userId ?? null,
+    action: classifyAction(input.method, path),
+    method: input.method,
+    path,
+    statusCode: input.statusCode,
+    durationMs: input.durationMs,
+    metadata: SENSITIVE_METHODS.includes(input.method) && input.body ? sanitizeBody(input.body) : null,
+    createdAt: input.now ?? new Date(),
+  }
+}
+
+/** Where an audit row goes. Injectable so a test can prove what would be
+ *  persisted without standing up Turso; production always uses the DB sink. */
+export type AuditSink = (row: AuditRow) => void
+
+const dbSink: AuditSink = (row) => {
+  db.insert(schema.auditLogs).values(row).catch(err => console.warn('Audit log insert failed:', err))
+}
+
+export async function auditLogPlugin(app: FastifyInstance, opts: { sink?: AuditSink } = {}) {
+  const sink = opts.sink ?? dbSink
+
   app.addHook('onResponse', async (req, reply) => {
     // Skip health/ready checks
     if (req.url === '/health' || req.url === '/ready' || req.url === '/api/health') return
 
-    const userId = (req as any).auth?.userId ?? null
-    const orgId = (req.params as any)?.orgId ?? null
-    const action = classifyAction(req.method, req.url)
-    const durationMs = Math.round(reply.elapsedTime)
-
-    let metadata: Record<string, unknown> | null = null
-    if (SENSITIVE_METHODS.includes(req.method) && req.body) {
-      metadata = sanitizeBody(req.body)
-    }
-
-    db.insert(schema.auditLogs).values({
-      id: randomUUID(),
-      orgId,
-      userId,
-      action,
+    sink(buildAuditRow({
       method: req.method,
-      path: req.url.split('?')[0],
+      url: req.url,
       statusCode: reply.statusCode,
-      durationMs,
-      metadata,
-      createdAt: new Date(),
-    }).catch(err => console.warn('Audit log insert failed:', err))
+      durationMs: Math.round(reply.elapsedTime),
+      userId: (req as any).auth?.userId ?? null,
+      orgId: (req.params as any)?.orgId ?? null,
+      body: req.body,
+    }))
   })
 
   // Query endpoint

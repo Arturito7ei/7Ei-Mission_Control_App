@@ -18,12 +18,13 @@ import { z } from 'zod'
 import { requireOrgRole } from '../middleware/rbac'
 import { documentEndpoint } from '../services/openapi'
 import { publicRegistry, invitableAdapterTypes, joinableAdapterTypes } from '../services/adapter-registry'
-import { onboardingPosture } from '../services/deployment-profile'
+import { onboardingPosture, onboardingDocAccess } from '../services/deployment-profile'
 import {
-  createInvite, inviteView, inviteUrls, parseAllowedAdapterTypes,
+  createInvite, inviteView, inviteUrls, parseAllowedAdapterTypes, isInviteTokenShaped, hashToken, isInviteUsable,
   DEFAULT_INVITE_TTL_HOURS, MAX_INVITE_TTL_HOURS, DEFAULT_MAX_USES, MAX_MAX_USES, MAX_MESSAGE_CHARS,
   type InviteRecord,
 } from '../services/agent-invites'
+import { buildOnboardingDoc, buildOnboardingPrompt } from '../services/onboarding-doc'
 
 const CreateInviteBody = z.object({
   allowedAdapterTypes: z.array(z.string()).min(1).optional(),
@@ -35,6 +36,27 @@ const CreateInviteBody = z.object({
 /** The public base URL the onboarding doc's links are built from. */
 function baseUrl(): string {
   return String(process.env.PUBLIC_URL ?? 'https://7ei-backend.fly.dev').replace(/\/+$/, '')
+}
+
+/**
+ * The base URLs a joining agent should probe, in order (ONB2's connectivity block).
+ *
+ * Ours is the easy direction: we are a hosted backend on one stable public URL, so
+ * the list is usually one entry — but the doc ships the *mechanism* (probe each,
+ * take the first that answers `/api/health`) because a packaged/self-hosted Mission
+ * Control (Epic H) will have several, and because the agent, not the server, is the
+ * only party that knows what it can actually reach.
+ *
+ * `MC_BASE_URL_CANDIDATES` (comma-separated) lets a self-hosted operator add
+ * addresses without a code change. Never a candidate we invent: an unreachable URL
+ * in this list costs the agent a timeout and teaches it nothing.
+ */
+function baseUrlCandidates(): string[] {
+  const extra = String(process.env.MC_BASE_URL_CANDIDATES ?? '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter((s) => s.length > 0)
+  return Array.from(new Set([baseUrl(), ...extra]))
 }
 
 /** DB row → the pure service's record shape (JSON columns parsed, dates hydrated).
@@ -89,15 +111,29 @@ export async function agentInviteRoutes(app: FastifyInstance) {
     } as any)
 
     reply.code(201)
+    const urls = inviteUrls(baseUrl(), token)
+    const posture = onboardingPosture(process.env)
     // The raw token crosses the wire exactly once, here. It is never stored, never
     // logged, and cannot be re-read — a lost invite is re-created, not recovered.
+    // The pastable prompt is generated in the SAME response for the same reason:
+    // it embeds the token, so this is the only moment it can exist (ONB6 surfaces
+    // it with a copy button; the operator never fetches it again).
     return {
       invite: inviteView(record),
       inviteToken: token,
-      ...inviteUrls(baseUrl(), token),
-      // ONB2 renders the pastable onboarding prompt; ONB3/ONB4 open the join +
-      // claim endpoints. Until then the invite is an object, not yet a flow.
-      joinEnabled: onboardingPosture(process.env).publicJoinEnabled,
+      ...urls,
+      onboardingPrompt: buildOnboardingPrompt({
+        token,
+        onboardingTextUrl: urls.onboardingTextUrl,
+        onboardingJsonUrl: urls.onboardingUrl,
+        allowedAdapterTypes: record.allowedAdapterTypes,
+        message: record.message,
+        joinOpen: posture.publicJoinEnabled,
+      }),
+      // ONB3/ONB4 open the join + claim endpoints. Until then the invite is an
+      // object and a document, not yet a flow — and the doc says so, in the doc.
+      joinEnabled: posture.publicJoinEnabled,
+      onboardingDocPublic: posture.onboardingDocPublic,
     }
   })
 
@@ -143,6 +179,81 @@ export async function agentInviteRoutes(app: FastifyInstance) {
       joinableAdapterTypes: joinableAdapterTypes(),
       defaults: { expiresInHours: DEFAULT_INVITE_TTL_HOURS, maxUses: DEFAULT_MAX_USES },
     }
+  })
+}
+
+// ─── Public: the per-invite onboarding document (ONB2) ──────────────────────
+//
+// The FIRST token-addressed route in the system. Three properties hold it safe:
+//
+//  * **It is not a credential and mints none.** It restates the invite the caller
+//    already holds and describes the join/claim endpoints — which ONB3/ONB4 build
+//    and which the doc honestly labels "not open yet". Nothing here can be spent.
+//  * **Its exposure follows the deployment profile** (`onboardingDocAccess`):
+//    packaged/loopback-trusted → served; hosted → served only when the operator
+//    explicitly enabled remote onboarding. Closed answers the same flat 404 as an
+//    unknown invite, so it is not an oracle either way.
+//  * **The token in the path is redacted before any log** — `services/log-redaction.ts`,
+//    applied in `middleware/audit-log.ts` and in Fastify's request serializer.
+//    Without that, this route would write working invite links into `audit_logs`.
+//
+// Every closed state — bad shape, unknown, expired, revoked, exhausted, doc closed
+// by posture — collapses to ONE identical 404. Distinguishing them would turn this
+// endpoint into an enumeration oracle for valid invite tokens.
+
+export async function agentInviteDocRoutes(app: FastifyInstance) {
+  const notFound = (reply: any) => reply.code(404).send({ error: 'Not found' })
+
+  /** Load the invite behind a raw token, or null for every closed state. */
+  async function loadInvite(rawToken: string): Promise<InviteRecord | null> {
+    if (!onboardingDocAccess(process.env).allowed) return null
+    // Shape-check BEFORE we hash attacker input or spend a DB round-trip.
+    if (!isInviteTokenShaped(rawToken)) return null
+    const row = await db.query.agentInvites.findFirst({
+      where: eq(schema.agentInvites.tokenHash, hashToken(rawToken)),
+    })
+    if (!row) return null
+    const record = toRecord(row)
+    // An expired/revoked/exhausted invite is as good as unknown: its door is shut,
+    // and the doc is the thing behind the door.
+    return isInviteUsable(record) ? record : null
+  }
+
+  function render(record: InviteRecord, token: string) {
+    return buildOnboardingDoc({
+      token,
+      invite: record,
+      posture: onboardingPosture(process.env),
+      baseUrlCandidates: baseUrlCandidates(),
+      // The registry is the single source of truth for every adapter shape printed.
+      adapters: publicRegistry() as any,
+    })
+  }
+
+  documentEndpoint('GET', '/api/agent-invites/:token/onboarding.txt', {
+    summary: 'The per-invite onboarding document (text/markdown). Public, invite-token-bearer, profile-gated. Unknown/expired/revoked/closed → the same flat 404.',
+    tag: 'onboarding',
+  })
+  app.get('/api/agent-invites/:token/onboarding.txt', async (req, reply) => {
+    const { token } = req.params as { token: string }
+    const record = await loadInvite(token)
+    if (!record) return notFound(reply)
+    reply.header('content-type', 'text/markdown; charset=utf-8')
+    // Not a credential, but it is addressed by one — keep it out of every cache.
+    reply.header('cache-control', 'no-store')
+    return render(record, token).text
+  })
+
+  documentEndpoint('GET', '/api/agent-invites/:token/onboarding', {
+    summary: 'The per-invite onboarding document (JSON twin of onboarding.txt). Same content, structured.',
+    tag: 'onboarding',
+  })
+  app.get('/api/agent-invites/:token/onboarding', async (req, reply) => {
+    const { token } = req.params as { token: string }
+    const record = await loadInvite(token)
+    if (!record) return notFound(reply)
+    reply.header('cache-control', 'no-store')
+    return render(record, token)
   })
 }
 
