@@ -183,6 +183,19 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_files_org ON agent_files(org_id)`)
   } catch { /* already exists */ }
 
+  // Epic ONB / ONB1: agent_invites — the invite object. Hash-only storage (the
+  // raw `mci_inv_*` token is shown once at create and never persisted), a
+  // server-side TTL, revocable, SINGLE-USE by default (`max_uses` defaults to 1;
+  // multi-use is an explicit per-invite opt-in). Nothing is backfilled and no
+  // existing table is touched — an org with no invites behaves exactly as before.
+  // The unique index on `token_hash` makes a duplicate mint a hard failure rather
+  // than two invites sharing one door.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_invites (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, token_hash TEXT NOT NULL, allowed_adapter_types TEXT, max_uses INTEGER NOT NULL DEFAULT 1, used_count INTEGER NOT NULL DEFAULT 0, message TEXT, created_by TEXT NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER, last_accepted_at INTEGER, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_invites_token_hash ON agent_invites(token_hash)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_invites_org ON agent_invites(org_id)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

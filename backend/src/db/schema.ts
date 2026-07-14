@@ -318,6 +318,28 @@ export const arturitaBindings = sqliteTable('arturita_bindings', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Epic ONB / ONB1: agent invites — the door an external agent walks through to
+// describe itself. NOT a credential: only the sha256 HASH of the invite token is
+// stored (the raw token is shown to the operator exactly once at create), the
+// invite has a server-side TTL, it is revocable, and it is SINGLE-USE by default
+// (`max_uses` 1; multi-use is an explicit opt-in). Same hash + TTL + single-use
+// pattern as `arturita_bindings`. `used_count` is consumed on accept (ONB3).
+export const agentInvites = sqliteTable('agent_invites', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  tokenHash: text('token_hash').notNull(),
+  // JSON array of adapterTypes this invite may onboard; null = any joinable type.
+  allowedAdapterTypes: text('allowed_adapter_types'),
+  maxUses: integer('max_uses').notNull().default(1),
+  usedCount: integer('used_count').notNull().default(0),
+  message: text('message'),
+  createdBy: text('created_by').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  lastAcceptedAt: integer('last_accepted_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 // Arturita A1: command nonce ledger — replay guard (Telegram redelivery /
 // captured-voice replay). Unique (org, nonce); a repeat insert is a replay.
 export const arturitaNonces = sqliteTable('arturita_nonces', {

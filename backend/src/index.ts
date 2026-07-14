@@ -31,6 +31,7 @@ import { arturitaConverseRoutes } from './routes/arturita-converse'
 import { arturitaPipelineRoutes } from './routes/arturita-pipeline'
 import { arturitaCustomModelRoutes } from './routes/arturita-custom-model'
 import { customModelRoutes } from './routes/custom-models'
+import { agentInviteRoutes, adapterRegistryRoutes } from './routes/agent-invites'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
@@ -114,6 +115,7 @@ async function start() {
     await secured.register(arturitaPipelineRoutes) // Arturita free-first pipeline chains (LLM/STT/TTS) config (J2)
     await secured.register(arturitaCustomModelRoutes) // Arturita custom operator-defined LLM insertion (J2+)
     await secured.register(customModelRoutes)         // Epic AG — custom adapters/models for agents
+    await secured.register(agentInviteRoutes)         // Epic ONB — owner-gated invite create/list/revoke + posture
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
@@ -126,6 +128,11 @@ async function start() {
   await app.register(jiraWebhookRoutes)    // POST /jira/webhook/:orgId (receiver)
   await app.register(arturitaPublicRoutes) // POST /orgs/:orgId/arturita/panic (owner-authed via session token)
   await app.register(modelRoutes)
+  // Epic ONB / ONB1 — the adapter registry. Public and safe to be: a static,
+  // org-agnostic, secret-free description of the runtimes we speak, which a
+  // joining agent must be able to read BEFORE it holds any credential. No invite,
+  // join or claim endpoint is public — those land in ONB3/ONB4 behind the gate.
+  await app.register(adapterRegistryRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
   // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope
