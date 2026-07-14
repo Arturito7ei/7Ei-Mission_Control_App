@@ -198,7 +198,10 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     if (!agent) return reply.code(404).send({ error: 'Agent not found' })
 
     const library = await db.select().from(schema.skills)
-    const resolved = resolveSelection(library, (req.body as { skills?: unknown })?.skills)
+    // Pass what the agent already has: an orphaned skill (library row deleted
+    // underneath it) is echoed back by the checkbox list and must not be treated
+    // as an unknown name, or every toggle on that agent fails.
+    const resolved = resolveSelection(library, (req.body as { skills?: unknown })?.skills, (agent.skills as string[]) ?? [])
     if (resolved.ok === false) return reply.code(400).send({ error: resolved.error })
 
     await db.update(schema.agents).set({ skills: resolved.names }).where(eq(schema.agents.id, agentId))

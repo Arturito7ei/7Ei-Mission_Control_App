@@ -49,21 +49,34 @@ export function splitSkills(library: SkillLike[], installedNames: string[]) {
 
 /**
  * Resolve a requested selection (skill names) against the library.
- * Unknown names are reported, not written — the agent's skill list may only ever
- * contain names the library actually has.
+ *
+ * A name the library does not have is refused — the agent's skill list may only
+ * ever gain names the library actually has. The exception is a name the agent is
+ * ALREADY carrying (an orphan: the library row was deleted underneath it). The
+ * checkbox list resends the whole selection, orphans included, so refusing those
+ * made every toggle 400 on any agent that had one — the tab was unusable and
+ * looked read-only. An orphan the operator kept ticked is kept; unticking it
+ * drops it, which is the only way to get rid of one.
  */
-export function resolveSelection(library: SkillLike[], requested: unknown): { ok: true; names: string[] } | { ok: false; error: string } {
+export function resolveSelection(
+  library: SkillLike[],
+  requested: unknown,
+  stored: string[] = [],
+): { ok: true; names: string[] } | { ok: false; error: string } {
   if (!Array.isArray(requested)) return { ok: false, error: 'skills must be an array of skill names' }
   if (!requested.every(n => typeof n === 'string')) return { ok: false, error: 'skills must be an array of skill names' }
 
   const names = dedupe(requested as string[])
   const known = new Set(library.map(s => s.name))
-  const unknown = names.filter(n => !known.has(n))
+  const alreadyOn = new Set(dedupe(stored))
+  const unknown = names.filter(n => !known.has(n) && !alreadyOn.has(n))
   if (unknown.length) return { ok: false, error: `Unknown skill(s): ${unknown.join(', ')}` }
 
   // Keep library order so the stored array is stable regardless of click order.
+  // Orphans have no library index; park them after the known ones.
   const order = new Map(library.map((s, i) => [s.name, i]))
-  return { ok: true, names: names.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)) }
+  const idx = (n: string) => order.get(n) ?? Number.MAX_SAFE_INTEGER
+  return { ok: true, names: names.sort((a, b) => idx(a) - idx(b)) }
 }
 
 function dedupe(names: string[]): string[] {

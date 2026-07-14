@@ -5,13 +5,11 @@
 // call), so the list on screen is always what the agent actually has.
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { nextSelection, optimisticSplit, selectionOf, type SkillView as Skill, type SkillsPayload as Payload } from '@/lib/agentSkills'
 import { Card, Skeleton } from '../ui'
 import { sx } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { ax, type Getter } from './shared'
-
-type Skill = { id: string; name: string; description?: string | null; domain?: string | null; source?: string | null; installed: boolean }
-type Payload = { installed: Skill[]; other: Skill[]; orphaned: string[]; selectedCount: number; adapter: string; model: string }
 
 const ADAPTER_LABEL: Record<string, string> = {
   internal: 'Internal (7Ei executor)', openclaw: 'OpenClaw', cursor: 'Cursor', claude_code: 'Claude Code', custom: 'Custom runtime',
@@ -25,7 +23,7 @@ export default function SkillsTab({ orgId, agentId, getToken, onOpenLibrary }: {
 }) {
   const [data, setData] = useState<Payload | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const base = `/api/orgs/${orgId}/agents/${agentId}/skills`
@@ -38,14 +36,24 @@ export default function SkillsTab({ orgId, agentId, getToken, onOpenLibrary }: {
 
   useEffect(() => { load() }, [load])
 
+  // Tick = install, untick = uninstall. Both write the WHOLE selection, so there
+  // is no half-applied state to reconcile. The checkbox flips immediately and
+  // the server's answer replaces it; a failure rolls the box back and says why,
+  // so what you see is never a change that didn't land.
   const toggle = async (name: string) => {
-    if (!data) return
-    const current = [...data.installed.map(s => s.name), ...data.orphaned]
-    const next = current.includes(name) ? current.filter(n => n !== name) : [...current, name]
-    setBusy(true); setErr(null)
-    try { setData(await api<Payload>(base, { token: await getToken(), method: 'PUT', body: JSON.stringify({ skills: next }) })) }
-    catch (e: any) { setErr(e?.message ?? 'Could not update this agent’s skills.') }
-    setBusy(false)
+    if (!data || pending) return
+    const next = nextSelection(selectionOf(data), name)
+    const before = data
+    setPending(name); setErr(null)
+    setData(optimisticSplit(data, next))
+    try {
+      setData(await api<Payload>(base, { token: await getToken(), method: 'PUT', body: JSON.stringify({ skills: next }) }))
+    } catch (e: any) {
+      setData(before)
+      const verb = selectionOf(before).includes(name) ? 'uninstall' : 'install'
+      setErr(`Could not ${verb} “${name}” — ${e?.message ?? 'the request failed'}. Nothing changed.`)
+    }
+    setPending(null)
   }
 
   if (err && !data) return <div style={ax.err}>{err}</div>
@@ -53,13 +61,16 @@ export default function SkillsTab({ orgId, agentId, getToken, onOpenLibrary }: {
 
   const row = (s: Skill) => (
     <div key={s.id} style={{ display: 'flex', gap: space.md, padding: `${space.md}px ${space.lg}px`, borderTop: `1px solid ${tk.line}` }}>
-      <input type="checkbox" checked={s.installed} disabled={busy} onChange={() => toggle(s.name)}
+      <input type="checkbox" checked={s.installed} disabled={!!pending} onChange={() => toggle(s.name)}
         aria-label={`${s.installed ? 'Uninstall' : 'Install'} ${s.name}`}
-        style={{ marginTop: 3, accentColor: tk.accent, cursor: busy ? 'default' : 'pointer', flexShrink: 0 }} />
+        aria-busy={pending === s.name}
+        style={{ marginTop: 3, accentColor: tk.accent, cursor: pending ? 'default' : 'pointer', flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: space.sm }}>
           <span style={{ fontSize: text.md.fontSize, fontWeight: 600 }}>{s.name}</span>
           {s.domain && <span style={sx.badge}>{s.domain}</span>}
+          {/* Progress is stated in words, not colour alone. */}
+          {pending === s.name && <span style={{ fontSize: text.xs.fontSize, color: tk.muted }}>Saving…</span>}
         </div>
         {s.description && (
           <p style={{
@@ -93,9 +104,11 @@ export default function SkillsTab({ orgId, agentId, getToken, onOpenLibrary }: {
             rather than quietly dropping it. */}
         {data.orphaned.map(name => (
           <div key={name} style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.md}px ${space.lg}px`, borderTop: `1px solid ${tk.line}` }}>
-            <input type="checkbox" checked disabled={busy} onChange={() => toggle(name)} aria-label={`Remove ${name}`} style={{ accentColor: tk.accent }} />
+            <input type="checkbox" checked disabled={!!pending} onChange={() => toggle(name)} aria-label={`Remove ${name}`}
+              aria-busy={pending === name} style={{ accentColor: tk.accent, cursor: pending ? 'default' : 'pointer' }} />
             <span style={{ fontSize: text.md.fontSize, fontWeight: 600 }}>{name}</span>
             <span style={{ ...sx.tag, color: tk.amber, border: `1px solid ${tk.amber}` }}>⚠ no longer in the library</span>
+            {pending === name && <span style={{ fontSize: text.xs.fontSize, color: tk.muted }}>Saving…</span>}
           </div>
         ))}
       </Card>
@@ -111,7 +124,9 @@ export default function SkillsTab({ orgId, agentId, getToken, onOpenLibrary }: {
         <Foot label="Adapter" value={ADAPTER_LABEL[data.adapter] ?? data.adapter} />
         <Foot label="Model" value={data.model} />
         <Foot label="Selected skills" value={String(data.selectedCount)} />
-        <span style={{ marginLeft: 'auto', fontSize: text.xs.fontSize, color: tk.muted }}>Skills are applied when the agent runs.</span>
+        <span style={{ marginLeft: 'auto', fontSize: text.xs.fontSize, color: tk.muted }}>
+          Tick to install, untick to uninstall — saved as you go. Skills are applied when the agent runs.
+        </span>
       </Card>
     </div>
   )
