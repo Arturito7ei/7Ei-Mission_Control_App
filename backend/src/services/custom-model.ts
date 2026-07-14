@@ -107,6 +107,42 @@ export const baseUrlKey = (slug: string) => `${slug}_base_url`
 export const encKeyKey = (slug: string) => `${slug}_api_key_enc`
 export const plainKeyKey = (slug: string) => `${slug}_api_key`
 
+/**
+ * Where an AGENT's custom models live.
+ *
+ * Deliberately NOT `arturita_llm_chain`. That chain is Arturita's ordered
+ * FAILOVER list — appending to it would mean defining a custom model for one
+ * agent silently changes what Arturita falls back to. The two are different
+ * things that happen to share a credential format, so they get different keys
+ * and the same plumbing: `<slug>_base_url` + `<slug>_api_key_enc`, resolved by
+ * `resolveLlmCreds` either way. `available-models` reads both, so a model added
+ * from either door is selectable from either.
+ */
+export const CATALOG_KEY = 'custom_models'
+
+/** Read a catalog of custom entries from deployConfig. Tolerates junk rows. */
+export function parseCustomModels(
+  deployConfig: Record<string, unknown> | null | undefined,
+  key: string = CATALOG_KEY,
+): LlmEntry[] {
+  const raw = (deployConfig ?? {})[key]
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((e: any): LlmEntry | null => {
+      const provider = String(e?.provider ?? '').trim()
+      const model = String(e?.model ?? '').trim()
+      if (!provider || !model) return null
+      return {
+        provider, model,
+        mode: e?.mode === 'local' ? 'local' : 'provider',
+        label: String(e?.label ?? `${provider} · ${model}`),
+        baseUrl: typeof e?.baseUrl === 'string' ? e.baseUrl : undefined,
+        custom: true,
+      }
+    })
+    .filter((e): e is LlmEntry => e !== null)
+}
+
 export interface CustomModelPersist {
   /** the new deployConfig (base URL + encrypted key merged, chain appended). */
   deployConfig: Record<string, unknown>
@@ -129,6 +165,9 @@ export function applyCustomModel(input: {
   entry: LlmEntry
   apiKey?: string | null
   encryptFn?: (plain: string) => string
+  /** Which list to upsert into. Defaults to Arturita's LLM chain (the #207 door);
+   *  the agent Configuration tab passes CATALOG_KEY so it cannot disturb it. */
+  catalogKey?: string
 }): CustomModelPersist {
   const enc = input.encryptFn ?? encrypt
   const cfg: Record<string, unknown> = { ...((input.deployConfig ?? {}) as Record<string, unknown>) }
@@ -144,25 +183,80 @@ export function applyCustomModel(input: {
     delete cfg[plainKeyKey(input.slug)]
   }
 
-  const existing = parseLlmChain(cfg).filter(e => !(e.provider === input.slug && e.model === input.entry.model))
+  const catalogKey = input.catalogKey ?? PIPELINE_KEYS.llm
+  const read = catalogKey === PIPELINE_KEYS.llm ? parseLlmChain(cfg) : parseCustomModels(cfg, catalogKey)
+  const existing = read.filter(e => !(e.provider === input.slug && e.model === input.entry.model))
   const chain = [...existing, input.entry]
-  cfg[PIPELINE_KEYS.llm] = chain
+  cfg[catalogKey] = chain
 
   return { deployConfig: cfg, chain, maskedKey: key ? maskValue(key) : null }
 }
 
-/** Remove a custom model (chain entry + its base URL + stored key). Pure. */
+/** Remove a custom model (catalog entry + its base URL + stored key). Pure. */
 export function removeCustomModel(input: {
   deployConfig: Record<string, unknown> | null | undefined
   slug: string
+  catalogKey?: string
 }): { deployConfig: Record<string, unknown>; chain: LlmEntry[] } {
   const cfg: Record<string, unknown> = { ...((input.deployConfig ?? {}) as Record<string, unknown>) }
   delete cfg[baseUrlKey(input.slug)]
   delete cfg[encKeyKey(input.slug)]
   delete cfg[plainKeyKey(input.slug)]
-  const chain = parseLlmChain(cfg).filter(e => e.provider !== input.slug)
-  cfg[PIPELINE_KEYS.llm] = chain
+  const catalogKey = input.catalogKey ?? PIPELINE_KEYS.llm
+  const read = catalogKey === PIPELINE_KEYS.llm ? parseLlmChain(cfg) : parseCustomModels(cfg, catalogKey)
+  const chain = read.filter(e => e.provider !== input.slug)
+  cfg[catalogKey] = chain
   return { deployConfig: cfg, chain }
+}
+
+// ─── Endpoint reachability probe (network) ───────────────────────────────────
+
+export interface ProbeResult { ok: boolean; status: number | null; detail: string }
+
+/**
+ * Reachability + auth probe for an OpenAI-compatible endpoint. Tries GET /models
+ * (cheapest liveness + auth check), then falls back to a 1-token POST
+ * /chat/completions for servers that don't expose /models. Never logs the key.
+ *
+ * Shared by the Arturita custom-model route (#207) and the agent Configuration
+ * tab's "Test connection" — one probe, one set of error strings.
+ */
+export async function probeEndpoint(
+  input: { baseUrl: string; apiKey?: string; model: string },
+  timeoutMs = 6000,
+): Promise<ProbeResult> {
+  const base = input.baseUrl.replace(/\/$/, '')
+  const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (input.apiKey) authHeaders.Authorization = `Bearer ${input.apiKey}`
+
+  const withTimeout = async (fn: (signal: AbortSignal) => Promise<Response>): Promise<Response> => {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    try { return await fn(ctrl.signal) } finally { clearTimeout(t) }
+  }
+
+  try {
+    const res = await withTimeout(s => fetch(`${base}/models`, { headers: authHeaders, signal: s }))
+    if (res.ok) return { ok: true, status: res.status, detail: 'reachable (GET /models)' }
+    if (res.status === 401 || res.status === 403) return { ok: false, status: res.status, detail: 'authentication failed — check the API key' }
+    // 404/405 → server may not expose /models; fall through to a chat probe.
+  } catch (e: any) {
+    if (e?.name !== 'AbortError') return { ok: false, status: null, detail: `unreachable — ${e?.message ?? 'network error'}` }
+  }
+
+  try {
+    const res = await withTimeout(s => fetch(`${base}/chat/completions`, {
+      method: 'POST', headers: authHeaders, signal: s,
+      body: JSON.stringify({ model: input.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+    }))
+    if (res.ok) return { ok: true, status: res.status, detail: 'reachable (chat/completions)' }
+    if (res.status === 401 || res.status === 403) return { ok: false, status: res.status, detail: 'authentication failed — check the API key' }
+    if (res.status === 404) return { ok: false, status: res.status, detail: 'model or endpoint not found — check the base URL + model id' }
+    return { ok: false, status: res.status, detail: `endpoint returned ${res.status}` }
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return { ok: false, status: null, detail: `timed out after ${timeoutMs}ms` }
+    return { ok: false, status: null, detail: `unreachable — ${e?.message ?? 'network error'}` }
+  }
 }
 
 // ─── Credential resolution (decrypts) ─────────────────────────────────────────

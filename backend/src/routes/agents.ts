@@ -17,6 +17,7 @@ import { parseTrustMode, parseBoundary, serializeBoundary, TRUST_MODES } from '.
 import { secureRegistration } from '../services/code-executor'
 import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parseReasoningEffort } from '../services/model-profile'
 import { parseLlmChain } from '../services/arturita-pipeline'
+import { parseCustomModels } from '../services/custom-model'
 import { requireOrgRole } from '../middleware/rbac'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
@@ -176,13 +177,27 @@ export async function agentRoutes(app: FastifyInstance) {
       resolved: resolveModelProfile(a),
     }
   })
-  // Selectable model list for the config UI: the built-in catalogue + operator
-  // custom-model entries (S8 `arturita_llm_chain`). Read-only; org-scoped (Clerk).
+  // Selectable model list for the config UI: the built-in catalogue + every
+  // operator-defined model, from BOTH doors — Arturita's LLM chain (S8
+  // `arturita_llm_chain`) and the agent catalogue (`custom_models`). A model
+  // added at either door is selectable at both. Read-only; org-scoped (Clerk).
   app.get('/api/orgs/:orgId/available-models', async (req) => {
     const { orgId } = req.params as any
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId), columns: { deployConfig: true } })
-    const custom = parseLlmChain(org?.deployConfig as any).filter((e: any) => e.custom)
-    return { models: flattenModelOptions(custom.map((e: any) => ({ provider: e.provider, model: e.model, label: e.label }))) }
+    const cfg = org?.deployConfig as any
+    const custom = [
+      ...parseLlmChain(cfg).filter((e: any) => e.custom),
+      ...parseCustomModels(cfg),
+    ]
+    // Same slug+model registered at both doors → one option, not two.
+    const seen = new Set<string>()
+    const unique = custom.filter((e: any) => {
+      const k = `${e.provider}::${e.model}`
+      if (seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+    return { models: flattenModelOptions(unique.map((e: any) => ({ provider: e.provider, model: e.model, label: e.label }))) }
   })
 
   // MCA-GOV2 S4.1 — execution policies (action → requires approval).

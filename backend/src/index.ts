@@ -29,6 +29,7 @@ import { arturitaVoiceRoutes } from './routes/arturita-voice'
 import { arturitaConverseRoutes } from './routes/arturita-converse'
 import { arturitaPipelineRoutes } from './routes/arturita-pipeline'
 import { arturitaCustomModelRoutes } from './routes/arturita-custom-model'
+import { customModelRoutes } from './routes/custom-models'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
@@ -106,6 +107,7 @@ async function start() {
     await secured.register(arturitaConverseRoutes) // Arturita conversational front door — answer vs delegate (J1)
     await secured.register(arturitaPipelineRoutes) // Arturita free-first pipeline chains (LLM/STT/TTS) config (J2)
     await secured.register(arturitaCustomModelRoutes) // Arturita custom operator-defined LLM insertion (J2+)
+    await secured.register(customModelRoutes)         // Epic AG — custom adapters/models for agents
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
