@@ -63,7 +63,12 @@ export default function InstructionsTab({ orgId, agentId, getToken }: { orgId: s
       await api(`${base}`, { token: await getToken(), method: 'PUT', body: JSON.stringify({ path, content: body }) })
       setContent(body); setStored(true); setEditing(false)
       await loadFiles()
-    } catch (e: any) { setErr(e?.message ?? 'Could not save that file.') }
+    } catch (e: any) {
+      // Name the file. "Could not save" with four files on screen is not an
+      // error message, it's a riddle — and the edit is still in the draft, so
+      // say that too rather than let the operator think the work is gone.
+      setErr(`Could not save ${path} — ${e?.message ?? 'the request failed'}. Your changes are still in the editor.`)
+    }
     setBusy(false)
   }
 
@@ -82,7 +87,7 @@ export default function InstructionsTab({ orgId, agentId, getToken }: { orgId: s
       await api(`${base}?path=${encodeURIComponent(path)}`, { token: await getToken(), method: 'DELETE' })
       setSelected(null)
       await loadFiles()
-    } catch (e: any) { setErr(e?.message ?? 'Could not delete that file.') }
+    } catch (e: any) { setErr(`Could not delete ${path} — ${e?.message ?? 'the request failed'}.`) }
     setBusy(false)
   }
 

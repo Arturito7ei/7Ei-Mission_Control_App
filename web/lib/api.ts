@@ -11,8 +11,25 @@ export const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
 
 export type ApiInit = RequestInit & { token?: string | null }
 
+/**
+ * What a rejected fetch actually means. A bare "backend unreachable" hid a real
+ * bug for a week: the backend was up and the route was deployed, but its CORS
+ * policy did not allow PUT/DELETE, so the browser refused to send the request
+ * and fetch rejected exactly as it does when the host is down. Name the two
+ * cases apart — a failed write to a reachable API is a very different bug from a
+ * dead backend, and the operator should not have to open devtools to tell.
+ */
+export function transportError(method: string, path: string): string {
+  const m = method.toUpperCase()
+  const where = `${m} ${path}`
+  return m === 'GET' || m === 'HEAD'
+    ? `Network error — could not reach the backend (${where}). Check your connection.`
+    : `Network error — the browser could not send ${where}. The backend is either unreachable or is refusing this request before it arrives (a CORS policy that does not allow ${m} does exactly this).`
+}
+
 export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   const { token, ...opts } = init ?? {}
+  const method = (opts.method ?? 'GET').toUpperCase()
   let res: Response
   try {
     res = await fetch(`${API}${path}`, {
@@ -20,8 +37,9 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
     })
   } catch {
-    // fetch rejects (TypeError) only on network-level failure
-    throw new Error('Network error — backend unreachable')
+    // fetch rejects (TypeError) on network-level failure AND on a blocked
+    // preflight — the browser gives JS no way to tell them apart.
+    throw new Error(transportError(method, path))
   }
   if (res.status === 204) return {} as T
   const j = await res.json().catch(() => ({}))

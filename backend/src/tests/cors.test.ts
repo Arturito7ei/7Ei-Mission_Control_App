@@ -1,0 +1,97 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import Fastify from 'fastify'
+import cors from '@fastify/cors'
+
+// Regression guard for the bug that broke the Agents pages in production:
+// @fastify/cors v11 defaults `methods` to 'GET,HEAD,POST'. The AG routes are
+// PUT (Instructions save, Skills selection, Config) and DELETE (avatar remove,
+// file delete), so the browser's preflight was answered with an
+// Access-Control-Allow-Methods that did not list the verb, the real request was
+// never sent, and the dashboard surfaced it as "Network error — backend
+// unreachable". The routes themselves were fine and deployed.
+//
+// These tests exercise the actual preflight, not the options object, so a future
+// upgrade that changes the default cannot reintroduce the failure silently.
+
+import { CORS_METHODS, DEFAULT_ORIGINS, corsOptions } from '../middleware/cors'
+import { agentDetailRoutes } from '../routes/agent-detail'
+
+const ORIGIN = 'https://app.7ei.ai'
+
+async function appWithCors(env: NodeJS.ProcessEnv = {} as NodeJS.ProcessEnv) {
+  const app = Fastify({ logger: false })
+  await app.register(cors, corsOptions(env))
+  await app.register(agentDetailRoutes)
+  await app.ready()
+  return app
+}
+
+const preflight = (app: Awaited<ReturnType<typeof appWithCors>>, method: string, url: string) =>
+  app.inject({
+    method: 'OPTIONS',
+    url,
+    headers: {
+      origin: ORIGIN,
+      'access-control-request-method': method,
+      'access-control-request-headers': 'authorization,content-type',
+    },
+  })
+
+test('[AGFIX1] preflight allows every verb the dashboard uses', async () => {
+  const app = await appWithCors()
+  const cases: [string, string][] = [
+    ['PUT', '/api/orgs/o1/agents/a1/files'],       // BUG 1 — Instructions save
+    ['DELETE', '/api/orgs/o1/agents/a1/avatar'],   // BUG 2 — avatar remove
+    ['PUT', '/api/orgs/o1/agents/a1/skills'],      // Skills checkboxes
+    ['PUT', '/api/orgs/o1/agents/a1/config'],
+    ['PUT', '/api/orgs/o1/agents/a1/budget'],
+    ['DELETE', '/api/orgs/o1/agents/a1/files'],
+    ['POST', '/api/orgs/o1/agents/a1/avatar'],     // upload — worked before, must keep working
+  ]
+
+  for (const [method, url] of cases) {
+    const res = await preflight(app, method, url)
+    assert.ok(res.statusCode < 300, `${method} ${url}: preflight status ${res.statusCode}`)
+    const allowed = String(res.headers['access-control-allow-methods'] ?? '')
+      .split(',').map(s => s.trim().toUpperCase())
+    assert.ok(allowed.includes(method), `${method} ${url}: allow-methods was "${allowed.join(',')}"`)
+    assert.equal(res.headers['access-control-allow-origin'], ORIGIN)
+  }
+  await app.close()
+})
+
+test('[AGFIX1] CORS_METHODS covers every verb the agent routes register', async () => {
+  const app = Fastify({ logger: false })
+  const seen = new Set<string>()
+  app.addHook('onRoute', r => {
+    for (const m of ([] as string[]).concat(r.method as string | string[])) seen.add(m.toUpperCase())
+  })
+  await app.register(agentDetailRoutes)
+  await app.ready()
+
+  const allowed = new Set<string>(CORS_METHODS)
+  for (const m of seen) {
+    assert.ok(allowed.has(m), `route verb ${m} is registered but missing from CORS_METHODS — the browser cannot call it`)
+  }
+  // Sanity: the guard is only meaningful if it actually saw the verbs at issue.
+  assert.ok(seen.has('PUT') && seen.has('DELETE'))
+  await app.close()
+})
+
+test('[AGFIX1] allowed origins come from ALLOWED_ORIGINS, trimmed', () => {
+  assert.deepEqual(corsOptions({} as NodeJS.ProcessEnv).origin, DEFAULT_ORIGINS)
+  const o = corsOptions({ ALLOWED_ORIGINS: 'https://a.7ei.ai, https://b.7ei.ai' } as NodeJS.ProcessEnv)
+  assert.deepEqual(o.origin, ['https://a.7ei.ai', 'https://b.7ei.ai'])
+})
+
+test('[AGFIX1] an origin that is not allow-listed gets no CORS grant', async () => {
+  const app = await appWithCors()
+  const res = await app.inject({
+    method: 'OPTIONS',
+    url: '/api/orgs/o1/agents/a1/files',
+    headers: { origin: 'https://evil.example', 'access-control-request-method': 'PUT' },
+  })
+  assert.equal(res.headers['access-control-allow-origin'], undefined)
+  await app.close()
+})
