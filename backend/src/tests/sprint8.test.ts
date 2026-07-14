@@ -116,7 +116,7 @@ describe('[DOCS-001] API documentation', () => {
       'POST /api/orgs/:orgId/agents', 'POST /api/agents/:agentId/chat',
       'GET /api/orgs/:orgId/costs', 'GET /api/orgs/:orgId/costs/export',
       'GET /api/orgs/:orgId/tasks/export', 'GET /api/health',
-      'GET /api/orgs/:orgId/audit-log', 'GET /api/traces',
+      'GET /api/orgs/:orgId/audit-log', 'GET /api/orgs/:orgId/traces',
     ]
     assert.ok(endpoints.length >= 10)
     assert.ok(endpoints.includes('GET /api/health'))

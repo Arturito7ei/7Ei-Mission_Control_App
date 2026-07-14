@@ -232,11 +232,23 @@ encapsulated `app.register()` child, so the hooks never fire for the plugins'
 siblings — i.e. for any route in the app (`docs/AUDIT-ONB2.md` H-1, confirmed
 empirically). The table that exists to answer "who did what" answers nothing.
 
-**The hardening PR (#248) made the trail safe to enable, and stopped there — on
-purpose.** The three things that had to be true first are now true: the query
-routes are Clerk/owner-gated (H-2), `sanitizeBody` recurses so a secret nested in
-`agentDefaultsPayload` cannot reach a row (H-3), and the telemetry span URL is
-redacted (M-1). What remains is **not** an engineering call:
+**The hardening PR (#248), plus the re-audit that followed it, made the trail safe
+to enable — and stopped there, on purpose.** The things that had to be true first
+are now true: the query routes are Clerk/owner-gated (H-2), `sanitizeBody` recurses
+so a secret nested in `agentDefaultsPayload` cannot reach a row (H-3), and the
+telemetry span URL is redacted (M-1).
+
+> The **re-audit** (`docs/AUDIT-ONB2-hardening.md`) found #248 had closed two of
+> those one layer short, and fixed both — worth knowing before you enable anything:
+> the traces route was authenticated but **not tenant-isolated** (now
+> `GET /api/orgs/:orgId/traces`, owner-gated, org-filtered), and `sanitizeBody`
+> did not redact `http_webhook.webhookAuthHeader` — a **bearer credential the
+> adapter registry declares secret** — so the very first row the trail ever recorded
+> could have carried a live token in plaintext. The registry is now the source of
+> truth for redaction. Enabling the hook **before** that fix would have been the
+> exact failure this section exists to prevent.
+
+What remains is **not** an engineering call:
 
 **Enabling it = one Turso `INSERT` per HTTP request, forever.** That is an ongoing
 cost line (row writes + unbounded storage growth — there is **no retention policy**

@@ -161,9 +161,19 @@ test('[MCA-85] no tenant-scoped route is publicly reachable outside the allowlis
   secured('DELETE', '/api/agents/:agentId/memory')
   secured('POST', '/api/orgs/:orgId/webhooks')
   secured('GET', '/api/orgs/:orgId/usage')
-  // ONB2 audit H-2 — the two routes this guard used to be blind to.
+  // ONB2 audit H-2 — the two routes this guard used to be blind to. Both are now
+  // `:orgId`-scoped, so they are caught by the `tenantScoped` net above and not
+  // merely by these spot-checks. (The traces route was `GET /api/traces`, which
+  // carried no `:orgId` and so could NEVER be seen by that net — see the re-audit,
+  // docs/AUDIT-ONB2-hardening.md.)
   secured('GET', '/api/orgs/:orgId/audit-log')
-  secured('GET', '/api/traces')
+  secured('GET', '/api/orgs/:orgId/traces')
+
+  // …and the tenant-blind path is gone, not merely shadowed by the new one.
+  assert.equal(
+    collectedRoutes().find(r => r.url === '/api/traces'), undefined,
+    'GET /api/traces is back — a process-wide span buffer with no :orgId cannot be tenant-gated',
+  )
 })
 
 // ─── Epic ONB — the onboarding surface is shut (audit of ONB1) ───────────────

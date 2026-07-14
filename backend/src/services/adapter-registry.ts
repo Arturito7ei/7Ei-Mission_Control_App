@@ -283,6 +283,23 @@ export function secretFields(type: string): string[] {
   return (getAdapter(type)?.fields ?? []).filter((f) => f.secret).map((f) => f.key)
 }
 
+/**
+ * EVERY field key any adapter declares `secret: true`, across the whole registry.
+ *
+ * This registry is the source of truth for what an adapter's secrets are CALLED, so
+ * it must also be the source of truth for what the audit log redacts. `sanitizeBody`
+ * (`middleware/audit-log.ts`) used to test key names against a hand-written list
+ * (`key|token|secret|password|…`) that `http_webhook`'s `webhookAuthHeader` — a
+ * bearer Authorization header value — matched none of. The onboarding document tells
+ * a joining agent to send exactly these keys inside `agentDefaultsPayload`, so the
+ * two lists drifting apart is a plaintext credential in `audit_logs.metadata`.
+ * `audit-onb2-reaudit.test.ts` fails if a new adapter adds a secret field this does
+ * not cover.
+ */
+export function allSecretFieldKeys(): string[] {
+  return [...new Set(ADAPTERS.flatMap((a) => (a.fields ?? []).filter((f) => f.secret).map((f) => f.key)))]
+}
+
 /** Map an adapterType onto the legacy `agents.runtime` column value. */
 export function runtimeForAdapter(type: string): string | null {
   return getAdapter(type)?.runtime ?? null

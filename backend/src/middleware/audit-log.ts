@@ -4,17 +4,38 @@ import { eq, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { redactPath, redactTokensInText } from '../services/log-redaction'
 import { requireOrgRole } from './rbac'
+import { allSecretFieldKeys } from '../services/adapter-registry'
 
-// Fields that should never appear in audit metadata
+// Fields that should never appear in audit metadata — substring-matched, so this
+// covers `apiKey`, `x-openclaw-token`, `refresh_token`, … by shape.
 const SENSITIVE_KEYS = ['key', 'token', 'secret', 'password', 'apiKey', 'api_key', 'refreshToken', 'accessToken']
+
+/**
+ * …but shape-matching is not enough, and the re-audit of #248 found where it fails.
+ *
+ * The adapter registry declares which of an adapter's fields are secrets, and the
+ * onboarding document instructs a joining agent to send exactly those keys inside
+ * `agentDefaultsPayload`. `http_webhook` declares `webhookAuthHeader` (`secret: true`
+ * — it is a bearer `Authorization` header value), and that name contains none of
+ * `key|token|secret|password|…`. It sailed through `sanitizeBody` verbatim: the day
+ * ONB3 lands the join body and the hook is enabled, a live bearer credential is
+ * persisted to `audit_logs.metadata` in plaintext.
+ *
+ * So the registry — not a hand-written list that has to be remembered — decides. A
+ * new adapter's secret field is redacted the moment it is declared, and the guard in
+ * `audit-onb2-reaudit.test.ts` fails if that ever stops being true.
+ */
+const REGISTRY_SECRET_KEYS = new Set(allSecretFieldKeys().map(k => k.toLowerCase()))
 
 /** How deep sanitizeBody walks before it gives up and drops the subtree. Bodies
  *  are Zod-validated request payloads, not arbitrary graphs — 8 is far past any
  *  real one, and the cap is what stops a hostile/cyclic body from spinning here. */
 const MAX_DEPTH = 8
 
-const isSensitiveKey = (k: string) =>
-  SENSITIVE_KEYS.some(s => k.toLowerCase().includes(s.toLowerCase()))
+const isSensitiveKey = (k: string) => {
+  const lower = k.toLowerCase()
+  return SENSITIVE_KEYS.some(s => lower.includes(s.toLowerCase())) || REGISTRY_SECRET_KEYS.has(lower)
+}
 
 /**
  * ONB2 audit finding H-3 — sanitizeBody must RECURSE.
