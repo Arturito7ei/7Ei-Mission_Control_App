@@ -36,7 +36,7 @@ import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
-import { agentInviteRoutes, adapterRegistryRoutes } from '../routes/agent-invites'
+import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from '../routes/agent-invites'
 import { PUBLIC_JOIN_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
@@ -94,7 +94,8 @@ async function bootLikeIndex() {
   await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
   await app.register(arturitaPublicRoutes)
-  await app.register(adapterRegistryRoutes)     // Epic ONB — the ONLY public onboarding route
+  await app.register(adapterRegistryRoutes)     // Epic ONB — public: the static adapter taxonomy
+  await app.register(agentInviteDocRoutes)      // Epic ONB / ONB2 — public: the token-addressed doc
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)
@@ -186,11 +187,32 @@ test('[ONB1-audit] the onboarding surface is shut: invites are Clerk-gated, only
   assert.ok(registry, 'GET /api/adapters must exist — a joining agent reads the taxonomy before it holds any credential')
   assert.equal(registry!.auth, 'none', 'the adapter registry is public by design: static, org-agnostic, secret-free')
 
-  // No invite/onboarding route other than the registry may be public.
+  // The public onboarding surface is an EXPLICIT allowlist, not a pattern. Each
+  // entry is public because a joining agent must read it BEFORE it holds any
+  // credential — and each mints nothing:
+  //   /api/adapters                       static taxonomy, org-agnostic, secret-free (ONB1)
+  //   /api/agent-invites/:token/onboarding[.txt]
+  //                                       the per-invite document (ONB2). Token-addressed
+  //                                       (the invite IS the bearer), profile-gated by
+  //                                       `onboardingDocAccess`, and it describes the join/
+  //                                       claim endpoints without wiring them. The token is
+  //                                       redacted out of the audit log + request log.
+  // Anything else public that touches invites/onboarding/join/claim is a leak.
+  const PUBLIC_ONBOARDING_ALLOWLIST = new Set([
+    'GET /api/agent-invites/:token/onboarding',
+    'GET /api/agent-invites/:token/onboarding.txt',
+  ])
   const publicOnboarding = routes
     .filter(r => r.auth === 'none' && /agent-invite|onboarding|\/join|\/claim/.test(r.url))
     .map(r => `${r.method} ${r.url}`)
-  assert.deepEqual(publicOnboarding, [], 'no onboarding route may be public except GET /api/adapters')
+  assert.deepEqual(
+    publicOnboarding.filter(r => !PUBLIC_ONBOARDING_ALLOWLIST.has(r)).sort(),
+    [],
+    'a new public onboarding route appeared — it must be justified and allowlisted here, or moved behind the secured scope',
+  )
+  for (const entry of PUBLIC_ONBOARDING_ALLOWLIST) {
+    assert.ok(publicOnboarding.includes(entry), `allowlisted public onboarding route is missing: ${entry}`)
+  }
 })
 
 test('[ONB1-audit] while PUBLIC_JOIN_IMPLEMENTED is false, no join/claim route exists at all', async () => {

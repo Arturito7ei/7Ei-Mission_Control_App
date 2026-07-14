@@ -31,7 +31,7 @@ import { arturitaConverseRoutes } from './routes/arturita-converse'
 import { arturitaPipelineRoutes } from './routes/arturita-pipeline'
 import { arturitaCustomModelRoutes } from './routes/arturita-custom-model'
 import { customModelRoutes } from './routes/custom-models'
-import { agentInviteRoutes, adapterRegistryRoutes } from './routes/agent-invites'
+import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from './routes/agent-invites'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin } from './middleware/audit-log'
@@ -41,12 +41,29 @@ import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
 import { buildLlmsTxt } from './services/llms-txt'
 import { llmProviderHealth } from './services/llm-fallback-runtime'
+import { redactPath } from './services/log-redaction'
 
 // Keep in sync with package.json "version" — surfaced in /api/openapi.json + /api/health.
 const API_VERSION = '0.6.0'
 
 const app = Fastify({
-  logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
+  logger: {
+    level: process.env.NODE_ENV === 'production' ? 'warn' : 'info',
+    // ONB2 / audit H2 — the SECOND sink. Invite tokens are bearer credentials
+    // carried in the URL path (`/api/agent-invites/mci_inv_…/onboarding.txt`), and
+    // Fastify logs `req.url` verbatim. Redact it here exactly as `audit-log.ts`
+    // redacts the persisted path: one helper, both sinks, no drift.
+    serializers: {
+      req(req: any) {
+        return {
+          method: req.method,
+          url: redactPath(req.url),
+          hostname: req.hostname,
+          remoteAddress: req.ip,
+        }
+      },
+    },
+  },
   trustProxy: true,  // needed behind Fly.io / Railway proxy
 })
 
@@ -133,6 +150,11 @@ async function start() {
   // joining agent must be able to read BEFORE it holds any credential. No invite,
   // join or claim endpoint is public — those land in ONB3/ONB4 behind the gate.
   await app.register(adapterRegistryRoutes)
+  // Epic ONB / ONB2 — the per-invite onboarding document. Public and token-addressed:
+  // the invite token in the path IS the bearer, its exposure follows the deployment
+  // profile (`onboardingDocAccess`), and it mints nothing. The token is redacted out
+  // of every log sink before persistence (services/log-redaction.ts).
+  await app.register(agentInviteDocRoutes)
   await app.register(telegramWebhookRoutes)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
   // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope

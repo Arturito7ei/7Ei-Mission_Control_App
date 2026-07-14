@@ -131,6 +131,47 @@ export interface OnboardingPosture {
   hardening: HardeningRequirement[]
   /** Human-readable reasons the public join surface is closed (empty when open). */
   closedBecause: string[]
+  /** ONB2: is the per-invite onboarding DOCUMENT fetchable over the public,
+   *  token-addressed route? A strictly smaller surface than the join endpoint —
+   *  see `onboardingDocAccess`. */
+  onboardingDocPublic: boolean
+  /** Why the doc route is closed (null when open). */
+  onboardingDocClosedBecause: string | null
+}
+
+/**
+ * ONB2 — may the per-invite onboarding DOCUMENT be served over the public,
+ * token-addressed route (`GET /api/agent-invites/:token/onboarding[.txt]`)?
+ *
+ * This is a deliberately SMALLER decision than `publicJoinEnabled`, and it is a
+ * separate one:
+ *
+ *  * The doc is **not a credential and mints none**. It restates the invite the
+ *    caller already holds and describes endpoints that (in ONB2) do not exist yet.
+ *    Reading it buys an attacker nothing they did not already have by holding the
+ *    token — which they cannot get from the DB, since only its hash is stored.
+ *  * But it is still an **unauthenticated route on a public backend**, so its
+ *    exposure follows the deployment profile rather than being simply "on":
+ *      - `packaged`  → loopback-trusted: open (the operator owns the machine);
+ *      - `hosted`    → closed unless the operator explicitly enabled remote
+ *                      onboarding (`MC_ENABLE_REMOTE_ONBOARDING=1`).
+ *
+ * Note what this does NOT do: the enable flag opens the *doc*, never the *join*
+ * surface — that stays shut behind `PUBLIC_JOIN_IMPLEMENTED` until ONB4 lands the
+ * approval gate, the one-time claim and the per-IP rate limit. An operator who
+ * turns remote onboarding on early gets a readable document, not an open door.
+ *
+ * When it is closed, the route must answer with the SAME flat 404 as an unknown
+ * invite — a "this exists but you may not read it" would be an oracle.
+ */
+export function onboardingDocAccess(env: EnvLike = {}): { allowed: boolean; reason: string | null } {
+  const profile = resolveDeploymentProfile(env)
+  if (profile === 'packaged') return { allowed: true, reason: null }
+  if (truthy(env.MC_ENABLE_REMOTE_ONBOARDING)) return { allowed: true, reason: null }
+  return {
+    allowed: false,
+    reason: 'hosted profile without MC_ENABLE_REMOTE_ONBOARDING: the public onboarding document is not served',
+  }
 }
 
 /**
@@ -154,6 +195,7 @@ export function onboardingPosture(env: EnvLike = {}): OnboardingPosture {
     ? hardening.filter((h) => h.key !== 'remote_onboarding_enabled')
     : hardening
   const unmet = required.filter((h) => !h.satisfied)
+  const doc = onboardingDocAccess(env)
 
   return {
     profile,
@@ -166,5 +208,7 @@ export function onboardingPosture(env: EnvLike = {}): OnboardingPosture {
     operatorCanSeeClaimedKey: false,
     hardening,
     closedBecause: unmet.map((h) => `${h.key}: ${h.blocker ?? 'not satisfied'}`),
+    onboardingDocPublic: doc.allowed,
+    onboardingDocClosedBecause: doc.reason,
   }
 }

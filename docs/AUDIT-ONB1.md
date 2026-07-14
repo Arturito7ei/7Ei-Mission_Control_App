@@ -21,7 +21,7 @@ the story named:
 | # | Finding | Must be fixed before |
 |---|---|---|
 | **H1** | `consumeUsePatch` only *advises* a compare-and-set — nothing enforces it, and a read-then-write consume is a real TOCTOU race that lets two concurrent joins both spend a single-use invite's last use. | **ONB3** (the story that first consumes a use) |
-| **H2** | The invite token is a **bearer credential carried in the URL path**. Any token-addressed route will have that raw token written verbatim into `audit_logs.path` and into the request log. | **ONB2** (the first story to serve a token-addressed route) |
+| **H2** | The invite token is a **bearer credential carried in the URL path**. Any token-addressed route will have that raw token written verbatim into `audit_logs.path` and into the request log. | **ONB2** (the first story to serve a token-addressed route) — ✅ **FIXED in ONB2 (PR #246)**, see §7 |
 
 ---
 
@@ -442,3 +442,44 @@ You are clear to start. Three things to carry into your story:
 
 And for ONB3: **H1**, plus a concurrency test, plus derive `low_trust_review` from
 `INVITE_AGENTS_ALWAYS_LOW_TRUST` rather than re-deciding it per runtime.
+
+---
+
+## 7. ONB2 follow-up (2026-07-14, PR #246) — what the ONB2 author did with this audit
+
+**H2 — CLOSED.** ONB2 serves the first token-addressed route (`GET /api/agent-invites/:token/onboarding[.txt]`),
+so the fix shipped in the same PR, taking the audit's *preferred* option:
+
+- Pure `backend/src/services/log-redaction.ts` — `redactPath()` replaces any credential-shaped **path
+  segment** (`mci_inv_*`, `mca_*`, `art_*`, plus `mcc_*`, reserved for ONB4's claim secret so that story
+  inherits the redaction for free) with `:token`; `redactTokensInText()` does the same inside free text.
+- Applied in **both sinks**, from the one helper, so they cannot drift: `middleware/audit-log.ts` now builds
+  its row through a pure `buildAuditRow()` that redacts the path *before* it is used at all (not even the
+  derived `action` sees the raw URL), and `src/index.ts` sets a Fastify `req` **log serializer** that
+  redacts `req.url` the same way.
+- **Tests:** the pure helper (positive + negative: an ordinary path is never mangled), `buildAuditRow`
+  (`JSON.stringify(row)` contains no `mci_inv_` at all), and an **end-to-end** test that drives the real
+  token-addressed route through real Fastify routing with a real token in the URL and asserts the persisted
+  row's `path` is `/api/agent-invites/:token/onboarding.txt`.
+
+**NEW FINDING, pre-existing, out of ONB1's scope — the audit-log hook never fires in production.**
+`auditLogPlugin` adds its `onResponse` hook **inside its own encapsulated plugin scope** (`src/index.ts:148`),
+and every route group is registered in a *sibling* scope. A Fastify hook added in an encapsulated context
+applies only to that context and its **descendants** — never to its siblings. Verified empirically. So
+`audit_logs` receives **no rows at all** for any route today, and has not since the plugin was written.
+
+Two consequences, stated plainly:
+
+1. The **audit trail is a no-op** — a compliance-relevant gap that has nothing to do with Epic ONB.
+2. It means H2's exposure was latent for a second reason nobody had noticed. The redaction above is
+   nonetheless a **prerequisite** for fixing the wiring: the moment the hook is made to fire, every
+   token-addressed request would otherwise write a working invite link into a queryable table.
+
+**Deliberately not fixed in ONB2.** Correcting the wiring (wrapping the plugin so its hook applies app-wide)
+turns on a **DB insert per request** against Turso on the live backend — a cost/latency/PII change to a
+running system, and an operator call, not a build-agent one. It is flagged here, in `STATUS.md` and in
+`HANDOFF.md`, with the fix pre-staged: the redaction is in place, so switching the audit log on is now a
+one-line wiring change that is safe by construction.
+
+**Left untouched, as instructed:** the `allowShell` / `MC_ALLOW_SHELL` contradiction (M5) — still a pending
+operator product decision, still flagged, still unchanged.
