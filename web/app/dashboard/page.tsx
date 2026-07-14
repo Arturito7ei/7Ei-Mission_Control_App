@@ -11,6 +11,7 @@ import GovernancePanel from './GovernancePanel'
 import Sidebar from './Sidebar'
 import PlaceholderView from './PlaceholderView'
 import AgentDetail from './agent/AgentDetail'
+import StaffGrid from './agent/StaffGrid'
 import { allNavItems, isPlaceholder, isSection, navSectionKey, findNavItem } from '@/lib/navModel'
 import { agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
 import { useTheme } from '../theme'
@@ -60,6 +61,8 @@ export default function DashboardPage() {
   // AG1 — the agent detail page lives inside the `agents` area and deep-links
   // through the URL hash (#agents/<id>/<tab>), parsed by the pure lib/agentRoute.
   const [agentRoute, setAgentRoute] = useState<AgentRoute | null>(null)
+  // AG7 — the Agents roster renders as the Staff card grid by default, or a dense table.
+  const [agentView, setAgentView] = useState<'staff' | 'table'>('staff')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   // Org creation (web onboarding — backend auto-creates Arturito on first org)
@@ -396,20 +399,39 @@ export default function DashboardPage() {
               onOpenLibrary={() => selectTab('skills')} />
           : (
           <div style={s.page}>
-            <h1 style={s.h1}>Agents ({agents.length})</h1>
-            <div style={s.table}>
-              <div style={{ ...s.thead, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}><span>Name</span><span>Role</span><span>Model</span><span>Skills</span><span>Status</span></div>
-              {agents.map(a => (
-                <div key={a.id} role="button" tabIndex={0} aria-label={`Open ${a.name}`}
-                  onClick={() => openAgent(a.id)} onKeyDown={e => { if (e.key === 'Enter') openAgent(a.id) }}
-                  style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr', cursor: 'pointer' }}>
-                  <span>{a.avatarEmoji} {a.name}</span><span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
-                  <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.skills.length}</span>
-                  <span style={{ color: statusColor(a.status), fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{statusIcon(a.status)} {a.status}</span>
-                </div>
-              ))}
+            {/* AG7 — Staff (card grid, the default) vs the dense table. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <h1 style={s.h1}>Agents ({agents.length})</h1>
+              <div role="tablist" aria-label="Agent view" style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+                {([['staff', 'Staff'], ['table', 'Table']] as const).map(([v, label]) => (
+                  <button key={v} role="tab" aria-selected={agentView === v} onClick={() => setAgentView(v)}
+                    style={{
+                      background: agentView === v ? 'var(--accent-dim)' : 'transparent',
+                      border: `1px solid ${agentView === v ? 'var(--accent-line)' : 'var(--line-strong)'}`,
+                      color: agentView === v ? 'var(--accent)' : 'var(--muted)',
+                      borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                    }}>{label}</button>
+                ))}
+              </div>
             </div>
+
+            {agentView === 'staff'
+              ? <StaffGrid orgId={org.id} getToken={getToken} onOpenAgent={openAgent} />
+              : (
+                <div style={s.table}>
+                  <div style={{ ...s.thead, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}><span>Name</span><span>Role</span><span>Model</span><span>Skills</span><span>Status</span></div>
+                  {agents.map(a => (
+                    <div key={a.id} role="button" tabIndex={0} aria-label={`Open ${a.name}`}
+                      onClick={() => openAgent(a.id)} onKeyDown={e => { if (e.key === 'Enter') openAgent(a.id) }}
+                      style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr', cursor: 'pointer' }}>
+                      <span>{a.avatarEmoji} {a.name}</span><span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
+                      <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
+                      <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.skills.length}</span>
+                      <span style={{ color: statusColor(a.status), fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{statusIcon(a.status)} {a.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
           </div>
         ))}
 

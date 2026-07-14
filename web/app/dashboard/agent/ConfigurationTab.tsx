@@ -30,7 +30,7 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [roster, setRoster] = useState<Roster[]>([])
   const [models, setModels] = useState<ModelOption[]>([])
-  const [form, setForm] = useState({ name: '', title: '', role: '', jobDescription: '', avatarEmoji: '', reportsTo: '', runtime: 'internal', model: '' })
+  const [form, setForm] = useState({ name: '', title: '', role: '', jobDescription: '', avatarEmoji: '', reportsTo: '', runtime: 'internal', model: '', contactChannel: '' })
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -52,6 +52,7 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
         jobDescription: a.jobDescription ?? '', avatarEmoji: a.avatarEmoji ?? '',
         reportsTo: a.reportsTo ?? '', runtime: a.runtime ?? 'internal',
         model: a.primaryModel || a.llmModel || '',
+        contactChannel: a.contactChannel ?? '',
       })
       try {
         const { models: m } = await api<{ models: ModelOption[] }>(`/api/orgs/${orgId}/available-models`, { token })
@@ -71,7 +72,7 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
         body: JSON.stringify({
           name: form.name, title: form.title, role: form.role,
           jobDescription: form.jobDescription, avatarEmoji: form.avatarEmoji,
-          reportsTo: form.reportsTo, runtime: form.runtime,
+          reportsTo: form.reportsTo, runtime: form.runtime, contactChannel: form.contactChannel,
           ...(form.model ? { llmModel: form.model, primaryModel: form.model, ...(chosen ? { llmProvider: chosen.provider } : {}) } : {}),
         }),
       })
@@ -162,6 +163,10 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
               <TextInput value={form.title} placeholder="e.g. VP of Engineering" onChange={e => setForm({ ...form, title: e.target.value })} />
             </FormLabel>
           </div>
+          <FormLabel>Email <span style={{ fontWeight: 400, color: tk.muted }}>· shown on the staff grid; blank falls back to an @handle</span>
+            <TextInput value={form.contactChannel} placeholder="agent@7ei.ai" inputMode="email"
+              onChange={e => setForm({ ...form, contactChannel: e.target.value })} />
+          </FormLabel>
           <FormLabel>Description
             <TextArea value={form.jobDescription} placeholder="Describe what this agent can do…"
               onChange={e => setForm({ ...form, jobDescription: e.target.value })} style={{ minHeight: 78 }} />

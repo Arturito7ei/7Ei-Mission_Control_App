@@ -12,6 +12,9 @@
 export const CONFIG_FIELDS = [
   'name', 'title', 'role', 'jobDescription', 'avatarEmoji',
   'reportsTo', 'runtime', 'llmProvider', 'llmModel', 'primaryModel',
+  // AG7 — the email shown under the agent's name on the staff grid. Reuses the
+  // existing contact channel rather than adding a column that means the same thing.
+  'contactChannel',
 ] as const
 
 export type ConfigField = (typeof CONFIG_FIELDS)[number]
@@ -81,6 +84,10 @@ export function validateConfigPatch(
       case 'jobDescription':
         if (value && value.length > 4000) return { ok: false, error: 'Description must be 4000 characters or fewer.' }
         fields.jobDescription = value || null
+        break
+      case 'contactChannel':
+        if (value && value.length > 200) return { ok: false, error: 'Contact must be 200 characters or fewer.' }
+        fields.contactChannel = value || null
         break
       case 'avatarEmoji':
         // An emoji, not an essay — this is the fallback icon when there's no picture.

@@ -27,6 +27,8 @@ export type DAgent = {
   lastHeartbeatAt?: number | null
   termsOfReference?: string | null
   jobDescription?: string | null
+  /** AG7 — the email shown on the staff card (blank → a derived @handle). */
+  contactChannel?: string | null
 }
 
 /**
