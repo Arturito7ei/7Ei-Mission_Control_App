@@ -159,6 +159,12 @@ export async function setupDatabase() {
     `ALTER TABLE agents ADD COLUMN cheap_model TEXT`,
     `ALTER TABLE agents ADD COLUMN cheap_model_enabled INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE agents ADD COLUMN reasoning_effort TEXT`,
+    // Epic AG / AG2 — per-task token split for the agent Costs strip. `tokens_used`
+    // remains the total and is untouched; these are nullable so every existing task
+    // stays exactly as it is (null = "recorded before the split", rendered as —).
+    `ALTER TABLE tasks ADD COLUMN input_tokens INTEGER`,
+    `ALTER TABLE tasks ADD COLUMN output_tokens INTEGER`,
+    `ALTER TABLE tasks ADD COLUMN cached_tokens INTEGER`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
