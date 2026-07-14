@@ -13,7 +13,8 @@ import PlaceholderView from './PlaceholderView'
 import AgentDetail from './agent/AgentDetail'
 import StaffGrid from './agent/StaffGrid'
 import { allNavItems, isPlaceholder, isSection, navSectionKey, findNavItem } from '@/lib/navModel'
-import { agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
+import { DEFAULT_AGENT_TAB, agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
+import { AgentAvatar } from './agent/shared'
 import { useTheme } from '../theme'
 import { CommandPalette, type Command } from './CommandPalette'
 import { statusColor, statusIcon } from './status'
@@ -29,7 +30,10 @@ try {
 const apiFetch = <T,>(path: string, token: string | null, opts?: RequestInit): Promise<T> => api<T>(path, { token, ...opts })
 
 type Org = { id: string; name: string; description?: string; mission?: string; culture?: string }
-type Agent = { id: string; name: string; role: string; status: string; avatarEmoji: string; agentType: string; llmModel: string; skills: string[] }
+// avatarUrl is the AG5 uploaded picture; null → avatarEmoji. Every surface that
+// shows an agent renders it through <AgentAvatar>, so the Dashboard, the Staff
+// grid and the agent header always agree.
+type Agent = { id: string; name: string; role: string; status: string; avatarEmoji: string; avatarUrl?: string | null; agentType: string; llmModel: string; skills: string[] }
 type Task = { id: string; title: string; status: string; costUsd?: number; tokensUsed?: number; priority: string; createdAt: string; agentId: string; projectId?: string }
 type Project = { id: string; name: string; description?: string; createdAt: string }
 type Skill = { id: string; name: string; domain: string; description?: string; source: string }
@@ -122,7 +126,9 @@ export default function DashboardPage() {
     return () => window.removeEventListener('hashchange', sync)
   }, [])
 
-  const openAgent = useCallback((agentId: string, at: AgentTab = 'dashboard') => {
+  // Opening an agent from anywhere (fleet, Staff card, table row, palette) lands
+  // on DEFAULT_AGENT_TAB — Configuration. The tab bar reaches the rest.
+  const openAgent = useCallback((agentId: string, at: AgentTab = DEFAULT_AGENT_TAB) => {
     window.location.hash = agentRouteHash(agentId, at)
   }, [])
 
@@ -346,11 +352,11 @@ export default function DashboardPage() {
         {/* P0b — a promoted Cockpit section renders as its own focused area,
             reusing the CockpitPanel composition root (no rebuild). */}
         {isSection(tab) && (
-          <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId}
+          <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} onOpenAgent={openAgent}
             only={[navSectionKey(tab) as CockpitSectionKey]} title={findNavItem(tab)?.label} />
         )}
 
-        {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} />}
+        {tab === 'cockpit' && <CockpitPanel orgId={org.id} getToken={getToken} onOpenTask={setOpenTaskId} onOpenAgent={openAgent} />}
 
         {tab === 'assistant' && <AssistantPanel orgId={org.id} getToken={getToken} />}
 
@@ -366,8 +372,11 @@ export default function DashboardPage() {
             <h2 style={s.h2}>Agent Squad</h2>
             <div style={s.agentGrid}>
               {agents.map(a => (
-                <div key={a.id} style={s.agentCard}>
-                  <span style={{ fontSize: 28 }}>{a.avatarEmoji}</span>
+                <div key={a.id} role="button" tabIndex={0} aria-label={`Open ${a.name}`}
+                  onClick={() => openAgent(a.id)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgent(a.id) } }}
+                  style={{ ...s.agentCard, cursor: 'pointer' }}>
+                  <AgentAvatar agent={a} size={36} radius={8} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{a.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{a.role}</div>
@@ -424,7 +433,10 @@ export default function DashboardPage() {
                     <div key={a.id} role="button" tabIndex={0} aria-label={`Open ${a.name}`}
                       onClick={() => openAgent(a.id)} onKeyDown={e => { if (e.key === 'Enter') openAgent(a.id) }}
                       style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr', cursor: 'pointer' }}>
-                      <span>{a.avatarEmoji} {a.name}</span><span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <AgentAvatar agent={a} size={22} radius={6} /> {a.name}
+                      </span>
+                      <span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
                       <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
                       <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.skills.length}</span>
                       <span style={{ color: statusColor(a.status), fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{statusIcon(a.status)} {a.status}</span>

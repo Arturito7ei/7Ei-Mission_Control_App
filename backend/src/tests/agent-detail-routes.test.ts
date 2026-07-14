@@ -23,19 +23,28 @@ delete process.env.DATABASE_AUTH_TOKEN
 const { db, schema } = await import('../db/client')
 const { setupDatabase } = await import('../db/setup')
 const { agentDetailRoutes } = await import('../routes/agent-detail')
+const { registerJsonBodyParser } = await import('../middleware/body-parser')
 const { eq } = await import('drizzle-orm')
 
 const ORG = 'org-ag', OWNER = 'user-owner', MEMBER = 'user-member', AGENT = 'agent-ag'
 
 let app: FastifyInstance
 
-/** The app as the secured scope builds it: Clerk resolved to a userId on req.auth. */
+/**
+ * The app as the secured scope builds it: Clerk resolved to a userId on req.auth,
+ * and the SAME body parser index.ts installs — a handler test that skips the
+ * transport layer is exactly how the avatar Remove shipped broken twice.
+ */
 function appAs(userId: string) {
   const a = Fastify({ logger: false })
+  registerJsonBodyParser(a)
   a.addHook('onRequest', async (req) => { (req as any).auth = { userId }; (req as any).userId = userId })
   a.register(agentDetailRoutes)
   return a
 }
+
+/** Exactly the headers `web/lib/api.ts` puts on every call, body or not. */
+const BROWSER_HEADERS = { 'content-type': 'application/json' }
 
 const agentRow = async () => db.query.agents.findFirst({ where: eq(schema.agents.id, AGENT) })
 
@@ -120,6 +129,40 @@ test('[AGFIX2] removing an avatar that is already gone is not an error', async (
   const res = await app.inject({ method: 'DELETE', url: `/api/orgs/${ORG}/agents/${AGENT}/avatar` })
   assert.equal(res.statusCode, 204)
   assert.equal((await agentRow())!.avatarUrl, null)
+})
+
+// The Remove button 400'd in production while the test above passed, because the
+// test sent no Content-Type and the browser sends one. `web/lib/api.ts` sets
+// `Content-Type: application/json` on every request; a DELETE has no body; the
+// stock Fastify JSON parser rejects that pair with FST_ERR_CTP_EMPTY_JSON_BODY
+// before any handler runs. These drive the route the way the dashboard does.
+test('[AGFIX4] Remove works with the browser\'s headers — CT:json and no body', async () => {
+  await db.update(schema.agents).set({ avatarUrl: 'data:image/png;base64,SEED' }).where(eq(schema.agents.id, AGENT))
+
+  const res = await app.inject({
+    method: 'DELETE', url: `/api/orgs/${ORG}/agents/${AGENT}/avatar`, headers: BROWSER_HEADERS,
+  })
+  assert.equal(res.statusCode, 204, res.body)
+  assert.equal((await agentRow())!.avatarUrl, null, 'the picture must be gone, so the icon takes over')
+})
+
+test('[AGFIX4] a bodiless PUT is judged by the validator, not refused by the parser', async () => {
+  // The parser must hand `{}` to the handler. Whether an empty patch is then a
+  // 400 is the validator's call — but the reason must come from the handler, and
+  // never be the parser's FST_ERR_CTP_EMPTY_JSON_BODY.
+  const res = await app.inject({
+    method: 'PUT', url: `/api/orgs/${ORG}/agents/${AGENT}/config`, headers: BROWSER_HEADERS,
+  })
+  assert.notEqual(res.json().code, 'FST_ERR_CTP_EMPTY_JSON_BODY')
+  assert.doesNotMatch(res.body, /Body cannot be empty/i)
+})
+
+test('[AGFIX4] genuinely broken JSON is still refused, and says so', async () => {
+  const res = await app.inject({
+    method: 'PUT', url: `/api/orgs/${ORG}/agents/${AGENT}/config`, headers: BROWSER_HEADERS, payload: '{"name":',
+  })
+  assert.equal(res.statusCode, 400)
+  assert.match(res.json().message ?? res.json().error, /invalid json/i)
 })
 
 test('[AGFIX2] a non-owner cannot remove the avatar', async () => {

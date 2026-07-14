@@ -12,6 +12,8 @@ export type Getter = () => Promise<string | null>
 export type CAgent = {
   id: string; name: string; role: string; runtime: string; llmProvider: string; llmModel: string
   status: string; agentType: string; avatarEmoji: string; heartbeat: string; lastHeartbeatAt: number | null
+  /** AG5 — the uploaded picture, when the agent has one. Null → avatarEmoji. */
+  avatarUrl?: string | null
 }
 export type CTask = { id: string; title: string; status: string; kanbanColumn: string; priority: string; agentId: string; unread?: boolean }
 // W2: the single next task the office should pick up (unblocked, highest priority).

@@ -373,9 +373,11 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       <div className="mc-hero" style={{ padding: `${space.xxl}px ${space.xl}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: space.lg }}>
         <AssistantOrb state={voiceState} logoSrc={ARTURITA_LOGO_SRC} />
         <div style={{ textAlign: 'center' }}>
-          <h1 style={{ ...ui.h1, justifyContent: 'center', fontSize: 24 }}>Arturita</h1>
+          {/* The surface is the Command Center (it matches the nav label); the
+              assistant you talk to in it is still Arturita. */}
+          <h1 style={{ ...ui.h1, justifyContent: 'center', fontSize: 24 }}>Command Center</h1>
           <p style={{ ...ui.hint, margin: `${space.xs}px 0 0` }}>
-            Your voice-first chief of staff. She answers directly — and only spins up the office when you ask her to.
+            Arturita, your voice-first chief of staff. She answers directly — and only spins up the office when you ask her to.
           </p>
         </div>
 

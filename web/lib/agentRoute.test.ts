@@ -37,7 +37,23 @@ test('[AG1] agentRouteHash round-trips through parseAgentRoute', () => {
   for (const tab of AGENT_TABS) {
     assert.deepEqual(parseAgentRoute(agentRouteHash('agent-42', tab)), { agentId: 'agent-42', tab })
   }
-  assert.equal(agentRouteHash('agent-42'), '#agents/agent-42/dashboard')
+  assert.equal(agentRouteHash('agent-42'), '#agents/agent-42/configuration')
+})
+
+// FIX 3 — opening an agent lands on Configuration, which is what the operator
+// came for. Everything that opens an agent (fleet card, Staff card, table row,
+// command palette, a tabless deep link) goes through these two, so pinning the
+// default here pins it everywhere.
+test('[AGFIX4] opening an agent defaults to the Configuration tab', () => {
+  assert.equal(DEFAULT_AGENT_TAB, 'configuration')
+  assert.equal(parseAgentRoute('#agents/a-1')!.tab, 'configuration')
+  assert.equal(agentRouteHash('a-1'), '#agents/a-1/configuration')
+})
+
+test('[AGFIX4] every other tab is still reachable by an explicit link', () => {
+  for (const tab of AGENT_TABS) {
+    assert.equal(parseAgentRoute(agentRouteHash('a-1', tab))!.tab, tab)
+  }
 })
 
 test('[AG1] ids with URL-unsafe characters survive the round trip', () => {

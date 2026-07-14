@@ -28,6 +28,15 @@ test('[P0-web] every existing tab is re-homed exactly once (nothing lost)', () =
   assert.deepEqual([...tabIds].sort(), [...EXISTING_TABS].sort())
 })
 
+// FIX 4 — the nav item is labelled for the surface, not the persona. The id is
+// the dashboard Tab value and is deep-linked, so it stays `assistant`.
+test('[AGFIX4] the assistant nav item reads "Command Center", keeping its id', () => {
+  const item = findNavItem('assistant')
+  assert.equal(item?.label, 'Command Center')
+  assert.equal(item?.kind, 'tab')
+  assert.equal(allNavItems().filter(i => i.label === 'Arturita').length, 0, 'no nav item is labelled with the persona')
+})
+
 test('[P0-web] nav item ids are globally unique', () => {
   const ids = allNavItems().map(i => i.id)
   assert.equal(new Set(ids).size, ids.length)

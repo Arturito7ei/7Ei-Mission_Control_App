@@ -485,6 +485,9 @@ export async function agentRoutes(app: FastifyInstance) {
       id: a.id, name: a.name, role: a.role, runtime: a.runtime,
       llmProvider: a.llmProvider, llmModel: a.llmModel, status: a.status,
       agentType: a.agentType, avatarEmoji: a.avatarEmoji,
+      // The uploaded picture, so the fleet shows the SAME avatar the Staff grid
+      // and the agent header show. Null → the emoji above is used.
+      avatarUrl: a.avatarUrl,
       heartbeat: isExternalAgent(a) ? heartbeatFreshness(a.lastHeartbeatAt as any, now) : 'green',
       lastHeartbeatAt: a.lastHeartbeatAt,
     }))
