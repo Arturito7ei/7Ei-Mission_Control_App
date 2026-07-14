@@ -34,9 +34,9 @@ import { customModelRoutes } from './routes/custom-models'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from './routes/agent-invites'
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
-import { auditLogPlugin } from './middleware/audit-log'
+import { auditLogPlugin, auditLogQueryRoutes } from './middleware/audit-log'
 import { clerkAuth } from './middleware/clerk-auth'
-import { telemetryPlugin } from './services/telemetry'
+import { telemetryPlugin, telemetryQueryRoutes } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
 import { buildLlmsTxt } from './services/llms-txt'
@@ -133,6 +133,14 @@ async function start() {
     await secured.register(arturitaCustomModelRoutes) // Arturita custom operator-defined LLM insertion (J2+)
     await secured.register(customModelRoutes)         // Epic AG — custom adapters/models for agents
     await secured.register(agentInviteRoutes)         // Epic ONB — owner-gated invite create/list/revoke + posture
+    // ONB2 audit H-2 — these two READ endpoints used to be registered inside the
+    // hook plugins below, i.e. in the PUBLIC block: `GET /api/orgs/:orgId/audit-log`
+    // was an unauthenticated cross-tenant audit read, and `GET /api/traces` served
+    // real spans to anyone. They are now Clerk-gated (audit-log additionally
+    // owner-gated), and `auth-scoping.test.ts` boots both plugins so the MCA-85
+    // leak guard covers them from now on.
+    await secured.register(auditLogQueryRoutes)       // GET /api/orgs/:orgId/audit-log (owner)
+    await secured.register(telemetryQueryRoutes)      // GET /api/traces
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
@@ -166,6 +174,11 @@ async function start() {
   // Public routine webhook/API trigger (MCA-PC C3) — token-authenticated by URL.
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
+  // The audit + telemetry HOOKS. Both are still no-ops by encapsulation (ONB2
+  // audit H-1): a hook added inside a register()'d child never fires for its
+  // siblings. Left that way ON PURPOSE — hoisting them turns on one Turso INSERT
+  // per request with no retention policy, which is an operator cost decision, not
+  // a hardening one. Their query routes now live in the secured scope above.
   await app.register(telemetryPlugin)
   await app.register(auditLogPlugin)
 

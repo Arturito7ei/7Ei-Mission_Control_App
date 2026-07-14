@@ -134,7 +134,7 @@
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/orgs/:orgId/audit-log` | Yes | Query audit logs. `?action=X&limit=N` |
+| GET | `/api/orgs/:orgId/audit-log` | Yes (owner) | Query audit logs. `?action=X&limit=N`. **Note:** the audit hook is not enabled (ONB2 audit H-1 — operator decision), so this returns `{ logs: [] }` today. |
 | GET | `/api/traces` | Yes | Recent telemetry spans |
 | GET | `/api/orgs/:orgId/usage` | Yes | Current usage stats |
 | GET | `/api/orgs/:orgId/limits` | Yes | Rate limit configuration |

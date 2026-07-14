@@ -2,24 +2,52 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, desc } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { redactPath } from '../services/log-redaction'
+import { redactPath, redactTokensInText } from '../services/log-redaction'
+import { requireOrgRole } from './rbac'
 
 // Fields that should never appear in audit metadata
 const SENSITIVE_KEYS = ['key', 'token', 'secret', 'password', 'apiKey', 'api_key', 'refreshToken', 'accessToken']
 
-export function sanitizeBody(body: unknown): Record<string, unknown> | null {
-  if (!body || typeof body !== 'object') return null
-  const sanitized: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
-    if (SENSITIVE_KEYS.some(s => k.toLowerCase().includes(s.toLowerCase()))) {
-      sanitized[k] = '[REDACTED]'
-    } else if (typeof v === 'string' && v.length > 200) {
-      sanitized[k] = v.slice(0, 200) + '...'
-    } else {
-      sanitized[k] = v
-    }
+/** How deep sanitizeBody walks before it gives up and drops the subtree. Bodies
+ *  are Zod-validated request payloads, not arbitrary graphs — 8 is far past any
+ *  real one, and the cap is what stops a hostile/cyclic body from spinning here. */
+const MAX_DEPTH = 8
+
+const isSensitiveKey = (k: string) =>
+  SENSITIVE_KEYS.some(s => k.toLowerCase().includes(s.toLowerCase()))
+
+/**
+ * ONB2 audit finding H-3 — sanitizeBody must RECURSE.
+ *
+ * It used to redact only TOP-LEVEL secret-shaped keys and copy any object value
+ * in whole, un-walked. ONB2's onboarding document explicitly instructs a joining
+ * agent to put its adapter secrets INSIDE `agentDefaultsPayload` (`apiKey`,
+ * `x-openclaw-token`, …) — a key that matches none of SENSITIVE_KEYS. So the day
+ * ONB3 wires the join body and the hook is alive, the whole payload would land in
+ * `audit_logs.metadata` in plaintext. It now walks objects and arrays and applies
+ * the same key test at EVERY depth, and every surviving string goes through
+ * `redactTokensInText` so a token echoed inside free text is scrubbed too.
+ */
+function sanitizeValue(value: unknown, depth: number): unknown {
+  if (typeof value === 'string') {
+    const scrubbed = redactTokensInText(value)
+    return scrubbed.length > 200 ? scrubbed.slice(0, 200) + '...' : scrubbed
   }
-  return sanitized
+  if (!value || typeof value !== 'object') return value
+  if (depth >= MAX_DEPTH) return '[TRUNCATED]'
+
+  if (Array.isArray(value)) return value.map(v => sanitizeValue(v, depth + 1))
+
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = isSensitiveKey(k) ? '[REDACTED]' : sanitizeValue(v, depth + 1)
+  }
+  return out
+}
+
+export function sanitizeBody(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  return sanitizeValue(body, 0) as Record<string, unknown>
 }
 
 function classifyAction(method: string, path: string): string {
@@ -99,6 +127,21 @@ const dbSink: AuditSink = (row) => {
   db.insert(schema.auditLogs).values(row).catch(err => console.warn('Audit log insert failed:', err))
 }
 
+/**
+ * The audit HOOK.
+ *
+ * ⚠️ ONB2 audit finding H-1: this hook is a NO-OP in production. `app.register()`
+ * creates an encapsulated child context, so an `onResponse` hook added in here
+ * fires for this plugin's own routes and descendants only — never for its
+ * siblings, which is every route in the app. Nothing is persisted today.
+ *
+ * That is left DELIBERATELY unfixed: hoisting the hook (fastify-plugin, or adding
+ * it at the root instance before any register()) switches on one Turso INSERT per
+ * request, forever, with no retention policy. That is an OPERATOR cost decision —
+ * see docs/AUDIT-ONB2.md H-1 and HANDOFF.md. This PR makes the trail
+ * SAFE-TO-ENABLE-BY-CONSTRUCTION (query route gated, body recursively sanitized,
+ * path + telemetry URL redacted); it does not enable it.
+ */
 export async function auditLogPlugin(app: FastifyInstance, opts: { sink?: AuditSink } = {}) {
   const sink = opts.sink ?? dbSink
 
@@ -116,9 +159,23 @@ export async function auditLogPlugin(app: FastifyInstance, opts: { sink?: AuditS
       body: req.body,
     }))
   })
+}
 
-  // Query endpoint
-  app.get('/api/orgs/:orgId/audit-log', async (req) => {
+/**
+ * The audit QUERY route — split out of the hook plugin (ONB2 audit finding H-2).
+ *
+ * It used to live inside `auditLogPlugin`, which `src/index.ts` registers in the
+ * PUBLIC block: the route therefore inherited no Clerk hook and no RBAC, so any
+ * caller who knew an `orgId` could read that org's audit log. Only the H-1 bug
+ * (empty table) kept it from being a live cross-tenant leak — luck, not design,
+ * and it would have gone live the moment someone "just fixed the hook".
+ *
+ * Register this in the SECURED scope. An audit log is an owner artefact, so it is
+ * Clerk + `requireOrgRole('owner')`. `auth-scoping.test.ts` now boots both plugins
+ * in `bootLikeIndex()`, so the MCA-85 leak guard covers this route permanently.
+ */
+export async function auditLogQueryRoutes(app: FastifyInstance) {
+  app.get('/api/orgs/:orgId/audit-log', { preHandler: requireOrgRole('owner') }, async (req) => {
     const { orgId } = req.params as any
     const { limit = '100', action } = req.query as any
     const conditions = [eq(schema.auditLogs.orgId, orgId)]
