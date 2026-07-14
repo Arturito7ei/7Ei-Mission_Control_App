@@ -10,6 +10,7 @@ import { Modal, ModalTitle, FormLabel } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { AgentAvatar, StatusPill, ax, type DAgent, type Getter } from './shared'
 import DashboardTab from './DashboardTab'
+import InstructionsTab from './InstructionsTab'
 
 export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask }: {
   orgId: string
@@ -127,10 +128,10 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
       </div>
 
       <div role="tabpanel" id={`agent-panel-${tab}`} aria-labelledby={`agent-tab-${tab}`}>
-        {tab === 'dashboard'
-          ? <DashboardTab orgId={orgId} agentId={agentId} getToken={getToken}
-              onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />
-          : <TabPanel tab={tab} />}
+        {tab === 'dashboard' && <DashboardTab orgId={orgId} agentId={agentId} getToken={getToken}
+          onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />}
+        {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
+        {tab !== 'dashboard' && tab !== 'instructions' && <TabPanel tab={tab} />}
       </div>
 
       {assignOpen && (
@@ -154,7 +155,7 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
 // Each tab's real panel lands in its own story (AG3–AG6); Dashboard shipped in AG2.
 const PENDING: Record<AgentTab, string> = {
   dashboard: '',
-  instructions: 'The agent’s personal markdown files (AGENTS.md, HEARTBEAT.md, SOUL.md, TOOLS.md) with an editor.',
+  instructions: '',
   skills: 'The company skills library — installed vs. available for this agent.',
   configuration: 'Identity, avatar, reports-to, adapter and model.',
   runs: 'Run history with per-run logs.',

@@ -185,6 +185,19 @@ export const pluginJobs = sqliteTable('plugin_jobs', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }),
 })
 
+// Epic AG / AG3 — the managed instructions bundle: one row per agent markdown
+// file (AGENTS.md is the entry file). A file with no row has never been saved:
+// the editor shows a generated default and the system prompt is unchanged.
+export const agentFiles = sqliteTable('agent_files', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  path: text('path').notNull(),          // bare filename, e.g. AGENTS.md — never a path
+  content: text('content').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 // MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and
 // sessionState that persists across heartbeats so runs resume instead of restart.
 export const agentRuns = sqliteTable('agent_runs', {
