@@ -14,6 +14,7 @@ import { buildAgentOverview, OVERVIEW_DAYS } from '../services/agent-overview'
 import {
   MAX_EXTRA_FILES, isManaged, listBundle, normalizeFileName, readFile, validateContent,
 } from '../services/agent-files'
+import { resolveSelection, splitSkills } from '../services/agent-skills'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
 export async function agentInOrg(orgId: string, agentId: string) {
@@ -148,5 +149,48 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     await db.delete(schema.agentFiles)
       .where(and(eq(schema.agentFiles.agentId, agentId), eq(schema.agentFiles.orgId, orgId), eq(schema.agentFiles.path, path)))
     return reply.code(204).send()
+  })
+
+  // ─── AG4 — Skills: the company library, split by what this agent has ───────
+
+  // Read is member-visible (the roster shows skill counts already).
+  app.get('/api/orgs/:orgId/agents/:agentId/skills', async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const library = await db.select().from(schema.skills)
+    const split = splitSkills(library, (agent.skills as string[]) ?? [])
+    return {
+      ...split,
+      // Footer of the mockup: which adapter these skills get applied to.
+      adapter: agent.runtime,
+      model: agent.primaryModel || agent.llmModel,
+    }
+  })
+
+  // Write the WHOLE selection. Install and uninstall are the same idempotent call,
+  // which is what the checkbox list actually means — and it's the only uninstall
+  // path that exists (the legacy route could only append).
+  app.put('/api/orgs/:orgId/agents/:agentId/skills', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const library = await db.select().from(schema.skills)
+    const resolved = resolveSelection(library, (req.body as { skills?: unknown })?.skills)
+    if (resolved.ok === false) return reply.code(400).send({ error: resolved.error })
+
+    await db.update(schema.agents).set({ skills: resolved.names }).where(eq(schema.agents.id, agentId))
+    const after = await agentInOrg(orgId, agentId)
+
+    // Same audit trail as any other config change (MCA-GOV2 S4.1).
+    await db.insert(schema.configRevisions).values({
+      id: randomUUID(), orgId, entity: 'agent', entityId: agentId,
+      before: JSON.stringify(agent), after: JSON.stringify(after),
+      actor: (req as any).userId ?? 'human', createdAt: new Date(),
+    }).catch(() => {})
+
+    return { ...splitSkills(library, resolved.names), adapter: agent.runtime, model: agent.primaryModel || agent.llmModel }
   })
 }
