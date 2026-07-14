@@ -26,7 +26,10 @@ export interface LLMStreamOpts {
   reasoningEffort?: 'low' | 'medium' | 'high'
 }
 
-export interface LLMUsage { inputTokens: number; outputTokens: number }
+// AG2: `cachedTokens` = prompt-cache reads, reported by providers that support
+// them (Anthropic today). Optional — absent means "provider does not report it",
+// which the Costs strip renders as — rather than 0.
+export interface LLMUsage { inputTokens: number; outputTokens: number; cachedTokens?: number }
 
 export interface LLMResult {
   output: string
@@ -149,7 +152,13 @@ async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
   const final = await stream.finalMessage()
   return {
     output, model: opts.model, provider: 'anthropic',
-    usage: { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens },
+    // AG2: cache reads are reported separately by Anthropic and are NOT part of
+    // input_tokens — surfaced for the agent Costs strip, not added to the total.
+    usage: {
+      inputTokens: final.usage.input_tokens,
+      outputTokens: final.usage.output_tokens,
+      cachedTokens: (final.usage as any).cache_read_input_tokens ?? 0,
+    },
   }
 }
 

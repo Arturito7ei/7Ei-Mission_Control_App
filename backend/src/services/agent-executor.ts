@@ -300,6 +300,9 @@ export async function executeAgentTask(opts: {
 
     await db.update(schema.tasks).set({
       output: cleanedOutput, status: 'done', tokensUsed, costUsd,
+      // AG2 — persist the split behind the total so the agent Costs strip is real.
+      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      cachedTokens: result.usage.cachedTokens ?? 0,
       durationMs, llmModel: usedModel, completedAt: new Date(),
     }).where(eq(schema.tasks.id, taskId))
     await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agentId))
@@ -415,7 +418,11 @@ export async function answerAskTask(opts: {
       kind: ASK_ANSWER_KIND, body: answer.slice(0, 8000), createdAt: new Date(),
     }).catch(() => {})
     await db.update(schema.tasks).set({
-      output: answer, status: 'done', tokensUsed, costUsd, durationMs, llmModel: model, completedAt: new Date(),
+      output: answer, status: 'done', tokensUsed, costUsd,
+      // AG2 — same split as the execute path above (ask-mode turns count too).
+      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      cachedTokens: result.usage.cachedTokens ?? 0,
+      durationMs, llmModel: model, completedAt: new Date(),
     }).where(eq(schema.tasks.id, taskId))
     await db.update(schema.agents).set({ status: 'idle' }).where(eq(schema.agents.id, agent.id))
 

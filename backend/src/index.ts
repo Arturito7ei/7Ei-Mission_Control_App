@@ -19,6 +19,7 @@ import { multiOrgRoutes } from './routes/multi-org'
 import { usageRoutes } from './middleware/ratelimit'
 import { modelRoutes } from './routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from './routes/scheduled'
+import { agentDetailRoutes } from './routes/agent-detail'
 import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
@@ -84,6 +85,7 @@ async function start() {
     secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
+    await secured.register(agentDetailRoutes)   // Epic AG — per-agent detail page (org-scoped)
     await secured.register(taskRoutes)
     await secured.register(projectRoutes)
     await secured.register(costRoutes)

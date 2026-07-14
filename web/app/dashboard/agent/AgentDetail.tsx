@@ -9,14 +9,16 @@ import { Button, Card, Skeleton, TextInput } from '../ui'
 import { Modal, ModalTitle, FormLabel } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { AgentAvatar, StatusPill, ax, type DAgent, type Getter } from './shared'
+import DashboardTab from './DashboardTab'
 
-export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken }: {
+export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask }: {
   orgId: string
   agentId: string
   tab: AgentTab
   onTab: (t: AgentTab) => void
   onBack: () => void
   getToken: Getter
+  onOpenTask?: (taskId: string) => void
 }) {
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -125,7 +127,10 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
       </div>
 
       <div role="tabpanel" id={`agent-panel-${tab}`} aria-labelledby={`agent-tab-${tab}`}>
-        <TabPanel tab={tab} />
+        {tab === 'dashboard'
+          ? <DashboardTab orgId={orgId} agentId={agentId} getToken={getToken}
+              onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />
+          : <TabPanel tab={tab} />}
       </div>
 
       {assignOpen && (
@@ -146,9 +151,9 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
   )
 }
 
-// AG1 ships the shell; each tab's real panel lands in its own story (AG2–AG6).
+// Each tab's real panel lands in its own story (AG3–AG6); Dashboard shipped in AG2.
 const PENDING: Record<AgentTab, string> = {
-  dashboard: 'Latest run, run activity, tasks by priority/status, success rate, recent tasks and costs.',
+  dashboard: '',
   instructions: 'The agent’s personal markdown files (AGENTS.md, HEARTBEAT.md, SOUL.md, TOOLS.md) with an editor.',
   skills: 'The company skills library — installed vs. available for this agent.',
   configuration: 'Identity, avatar, reports-to, adapter and model.',

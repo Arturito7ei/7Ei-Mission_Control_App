@@ -110,6 +110,12 @@ export const tasks = sqliteTable('tasks', {
   kanbanColumn: text('kanban_column').default('todo'),
   llmModel: text('llm_model'),
   tokensUsed: integer('tokens_used'),
+  // Epic AG / AG2 — the token split behind `tokens_used` (which stays the total,
+  // unchanged). Null on tasks that predate the split; the agent Costs strip
+  // shows "—" rather than a fake 0 when nothing carries it.
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  cachedTokens: integer('cached_tokens'),
   costUsd: real('cost_usd'),
   durationMs: integer('duration_ms'),
   assignedTo: text('assigned_to'),
