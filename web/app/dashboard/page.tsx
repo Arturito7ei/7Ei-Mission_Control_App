@@ -10,7 +10,9 @@ import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
 import Sidebar from './Sidebar'
 import PlaceholderView from './PlaceholderView'
+import AgentDetail from './agent/AgentDetail'
 import { allNavItems, isPlaceholder, isSection, navSectionKey, findNavItem } from '@/lib/navModel'
+import { agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
 import { useTheme } from '../theme'
 import { CommandPalette, type Command } from './CommandPalette'
 import { statusColor, statusIcon } from './status'
@@ -55,6 +57,9 @@ export default function DashboardPage() {
   const [jiraConnected, setJiraConnected] = useState(false)
   const [usage, setUsage] = useState<UsageStats | null>(null)
   const [tab, setTab] = useState<string>('overview')
+  // AG1 — the agent detail page lives inside the `agents` area and deep-links
+  // through the URL hash (#agents/<id>/<tab>), parsed by the pure lib/agentRoute.
+  const [agentRoute, setAgentRoute] = useState<AgentRoute | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   // Org creation (web onboarding — backend auto-creates Arturito on first org)
@@ -100,6 +105,33 @@ export default function DashboardPage() {
   }, [getToken])
 
   useEffect(() => { if (!isLoaded) return; if (!isSignedIn) { router.push('/'); return }; load() }, [isLoaded, isSignedIn])
+
+  // AG1 — hash → agent route. A deep link (or Back/Forward) lands on the agent
+  // detail page with the Agents area selected; no hash = the agent list.
+  useEffect(() => {
+    const sync = () => {
+      const r = parseAgentRoute(window.location.hash)
+      setAgentRoute(r)
+      if (r) setTab('agents')
+    }
+    sync()
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+
+  const openAgent = useCallback((agentId: string, at: AgentTab = 'dashboard') => {
+    window.location.hash = agentRouteHash(agentId, at)
+  }, [])
+
+  // Leaving the detail page drops the hash without pushing a history entry
+  // (replaceState fires no hashchange, so clear the state ourselves).
+  const closeAgent = useCallback(() => {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    setAgentRoute(null)
+  }, [])
+
+  // Any nav selection leaves the agent detail page behind.
+  const selectTab = useCallback((t: string) => { closeAgent(); setTab(t) }, [closeAgent])
 
   // Model catalogue for the org-creation picker (data-driven from the backend)
   useEffect(() => {
@@ -289,7 +321,9 @@ export default function DashboardPage() {
   // Paperclip-style nav model (P0a); selecting a "coming soon" area lands on its
   // placeholder view. Epic V extends this list (jump to task/agent/approval).
   const commands: Command[] = [
-    ...allNavItems().map(n => ({ id: `nav-${n.id}`, label: n.kind === 'placeholder' ? `${n.label} (soon)` : n.label, icon: n.icon, group: 'Navigate', keywords: `go to open view tab ${n.paperclip}`, run: () => setTab(n.id) })),
+    ...allNavItems().map(n => ({ id: `nav-${n.id}`, label: n.kind === 'placeholder' ? `${n.label} (soon)` : n.label, icon: n.icon, group: 'Navigate', keywords: `go to open view tab ${n.paperclip}`, run: () => selectTab(n.id) })),
+    // AG1 — jump straight to an agent's detail page.
+    ...agents.map(a => ({ id: `agent-${a.id}`, label: a.name, icon: a.avatarEmoji || '🤖', group: 'Agents', keywords: `agent open ${a.role}`, run: () => openAgent(a.id) })),
     { id: 'theme-light', label: 'Light theme', icon: '☀', group: 'Theme', keywords: 'appearance mode', run: () => setMode('light') },
     { id: 'theme-dark', label: 'Dark theme', icon: '☾', group: 'Theme', keywords: 'appearance mode', run: () => setMode('dark') },
     { id: 'theme-system', label: 'System theme', icon: '🖥', group: 'Theme', keywords: 'appearance mode auto', run: () => setMode('system') },
@@ -299,7 +333,7 @@ export default function DashboardPage() {
     <div className="mc-layout" style={s.layout}>
       <CommandPalette commands={commands} open={paletteOpen} onOpenChange={setPaletteOpen} />
       {/* P0a — Paperclip-style folded, grouped, collapsible nav rail. */}
-      <Sidebar orgName={org.name} selected={tab} onSelect={setTab} onOpenPalette={() => setPaletteOpen(true)} unread={unread} />
+      <Sidebar orgName={org.name} selected={tab} onSelect={selectTab} onOpenPalette={() => setPaletteOpen(true)} unread={unread} />
 
       <main className="mc-main" style={s.main}>
 
@@ -355,13 +389,19 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {tab === 'agents' && (
+        {/* AG1 — the Agents area is either the roster or one agent's detail page. */}
+        {tab === 'agents' && (agentRoute
+          ? <AgentDetail orgId={org.id} agentId={agentRoute.agentId} tab={agentRoute.tab} getToken={getToken}
+              onTab={t => openAgent(agentRoute.agentId, t)} onBack={closeAgent} />
+          : (
           <div style={s.page}>
             <h1 style={s.h1}>Agents ({agents.length})</h1>
             <div style={s.table}>
               <div style={{ ...s.thead, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}><span>Name</span><span>Role</span><span>Model</span><span>Skills</span><span>Status</span></div>
               {agents.map(a => (
-                <div key={a.id} style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr' }}>
+                <div key={a.id} role="button" tabIndex={0} aria-label={`Open ${a.name}`}
+                  onClick={() => openAgent(a.id)} onKeyDown={e => { if (e.key === 'Enter') openAgent(a.id) }}
+                  style={{ ...s.trow, gridTemplateColumns: '2fr 2fr 1.5fr 1fr 1fr', cursor: 'pointer' }}>
                   <span>{a.avatarEmoji} {a.name}</span><span style={{ color: 'var(--muted)', fontSize: 13 }}>{a.role}</span>
                   <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.llmModel.split('-').slice(0, 3).join('-')}</span>
                   <span style={{ color: 'var(--muted)', fontSize: 12 }}>{a.skills.length}</span>
@@ -370,7 +410,7 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
-        )}
+        ))}
 
         {tab === 'tasks' && (
           <div style={s.page}>
