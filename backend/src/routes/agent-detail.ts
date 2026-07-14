@@ -18,6 +18,7 @@ import { resolveSelection, splitSkills } from '../services/agent-skills'
 import { validateConfigPatch } from '../services/agent-config'
 import { buildAvatarDataUri } from '../services/agent-avatar'
 import { summariseAgentBudget } from '../services/agent-budget'
+import { buildStaffCards } from '../services/staff-grid'
 import { spendForScope } from '../services/budget'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
@@ -29,6 +30,21 @@ export async function agentInOrg(orgId: string, agentId: string) {
 }
 
 export async function agentDetailRoutes(app: FastifyInstance) {
+  // ─── AG7 — Staff grid: one card per agent, for the Agents area ─────────────
+  // Everything is derived from rows we already have (agents + tasks); the grid
+  // added no columns of its own.
+  app.get('/api/orgs/:orgId/staff', async (req) => {
+    const { orgId } = req.params as { orgId: string }
+    const [agents, tasks] = await Promise.all([
+      db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+      db.select({
+        agentId: schema.tasks.agentId, status: schema.tasks.status, costUsd: schema.tasks.costUsd,
+        tokensUsed: schema.tasks.tokensUsed, createdAt: schema.tasks.createdAt, completedAt: schema.tasks.completedAt,
+      }).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)),
+    ])
+    return { staff: buildStaffCards({ agents: agents as any, tasks: tasks as any, now: Date.now() }), generatedAt: new Date().toISOString() }
+  })
+
   // AG2 — Dashboard tab: latest run, 14-day charts, recent tasks, costs.
   app.get('/api/orgs/:orgId/agents/:agentId/overview', async (req, reply) => {
     const { orgId, agentId } = req.params as { orgId: string; agentId: string }
