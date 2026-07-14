@@ -11,8 +11,9 @@ import { tk, text, space } from '../tokens'
 import { AgentAvatar, StatusPill, ax, type DAgent, type Getter } from './shared'
 import DashboardTab from './DashboardTab'
 import InstructionsTab from './InstructionsTab'
+import SkillsTab from './SkillsTab'
 
-export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask }: {
+export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask, onOpenLibrary }: {
   orgId: string
   agentId: string
   tab: AgentTab
@@ -20,6 +21,8 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
   onBack: () => void
   getToken: Getter
   onOpenTask?: (taskId: string) => void
+  /** AG4 — jump to the company skills library area. */
+  onOpenLibrary?: () => void
 }) {
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -131,7 +134,8 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
         {tab === 'dashboard' && <DashboardTab orgId={orgId} agentId={agentId} getToken={getToken}
           onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />}
         {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
-        {tab !== 'dashboard' && tab !== 'instructions' && <TabPanel tab={tab} />}
+        {tab === 'skills' && <SkillsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenLibrary={onOpenLibrary} />}
+        {tab !== 'dashboard' && tab !== 'instructions' && tab !== 'skills' && <TabPanel tab={tab} />}
       </div>
 
       {assignOpen && (
@@ -156,7 +160,7 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
 const PENDING: Record<AgentTab, string> = {
   dashboard: '',
   instructions: '',
-  skills: 'The company skills library — installed vs. available for this agent.',
+  skills: '',
   configuration: 'Identity, avatar, reports-to, adapter and model.',
   runs: 'Run history with per-run logs.',
   budget: 'This agent’s budget and spend.',

@@ -392,7 +392,8 @@ export default function DashboardPage() {
         {/* AG1 — the Agents area is either the roster or one agent's detail page. */}
         {tab === 'agents' && (agentRoute
           ? <AgentDetail orgId={org.id} agentId={agentRoute.agentId} tab={agentRoute.tab} getToken={getToken}
-              onTab={t => openAgent(agentRoute.agentId, t)} onBack={closeAgent} onOpenTask={setOpenTaskId} />
+              onTab={t => openAgent(agentRoute.agentId, t)} onBack={closeAgent} onOpenTask={setOpenTaskId}
+              onOpenLibrary={() => selectTab('skills')} />
           : (
           <div style={s.page}>
             <h1 style={s.h1}>Agents ({agents.length})</h1>
