@@ -34,6 +34,9 @@
 
 import type { AdapterEntry } from './adapter-registry'
 import { publicRegistry, joinableAdapterTypes } from './adapter-registry'
+// ONB3 — the capability allow-list is a SINGLE source of truth: the document prints
+// exactly what the join route validates against, so the two cannot drift.
+import { JOINABLE_CAPABILITIES } from './join-requests'
 import type { InviteRecord } from './agent-invites'
 import { inviteStatus, inviteUrls } from './agent-invites'
 import type { OnboardingPosture } from './deployment-profile'
@@ -169,6 +172,8 @@ export interface OnboardingDoc {
   posture: {
     profile: string
     joinOpen: boolean
+    /** ONB4. False here means: an approved agent exists with NO claimable key. */
+    claimOpen: boolean
     closedBecause: string[]
     requireHumanApproval: true
     everyInviteAgentIsLowTrust: true
@@ -253,6 +258,10 @@ export function buildOnboardingDoc(input: OnboardingDocInput): OnboardingDoc {
     candidate(u, i === 0 ? 'the canonical public base URL of this Mission Control' : 'alternate address for this Mission Control'))
 
   const joinOpen = input.posture.publicJoinEnabled
+  // ONB3 lands the join + the approval gate; the CLAIM is ONB4. These are two facts,
+  // not one — a document that reported them as one boolean would either promise a key
+  // that cannot be claimed or hide a join surface that is open. Read them separately.
+  const claimOpen = input.posture.tokenClaimEnabled === true
 
   const endpoints: OnboardingDoc['endpoints'] = {
     health: {
@@ -274,12 +283,12 @@ export function buildOnboardingDoc(input: OnboardingDocInput): OnboardingDoc {
     join: {
       method: 'POST', path: `${urls.invitePath}/join`, url: `${urls.inviteUrl}/join`,
       status: joinOpen ? 'open' : 'not_yet_open', landsIn: 'ONB3',
-      description: 'Submit your join request: who you are, what you can do, which adapter you are, and your `agentDefaultsPayload`. This creates NO agent and NO credential — it creates a row in a human\'s approval queue. The response carries a one-time `claimSecret` and the claim path.',
+      description: 'Submit your join request: who you are, which adapter you are, the capabilities you need, and your `agentDefaultsPayload`. This creates NO agent and NO credential — it creates a row in a human\'s approval queue. The response carries `{ requestId, status, claimPath }` and nothing else: there is no token and no secret in it.',
     },
     claim: {
       method: 'POST', path: CLAIM_PATH_TEMPLATE, url: `${primary}${CLAIM_PATH_TEMPLATE}`,
-      status: joinOpen ? 'open' : 'not_yet_open', landsIn: 'ONB4',
-      description: 'Claim your API key ONCE, with `{ claimSecret }`, AFTER a human approves. Single-use, expiring, and illegal before approval.',
+      status: claimOpen ? 'open' : 'not_yet_open', landsIn: 'ONB4',
+      description: 'Claim your API key ONCE, AFTER a human approves. Single-use, expiring, and illegal before approval. NOT BUILT YET — an approved agent currently exists with no key at all.',
     },
   }
 
@@ -310,6 +319,7 @@ export function buildOnboardingDoc(input: OnboardingDocInput): OnboardingDoc {
     posture: {
       profile: input.posture.profile,
       joinOpen,
+      claimOpen,
       closedBecause: input.posture.closedBecause,
       requireHumanApproval: true,
       everyInviteAgentIsLowTrust: true,
@@ -432,19 +442,20 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
   }
 
   out.push(
-    'Body:',
+    'Body — **strictly typed. Every field below is validated, and an unknown field is REFUSED, not ignored.**',
     '',
     '```json',
     JSON.stringify({
-      requestType: 'agent',
-      agentName: '<your name, 1–100 chars>',
+      agentName: '<your name — letters, numbers, spaces and . _ - ( ) only, 1–100 chars>',
       adapterType: '<one of the types above>',
-      capabilities: '<what you can do, plain text — self-declared and shown to the approving human as unverified>',
+      capabilities: JOINABLE_CAPABILITIES,
       agentDefaultsPayload: { mcApiUrl: doc.connectivity.candidates[0]?.url ?? '<the base URL that answered>' },
     }, null, 2),
     '```',
     '',
-    'The response carries `{ requestId, claimSecret, claimApiKeyPath, status: "pending_approval" }`. **The `claimSecret` is shown exactly once.** Store it the same way you will store your key (see Step 4) — if you lose it, the request must be re-submitted.',
+    `\`capabilities\` is an ALLOW-LIST, not prose: pick from \`${JOINABLE_CAPABILITIES.join('`, `')}\`, and ask only for what you need. There is deliberately **no free-text field** anywhere in this body — not a note, not a description, not a role. Do not try to smuggle one in under another key; the request will be refused. If you have something to say to the human approving you, say it to your operator.`,
+    '',
+    'The response carries `{ requestId, status, claimPath }`. **There is no token and no secret in it** — that is not an omission, it is the design (see Step 3).',
     '',
     'What this step does NOT do: it creates no agent, mints no credential, and grants no access. It creates a row in a human\'s approval queue.',
     '',
@@ -452,7 +463,9 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
     '',
     '## Step 3 — wait for a human to approve',
     '',
-    'A person on the board reviews your join request in Mission Control and approves or rejects it. Your key does not exist until they approve — claiming before approval fails, by design. Poll the claim endpoint if you like, but do not spam it, and do not try to work around it: there is no path to a credential that does not pass through this human.',
+    'A person on the board reviews your join request in Mission Control and approves or rejects it. Your key does not exist until they approve — there is no path to a credential that does not pass through this human, and nothing you can send will create one.',
+    '',
+    'On approval you are created **contained**: `low_trust_review` trust mode, the explicit capability list you asked for, and a boundary set. Any gated action you attempt is held for a human before it takes effect. That is the deal for a self-declared, remotely-attached agent, and it applies to every runtime.',
     '',
     'If you are rejected, stop. Tell your operator.',
     '',
@@ -460,12 +473,17 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
     '',
     '## Step 4 — claim your API key, ONCE',
     '',
-    `\`${doc.endpoints.claim.method} ${doc.endpoints.claim.url}\` with body \`{ "claimSecret": "<the secret from Step 2>" }\``,
+    `\`${doc.endpoints.claim.method} ${doc.endpoints.claim.url}\``,
     '',
   )
 
   if (doc.endpoints.claim.status === 'not_yet_open') {
-    out.push(`> **Not open yet** (lands in ${doc.endpoints.claim.landsIn}). The rules below are still the rules — read them now, because they are the part of this document most likely to go wrong.`, '')
+    out.push(
+      `> **NOT BUILT YET** (it lands in ${doc.endpoints.claim.landsIn}). Today an approved agent exists in Mission Control with **no API key at all** — there is nothing to claim, and no endpoint to claim it from. Do not go looking for another way to get one: there isn't one, and a key you obtained by any other means is not a Mission Control key. Your operator will tell you when this step opens.`,
+      '',
+      '> The rules below are still the rules — read them now, because they are the part of this document most likely to go wrong when it does open.',
+      '',
+    )
   }
 
   out.push(
@@ -518,6 +536,9 @@ export interface OnboardingPromptInput {
   /** Sanitized operator message, if any. */
   message?: string | null
   joinOpen: boolean
+  /** ONB4. Defaults to false: an approved agent has no claimable key yet, and the
+   *  prompt must say so rather than send an agent hunting for a credential. */
+  claimOpen?: boolean
 }
 
 /**
@@ -550,11 +571,11 @@ export function buildOnboardingPrompt(input: OnboardingPromptInput): string {
     `3. Decide which adapterType matches your runtime. This invite allows: ${allow}.`,
     '   The document gives the exact agentDefaultsPayload contract and a worked example for each. Put runtime-specific settings there; do not invent fields.',
     '',
-    '4. Submit your join request to the endpoint in the document. It creates NO agent and NO credential — it puts you in a human approval queue. Save the one-time claimSecret from the response.',
+    '4. Submit your join request to the endpoint in the document. It creates NO agent and NO credential — it puts you in a human approval queue. The body is strictly typed (agentName, adapterType, an allow-listed capabilities array, agentDefaultsPayload); there is no free-text field, and an unknown field is refused. Save the requestId from the response. There is no token and no secret in it.',
     '',
-    '5. WAIT for a human to approve. There is no path to a credential that skips this person. Do not retry aggressively, and do not look for another way in — there is not one.',
+    '5. WAIT for a human to approve. There is no path to a credential that skips this person. Do not retry aggressively, and do not look for another way in — there is not one. On approval you are created contained (low-trust review): your gated actions are queued for a human before they run.',
     '',
-    '6. Claim your API key ONCE, after approval, with your claimSecret. Then, and this is the part that most often goes wrong:',
+    '6. Claim your API key ONCE, after approval, at the claim path in the document. Then, and this is the part that most often goes wrong:',
     ...CLAIM_SECURITY_RULES.map((r) => `   - ${r}`),
     '',
     '7. Confirm to your user, in one line, that you are onboarded — WITHOUT printing the key. Tell them you start in low-trust review, so your first actions may be queued for human approval.',
@@ -565,7 +586,14 @@ export function buildOnboardingPrompt(input: OnboardingPromptInput): string {
   if (!input.joinOpen) {
     lines.push(
       '',
-      'NOTE: the join and claim endpoints are not open on this Mission Control yet. Read the document, prepare your adapterType and agentDefaultsPayload, and tell your user you are ready to submit as soon as they are open.',
+      'NOTE: the join endpoint is not open on this Mission Control yet. Read the document, prepare your adapterType and agentDefaultsPayload, and tell your user you are ready to submit as soon as it is open.',
+    )
+  } else if (!input.claimOpen) {
+    // Honest, and it matters: an agent told to "claim your key" against an endpoint
+    // that does not exist will hunt for another way to get one. Say so, plainly.
+    lines.push(
+      '',
+      'NOTE: steps 1–5 are open. Step 6 (the key claim) is NOT BUILT on this Mission Control yet: once a human approves you, your agent exists — contained — with no API key, and there is no endpoint to claim one from. That is expected. Do not look for another route to a credential; tell your user you are approved and waiting for key claim to open.',
     )
   }
 

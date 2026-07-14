@@ -340,6 +340,33 @@ export const agentInvites = sqliteTable('agent_invites', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Epic ONB / ONB3: agent join requests — the SELF-DESCRIPTION, gated by a human.
+// A row here is NOT an agent and carries NO credential: it is what an external
+// runtime submits after walking through an invite, and it sits in the board's
+// approval queue (an `approval_requests` row of type `agent_join_request` — the
+// shipped tri-state machinery, not a parallel store) until an owner decides.
+// On approve the agent is created CONTAINED (low_trust_review, explicit caps) with
+// `api_token_hash = NULL` — the one-time key claim is ONB4. On reject nothing is
+// minted and the parked secrets are deleted. Declared secret fields never appear
+// here: only their KEY NAMES (`secret_keys`); the values are in the encrypted store.
+export const agentJoinRequests = sqliteTable('agent_join_requests', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  inviteId: text('invite_id').notNull(),
+  agentName: text('agent_name').notNull(),
+  adapterType: text('adapter_type').notNull(),
+  runtime: text('runtime').notNull(),
+  capabilities: text('capabilities').notNull(),        // JSON array — allow-listed enum values
+  config: text('config').notNull(),                    // JSON — registry-validated, NON-secret fields only
+  secretKeys: text('secret_keys').notNull(),           // JSON array of key NAMES (never values)
+  status: text('status').notNull().default('pending_approval'), // pending_approval | approved | rejected
+  approvalRequestId: text('approval_request_id'),      // the board's queue item
+  agentId: text('agent_id'),                           // set only on approve
+  decidedBy: text('decided_by'),
+  decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 // Arturita A1: command nonce ledger — replay guard (Telegram redelivery /
 // captured-voice replay). Unique (org, nonce); a repeat insert is a replay.
 export const arturitaNonces = sqliteTable('arturita_nonces', {

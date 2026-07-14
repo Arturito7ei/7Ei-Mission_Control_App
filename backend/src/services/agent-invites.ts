@@ -225,12 +225,11 @@ export function checkInviteAccepts(
   return { ok: true }
 }
 
-/** Consume one use. Returns the patch the route applies — the route MUST make
- *  the update conditional on `used_count = <the value it read>` (compare-and-set)
- *  so two concurrent joins cannot both consume the last use of a single-use invite. */
-export function consumeUsePatch(record: Pick<InviteRecord, 'usedCount'>, now: Date = new Date()): { usedCount: number; lastAcceptedAt: Date } {
-  return { usedCount: record.usedCount + 1, lastAcceptedAt: now }
-}
+// `consumeUsePatch` lived here. It is DELETED (ONB1 audit H1): a helper that
+// returns a client-computed `usedCount` only ADVISES a compare-and-set, and its
+// only correct use was not to use it. The consume is now one atomic conditional
+// UPDATE that owns every precondition — `services/invite-consume.ts`. There is
+// exactly one consume path and it is the safe one.
 
 /** The operator-facing view of an invite. The token HASH never leaves the DB —
  *  and neither does the raw token, which exists only in the create response. */

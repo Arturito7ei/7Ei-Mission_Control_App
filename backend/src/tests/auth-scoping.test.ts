@@ -36,10 +36,10 @@ import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { agentApiRoutes } from '../routes/agent-api'
-import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes } from '../routes/agent-invites'
+import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from '../routes/agent-invites'
 import { auditLogPlugin, auditLogQueryRoutes } from '../middleware/audit-log'
 import { telemetryPlugin, telemetryQueryRoutes } from '../services/telemetry'
-import { PUBLIC_JOIN_IMPLEMENTED } from '../services/deployment-profile'
+import { PUBLIC_JOIN_IMPLEMENTED, TOKEN_CLAIM_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
 
@@ -105,6 +105,7 @@ async function bootLikeIndex() {
   await app.register(arturitaPublicRoutes)
   await app.register(adapterRegistryRoutes)     // Epic ONB — public: the static adapter taxonomy
   await app.register(agentInviteDocRoutes)      // Epic ONB / ONB2 — public: the token-addressed doc
+  await app.register(agentJoinRoutes)           // Epic ONB / ONB3 — public: the join request (mints nothing)
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)
@@ -224,9 +225,18 @@ test('[ONB1-audit] the onboarding surface is shut: invites are Clerk-gated, only
   //                                       claim endpoints without wiring them. The token is
   //                                       redacted out of the audit log + request log.
   // Anything else public that touches invites/onboarding/join/claim is a leak.
+  //   POST /api/agent-invites/:token/join the join request (ONB3). Unauthenticated by
+  //                                       design — the invite token is the bearer, and a
+  //                                       joining agent has no session to present. Safe
+  //                                       because it MINTS NOTHING (it files a row in the
+  //                                       owner's approval queue), its exposure follows
+  //                                       the deployment profile, it consumes the invite
+  //                                       with an atomic CAS, and it is per-IP rate limited.
+  // Anything else public that touches invites/onboarding/join/claim is a leak.
   const PUBLIC_ONBOARDING_ALLOWLIST = new Set([
     'GET /api/agent-invites/:token/onboarding',
     'GET /api/agent-invites/:token/onboarding.txt',
+    'POST /api/agent-invites/:token/join',
   ])
   const publicOnboarding = routes
     .filter(r => r.auth === 'none' && /agent-invite|onboarding|\/join|\/claim/.test(r.url))
@@ -241,23 +251,76 @@ test('[ONB1-audit] the onboarding surface is shut: invites are Clerk-gated, only
   }
 })
 
-test('[ONB1-audit] while PUBLIC_JOIN_IMPLEMENTED is false, no join/claim route exists at all', async () => {
+// ─── The landmine guard, ONB3 edition ───────────────────────────────────────
+//
+// ONB1's version asserted "while PUBLIC_JOIN_IMPLEMENTED is false, no join AND no
+// claim route exists". ONB3 builds the join, so that sentence had to change — and
+// the honest way to change it is NOT to relax it into "if the constant is true,
+// skip the test". The guard is now two directional assertions against two separate
+// constants, and it is *stricter* than before, because it now also fails if a route
+// goes MISSING while its constant says it exists:
+//
+//   PUBLIC_JOIN_IMPLEMENTED (true, ONB3)  ⇔ exactly the join route is registered,
+//                                           public (the invite token is the bearer).
+//   TOKEN_CLAIM_IMPLEMENTED (false, ONB4) ⇔ NO claim route exists, in any scope.
+//
+// So: wiring a claim endpoint without flipping the constant (and without the hashed,
+// single-use, approval-gated claim ONB4 owes) still fails here — which is the whole
+// point of the landmine. And "the constant lies" is now a failure in both directions.
+test('[ONB3] the join surface exists iff PUBLIC_JOIN_IMPLEMENTED; the claim surface does NOT exist while TOKEN_CLAIM_IMPLEMENTED is false', async () => {
   resetOpenApi()
   const app = await bootLikeIndex()
   await app.close()
 
-  if (PUBLIC_JOIN_IMPLEMENTED) return // ONB4 landed: the surface is built, and its own tests own it.
+  const routes = collectedRoutes()
+  const join = routes.filter(r => /^\/api\/agent-invites\/:token\/join$/.test(r.url)).map(r => `${r.method} ${r.url} [${r.auth}]`)
 
-  // Scoped to the ONBOARDING namespace: `POST /api/agent/tasks/:taskId/claim` is
-  // the long-standing agent-token task claim and has nothing to do with onboarding.
-  const joinish = collectedRoutes()
-    .filter(r => /^\/api\/agent-invites\/.*\/(join|claim)\b/.test(r.url) || /join-request/.test(r.url))
+  if (PUBLIC_JOIN_IMPLEMENTED) {
+    assert.deepEqual(
+      join, ['POST /api/agent-invites/:token/join [none]'],
+      'PUBLIC_JOIN_IMPLEMENTED is true, so the public join route must exist exactly once and be token-addressed (auth: none). ' +
+      'It is unauthenticated BY DESIGN and safe only because it mints no credential, is posture-gated, consumes the invite atomically, and is per-IP rate limited.',
+    )
+  } else {
+    assert.deepEqual(join, [], 'PUBLIC_JOIN_IMPLEMENTED is false, so no join route may be registered in any scope.')
+  }
+
+  // The claim is ONB4 and does not exist. Scoped to the ONBOARDING namespace:
+  // `POST /api/agent/tasks/:taskId/claim` is the long-standing agent-token task
+  // claim and has nothing to do with onboarding.
+  const claimish = routes
+    .filter(r => /claim-api-key/.test(r.url) || /^\/api\/agent-invites\/.*\/claim\b/.test(r.url) || /^\/api\/agent-join-requests\//.test(r.url))
     .map(r => `${r.method} ${r.url}`)
-  assert.deepEqual(
-    joinish, [],
-    'a join/claim route is registered while PUBLIC_JOIN_IMPLEMENTED is false — the posture reports the surface as closed, ' +
-    'so it must not exist. Land ONB3/ONB4 (approval gate + one-time claim + per-IP rate limit) and flip the constant in that PR.',
-  )
+  if (!TOKEN_CLAIM_IMPLEMENTED) {
+    assert.deepEqual(
+      claimish, [],
+      'a token-claim route is registered while TOKEN_CLAIM_IMPLEMENTED is false. ONB3 deliberately ships NO credential: an approved ' +
+      'agent has a null api_token_hash. Land ONB4 (hashed single-use claimSecret, constant-time compare, CAS, 403-before-approval) and flip the constant in that PR.',
+    )
+  }
+})
+
+// The board-approval gate is the load-bearing control of ONB3, and it is only a gate
+// if it is owner-gated. A join request that a member — or an unauthenticated caller —
+// could approve would turn "a leaked invite buys a queue item" back into "a leaked
+// invite buys an agent".
+test('[ONB3] every join-request decision route is Clerk-secured and org-scoped', async () => {
+  resetOpenApi()
+  const app = await bootLikeIndex()
+  await app.close()
+
+  const routes = collectedRoutes()
+  for (const [method, url] of [
+    ['GET', '/api/orgs/:orgId/agent-join-requests'],
+    ['POST', '/api/orgs/:orgId/agent-join-requests/:requestId/approve'],
+    ['POST', '/api/orgs/:orgId/agent-join-requests/:requestId/reject'],
+  ] as const) {
+    const r = routes.find(x => x.method === method && x.url === url)
+    assert.ok(r, `route missing: ${method} ${url}`)
+    // `:orgId` in the path is not decoration: `requireOrgRole` NO-OPS on a path
+    // without one (AUDIT-ONB2-hardening R-4). The owner gate is only real here.
+    assert.equal(r!.auth, 'clerk', `${method} ${url} must be Clerk-secured + owner-gated, got '${r!.auth}'`)
+  }
 })
 
 test('[MCA-85] secured scope enforces 401; public webhook receiver is not gated', async () => {

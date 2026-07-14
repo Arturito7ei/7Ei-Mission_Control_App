@@ -59,15 +59,39 @@ export interface HardeningRequirement {
 }
 
 /**
- * Is the public join/claim surface actually BUILT yet?
+ * Is the public JOIN surface actually BUILT yet?
  *
- * ONB1 ships the invite object + the adapter registry and wires NOTHING public.
- * The join request (ONB3), the approval gate (ONB3) and the one-time claim +
- * per-IP rate limit (ONB4) are the controls that make a public endpoint safe;
- * until they land, `publicJoinEnabled` is false in EVERY profile, whatever the
- * config says. Flip this to `true` in the PR that lands ONB4 — and only then.
+ * ONB1 shipped the invite object + the adapter registry and wired nothing public.
+ * **ONB3 builds the join surface**: the public join request, the board-approval
+ * gate (no agent row and no token before a human approves), the atomic single-use
+ * consume, and the per-IP rate limit. Those are the controls that make an
+ * unauthenticated endpoint safe, so this flips to `true` here — and NOT before.
+ *
+ * What it does NOT do: open the door by itself. `publicJoinEnabled` still requires
+ * the deployment profile to allow it (packaged = loopback-trusted; hosted = an
+ * explicit `MC_ENABLE_REMOTE_ONBOARDING`). A hosted deployment with the flag unset
+ * still answers the join route with the same flat 404 as an unknown invite.
  */
-export const PUBLIC_JOIN_IMPLEMENTED = false
+export const PUBLIC_JOIN_IMPLEMENTED = true
+
+/**
+ * Is the one-time TOKEN CLAIM built? **No — that is ONB4.**
+ *
+ * This is the honest half of the ONB3 posture, and it is deliberately a SEPARATE
+ * constant rather than a widening of the one above: ONB3 lets an agent describe
+ * itself and lets a human approve it, and an approved agent is created with NO
+ * claimable credential. `POST /api/agent-join-requests/:id/claim-api-key` does not
+ * exist, and the landmine guard (`auth-scoping.test.ts`) asserts that no claim
+ * route is registered while this is false. Flip it in the PR that lands ONB4.
+ */
+export const TOKEN_CLAIM_IMPLEMENTED = false
+
+/** ONB3 — the public join endpoint is per-IP rate limited (`perIpRateLimit`, which
+ *  ONB1's audit found had zero call-sites). The ONB2 re-audit's M-3 condition:
+ *  rate limiting must EXIST before `MC_ENABLE_REMOTE_ONBOARDING` is ever set in
+ *  production, so it is a hardening requirement and not merely a nicety. */
+export const JOIN_RATE_LIMIT_PER_MINUTE = 10
+export const JOIN_RATE_LIMIT_WIRED = true
 
 const truthy = (v: string | undefined) => ['1', 'true', 'yes', 'on'].includes(String(v ?? '').trim().toLowerCase())
 
@@ -76,9 +100,15 @@ export function hardeningRequirements(env: EnvLike = {}): HardeningRequirement[]
   return [
     {
       key: 'join_surface_implemented',
-      description: 'The join request + board-approval gate + one-time claim exist (ONB3/ONB4).',
+      description: 'The join request + the board-approval gate exist, and no credential exists before approval (ONB3).',
       satisfied: PUBLIC_JOIN_IMPLEMENTED,
-      blocker: PUBLIC_JOIN_IMPLEMENTED ? null : 'not built yet — ONB1 wires no public endpoint',
+      blocker: PUBLIC_JOIN_IMPLEMENTED ? null : 'not built yet',
+    },
+    {
+      key: 'join_rate_limited',
+      description: `The public join endpoint is per-IP rate limited (${JOIN_RATE_LIMIT_PER_MINUTE}/min).`,
+      satisfied: JOIN_RATE_LIMIT_WIRED,
+      blocker: JOIN_RATE_LIMIT_WIRED ? null : 'perIpRateLimit is not wired onto the join route',
     },
     {
       key: 'human_approval_gate',
@@ -116,6 +146,9 @@ export interface OnboardingPosture {
   profile: DeploymentProfile
   /** Is an unauthenticated join endpoint reachable at all? */
   publicJoinEnabled: boolean
+  /** Is the one-time token CLAIM built? Always false until ONB4 — an approved
+   *  agent exists, contained, with no claimable credential. */
+  tokenClaimEnabled: boolean
   /** Are loopback callers trusted (packaged/local, Paperclip-style)? */
   loopbackTrusted: boolean
   /** Invariant (1): the operator asked for remote onboarding. */
@@ -200,6 +233,7 @@ export function onboardingPosture(env: EnvLike = {}): OnboardingPosture {
   return {
     profile,
     publicJoinEnabled: unmet.length === 0,
+    tokenClaimEnabled: TOKEN_CLAIM_IMPLEMENTED,
     loopbackTrusted,
     remoteOnboardingRequested,
     requireHumanApproval: REQUIRE_HUMAN_APPROVAL,
