@@ -74,4 +74,24 @@ describe('[AG4] resolveSelection', () => {
   it('de-duplicates and trims', () => {
     assert.deepEqual(resolveSelection(library, ['paperclip', ' paperclip ', '']), { ok: true, names: ['paperclip'] })
   })
+
+  // The checkbox list resends the whole selection, orphans included. Refusing a
+  // name the agent ALREADY carries made every toggle on such an agent a 400 —
+  // which is what made the tab look read-only.
+  it('keeps an orphan the agent already has instead of failing the whole write', () => {
+    const r = resolveSelection(library, ['paperclip', 'gone-from-library'], ['paperclip', 'gone-from-library'])
+    assert.equal(r.ok, true)
+    assert.ok((r as { names: string[] }).names.includes('gone-from-library'))
+  })
+
+  it('still refuses a name that is neither in the library nor already on the agent', () => {
+    const r = resolveSelection(library, ['paperclip', 'invented'], ['paperclip'])
+    assert.equal(r.ok, false)
+    assert.match((r as { error: string }).error, /invented/)
+  })
+
+  it('unticking an orphan drops it', () => {
+    const r = resolveSelection(library, ['paperclip'], ['paperclip', 'gone-from-library'])
+    assert.deepEqual(r, { ok: true, names: ['paperclip'] })
+  })
 })
