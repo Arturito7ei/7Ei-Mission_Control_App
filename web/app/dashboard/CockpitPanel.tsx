@@ -7,13 +7,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, ui, space } from './tokens'
 import { Button, Card, SectionLabel, Skeleton } from './ui'
-import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type OrgNode, type Plugin, type Preflight, type Secret, type Timeline, type Workspace } from './cockpit/shared'
+import { sx, type Approval, type ApprovalDecision, type Budget, type Cockpit, type Getter, type GoalNode, type InboxItem, type Plugin, type Preflight, type Secret, type Timeline, type Workspace } from './cockpit/shared'
 import StatsRow from './cockpit/StatsRow'
 import InboxSection from './cockpit/InboxSection'
 import VoiceSection from './cockpit/VoiceSection'
 import AgentFleet from './cockpit/AgentFleet'
 import TimelineSection from './cockpit/TimelineSection'
-import OrgChart from './cockpit/OrgChart'
+import OrgChart, { type OrgRosterAgent } from './cockpit/OrgChart'
 import GoalsSection from './cockpit/GoalsSection'
 import BudgetsSection from './cockpit/BudgetsSection'
 import PreflightSection from './cockpit/PreflightSection'
@@ -33,7 +33,9 @@ export type CockpitSectionKey =
 
 export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent, only, title }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void; onOpenAgent?: (agentId: string) => void; only?: CockpitSectionKey[]; title?: string }) {
   const [data, setData] = useState<Cockpit | null>(null)
-  const [chart, setChart] = useState<OrgNode[] | null>(null)
+  // P2 — the org canvas derives its own tree, so it takes the flat roster.
+  const [roster, setRoster] = useState<OrgRosterAgent[] | null>(null)
+  const [orgBusy, setOrgBusy] = useState<string | null>(null)
   const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
@@ -53,7 +55,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
       const [c, tl, oc, ib, gl, bd, pf, se, ws, pl] = await Promise.all([
         api<Cockpit>(`/api/orgs/${orgId}/cockpit`, { token }),
         api<{ timeline: Timeline }>(`/api/orgs/${orgId}/timeline`, { token }),
-        api<{ tree: OrgNode[] }>(`/api/orgs/${orgId}/orgchart`, { token }),
+        api<{ agents: OrgRosterAgent[] }>(`/api/orgs/${orgId}/orgchart`, { token }),
         api<{ items: InboxItem[]; approvals: Approval[] }>(`/api/orgs/${orgId}/inbox`, { token }),
         api<{ tree: GoalNode[] }>(`/api/orgs/${orgId}/goals`, { token }),
         api<{ budgets: Budget[] }>(`/api/orgs/${orgId}/budgets`, { token }),
@@ -62,7 +64,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
         api<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, { token }),
         api<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, { token }),
       ])
-      setData(c); setTimeline(tl.timeline); setChart(oc.tree); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setPreflight(pf); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
+      setData(c); setTimeline(tl.timeline); setRoster(oc.agents ?? []); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setPreflight(pf); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
   }, [orgId, getToken])
 
@@ -124,6 +126,33 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     try { await api(`/api/plugins/${id}`, { token: await getToken(), method: 'DELETE' }) } catch {}
   }
 
+  // P2 — company portability (MCA-PC D3 endpoints). Export downloads the
+  // secret-scrubbed bundle; import remaps it into a NEW organisation (the
+  // backend never overwrites the current one), so we just report the result.
+  const exportOrg = async () => {
+    setOrgBusy('Exporting…')
+    try {
+      const { bundle } = await api<{ bundle: unknown }>(`/api/orgs/${orgId}/export`, { token: await getToken() })
+      const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `7ei-company-${orgId}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setOrgBusy(null)
+    } catch (e: any) { setOrgBusy(`Export failed: ${e?.message ?? 'unknown error'}`) }
+  }
+  const importOrg = async (file: File) => {
+    setOrgBusy('Importing…')
+    try {
+      const bundle = JSON.parse(await file.text())
+      const r = await api<{ counts: { agents: number } }>('/api/orgs/import', {
+        token: await getToken(), method: 'POST', body: JSON.stringify({ bundle: bundle.bundle ?? bundle }),
+      })
+      setOrgBusy(`Imported ${r.counts.agents} agents into a new company — switch to it to see its chart.`)
+    } catch (e: any) { setOrgBusy(`Import failed: ${e?.message ?? 'invalid bundle'}`) }
+  }
+
   const agentName = (id: string) => data?.agents.find(a => a.id === id)?.name ?? '—'
   const inboxCount = inbox.length + approvals.length
   const initialLoading = !data && !err // MCA-81 — skeletons until the first payload lands
@@ -137,7 +166,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
     { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} onOpenAgent={onOpenAgent} /> },
     { key: 'activity', node: <TimelineSection timeline={timeline} /> },
-    { key: 'org', node: <OrgChart chart={chart} /> },
+    { key: 'org', node: <OrgChart agents={roster} onOpenAgent={onOpenAgent} onExport={exportOrg} onImport={importOrg} busy={orgBusy} /> },
     { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },
     { key: 'budgets', node: <><BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} /><PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} /></> },
     { key: 'secrets', node: <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} /> },
