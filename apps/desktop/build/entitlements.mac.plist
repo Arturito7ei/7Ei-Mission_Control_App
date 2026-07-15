@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Epic H / H1 — hardened-runtime entitlements for the Mission Control desktop app.
+
+  This file is PRESENT but INERT until the app is signed: entitlements only take
+  effect during code-signing under the hardened runtime, and H1 ships UNSIGNED
+  (no Apple Developer ID yet — H-Q1/H-Q2). Once the operator supplies a Developer
+  ID, `hardenedRuntime: true` + this plist are already wired in electron-builder.yml
+  and signing applies them with no further change.
+
+  DELIBERATELY MINIMAL — every entitlement widens attack surface and is an audited
+  line (H1 stage→audit). Only the JIT entitlements V8/Electron actually require are
+  here:
+    • allow-jit                          — V8 JIT code generation
+    • allow-unsigned-executable-memory   — V8 writes+executes JIT pages
+    • allow-dyld-environment-variables   — the shell forks the backend/UI children
+                                           with ELECTRON_RUN_AS_NODE; the child
+                                           Node honours DYLD_* only with this.
+
+  NOT included on purpose:
+    • disable-library-validation — the libSQL native addon (@libsql/darwin-arm64)
+      is bundled and gets re-signed with the SAME Developer ID during the deep
+      sign, so library validation passes without disabling it (DESIGN §3.3).
+    • TCC usage strings (NSMicrophoneUsageDescription, Accessibility, …) — those
+      are Info.plist keys, not entitlements, and belong to the H2 first-run
+      permission wizard, not this build stage.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

@@ -1,17 +1,16 @@
-# Epic H / H0 spike — electron-builder config for the Mission Control desktop shell.
+# Epic H / H1 — electron-builder config for the Mission Control desktop shell.
 #
-# This produces an UNSIGNED .app/.dmg. Signing + notarization are H1 and are
-# BLOCKED on the Apple Developer account (H-Q1/H-Q2). The config is deliberately
-# structured so H1 is a CONFIG ADDITION, not a rearchitecture: flip `identity`,
-# `hardenedRuntime`, add `entitlements`/`entitlementsInherit` + an `afterSign`
-# notarize hook and a `notarize` block — nothing here needs to move.
+# Produces a release-quality but UNSIGNED .app/.dmg. Signing + notarization are
+# fully WIRED here (hardened runtime, entitlements, afterSign notarize hook) but
+# INERT until the operator supplies an Apple Developer ID (H-Q1/H-Q2). Turning
+# signing on is then a CONFIG/ENV change, NOT a rearchitecture — see the `mac`
+# block below and GO-LIVE "Packaged app — when you have the Apple Developer ID".
+#
+# `appId`, `productName` and the app `version` (read from package.json) drive the
+# bundle identifiers, .app/.dmg names and the About box.
 appId: ai.7ei.missioncontrol
 productName: 7Ei Mission Control
 copyright: © 7Ei
-
-directories:
-  output: dist
-  buildResources: build
 
 # The Electron app's OWN code (the supervisor) → packed into app.asar.
 files:
@@ -19,9 +18,11 @@ files:
   - package.json
 
 # The service mesh payload → shipped UNPACKED in Contents/Resources (outside
-# asar). Native addons (libSQL's *.node) load only from a real filesystem path,
-# and the backend/web child processes read plain files — so the whole mesh lives
-# outside asar by construction. The build-desktop.mjs step stages these dirs.
+# asar). Native addons (libSQL's *.node, officeparser's OCR/PDF natives) load only
+# from a real filesystem path, and the backend/web child processes read plain
+# files — so the whole mesh lives outside asar by construction. build-desktop.mjs
+# stages these: backend/ is the COMPILED esbuild bundle + a pruned prod
+# node_modules (H1 — no more tsx/TS source); web/ is the Next standalone server.
 extraResources:
   - from: build-stage/backend
     to: backend
@@ -30,19 +31,38 @@ extraResources:
 
 asar: true
 
+# afterSign notarize hook — present + wired, self-skips on an unsigned/credential-
+# less build (H1). Becomes active purely by providing notarytool env + a cert.
+afterSign: scripts/notarize.cjs
+
 mac:
   category: public.app-category.productivity
+  icon: build/icon.png
   target:
     - dmg
     - dir
-  # ── UNSIGNED (H0). H1 replaces the next three lines with a real Developer ID ──
-  identity: null            # H1: set to the "Developer ID Application" identity
-  hardenedRuntime: false    # H1: true (required for notarization)
+  # ── Signing surface: WIRED, INERT until the Apple Developer ID exists ────────
+  # hardened runtime + entitlements are set now (no-ops while unsigned; they only
+  # take effect during code-signing). This means enabling signing needs NO change
+  # to this file — only environment:
+  #
+  #   THE FLIP (operator, once enrolled — H-Q1/H-Q2):
+  #     1. Provide the "Developer ID Application" cert — CSC_LINK=<base64 .p12> +
+  #        CSC_KEY_PASSWORD=<pw>, or import it into the login Keychain.
+  #     2. DROP `CSC_IDENTITY_AUTO_DISCOVERY=false` from the build script so
+  #        electron-builder discovers + deep-signs with that identity.
+  #     3. Provide notarytool creds (APPLE_API_KEY/_ID/_ISSUER, or
+  #        APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID) — scripts/notarize.cjs
+  #        then submits and electron-builder staples.
+  #   Nothing below moves; the .dmg goes from "unsigned" to "Gatekeeper-clean".
+  hardenedRuntime: true
   gatekeeperAssess: false
-  # H1 also adds, alongside the above:
-  #   entitlements: build/entitlements.mac.plist
-  #   entitlementsInherit: build/entitlements.mac.plist
-  #   notarize: { teamId: "<TEAMID>" }   (+ NOTARYTOOL creds in env/CI)
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Optional, add when notarizing via electron-builder's own path instead of the
+  # afterSign hook (either works; the hook gives explicit skip control):
+  #   notarize:
+  #     teamId: "<TEAMID>"
 
 dmg:
   title: 7Ei Mission Control
