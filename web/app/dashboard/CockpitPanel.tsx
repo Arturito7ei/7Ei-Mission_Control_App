@@ -23,6 +23,7 @@ import PluginsSection from './cockpit/PluginsSection'
 import TaskBoard from './cockpit/TaskBoard'
 import AddAgentWizard from './cockpit/AddAgentWizard'
 import HireDialog from './cockpit/HireDialog'
+import InviteAgentDialog from './cockpit/InviteAgentDialog'
 
 // P0b — the same composition root can render either the full operator stack
 // (Operations) or a single promoted area. `only` filters which sections render
@@ -48,6 +49,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   const [err, setErr] = useState<string | null>(null)
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
+  const [invite, setInvite] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -189,6 +191,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
           {!focused && <>
             <Button style={{ color: tk.accent }} onClick={sweep} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</Button>
             <Button style={{ color: tk.accent }} onClick={() => setHire(true)}>✨ Hire with a prompt</Button>
+            <Button style={{ color: tk.accent }} onClick={() => setInvite(true)} title="Create an invite + a copy-able onboarding prompt to paste into any external agent">✉ Invite an agent</Button>
             <Button variant="primary" onClick={() => setWizard(true)}>＋ Add agent</Button>
           </>}
         </div>
@@ -215,6 +218,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
 
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
+      {invite && <InviteAgentDialog orgId={orgId} getToken={getToken} onClose={() => { setInvite(false); load() }} />}
     </div>
   )
 }

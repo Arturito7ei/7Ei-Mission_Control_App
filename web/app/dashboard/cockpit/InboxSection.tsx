@@ -9,6 +9,7 @@ import { tk, text, space } from '../tokens'
 import { Button, Card, SectionLabel, TextInput } from '../ui'
 import { EXT_PURPLE, KIND_C, KIND_LABEL, sx, type Approval, type ApprovalDecision, type InboxItem } from './shared'
 import { isReviewCase } from '@/lib/trust'
+import { isJoinRequestApproval, joinRequestChip } from '@/lib/invites.logic'
 
 export default function InboxSection({ inbox, approvals, onDismiss, onDecide, onRetry }: {
   inbox: InboxItem[]
@@ -45,12 +46,17 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
           // routine approval. Distinct chip (🛡, icon+text+shape — never color
           // alone) + the machine-rendered warnings, but the same tri-state loop.
           const review = isReviewCase(a.type)
-          const warnings: string[] = review && Array.isArray(a.payload?.warnings) ? a.payload.warnings : []
+          // ONB6 — an agent asking to join (ONB3's board-approval card) reads
+          // distinctly from a routine approval, and its machine-generated warnings
+          // (self-declared/unverified, containment, host-exec, secrets) surface here
+          // too — the same tri-state loop, no forked UI.
+          const join = isJoinRequestApproval(a.type)
+          const warnings: string[] = (review || join) && Array.isArray(a.payload?.warnings) ? a.payload.warnings : []
           return (
           <div key={a.id}>
             <div style={sx.row}>
-              <span style={{ ...sx.tag, background: review ? 'var(--warning-dim)' : 'var(--accent-dim)', color: review ? 'var(--warning-text)' : EXT_PURPLE }}>
-                {review ? '🛡 Low-trust review' : `Approval · ${a.type}`}
+              <span style={{ ...sx.tag, background: review || join ? 'var(--warning-dim)' : 'var(--accent-dim)', color: review || join ? 'var(--warning-text)' : EXT_PURPLE }}>
+                {review ? '🛡 Low-trust review' : join ? `${joinRequestChip().icon} ${joinRequestChip().label}` : `Approval · ${a.type}`}
               </span>
               <div style={{ flex: 1, minWidth: 0, fontWeight: 600 }}>{a.summary}</div>
               <Button style={{ color: tk.accent }} onClick={() => onDecide(a.id, 'approved')}>✓ Approve</Button>

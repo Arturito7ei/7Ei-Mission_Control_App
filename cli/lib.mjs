@@ -41,6 +41,8 @@ export const HELP = `7ei-mc — operator CLI for the 7Ei Mission Control agent A
 env: MC_BASE_URL (default https://7ei-backend.fly.dev), MC_AGENT_TOKEN (required for agent cmds)
 
   onboard [--help]                       mint an org + external agent + token (Clerk-authed)
+  onboard --invite <token> …             agent-side onboarding client (join→approve→claim→mc.env)
+  invite create --org <id> …             mint an invite + print the pastable onboarding prompt (Clerk-authed)
   openapi                                fetch the OpenAPI 3.1 spec (public, no token)
   me                                     who am I
   tasks [assigned|in_progress|open|all]  my queue
