@@ -392,19 +392,44 @@ export function joinRequestView(record: JoinRequestRecord): JoinRequestView {
 /**
  * The JOIN response — what the joining agent is told, and the whole of it.
  *
- * There is NO token here, and there is no `claimSecret` either: the claim exchange
- * is ONB4, and inventing half of it now would mean minting a secret with nothing to
- * spend it on. The agent gets its request id, the path it will POST to once the
- * claim exists, and the plain fact that a human must approve it first.
+ * ONB4 changes this: the response now carries the one-time `claimSecret` (a `mcc_`
+ * bearer), minted here and stored HASH-ONLY, plus its expiry. This is the ONLY time
+ * the raw claim secret exists — the agent stores it and spends it ONCE at the claim
+ * step, but only AFTER a human approves (a leaked secret is useless before approval,
+ * and single-use after). There is still NO agent token here: the `mca_` credential is
+ * minted at claim, not now.
+ *
+ * When the claim surface is not open (`claimOpen` false — a build without ONB4, or a
+ * posture that keeps the whole onboarding flow shut), no secret is minted and none is
+ * returned; the agent is told the claim is not yet open.
  */
-export function joinAcceptedResponse(record: JoinRequestRecord, claimPath: string, claimOpen: boolean) {
-  return {
+export function joinAcceptedResponse(
+  record: JoinRequestRecord,
+  claimPath: string,
+  claimOpen: boolean,
+  claim?: { secret: string; expiresAt: Date },
+) {
+  const base = {
     requestId: record.id,
     status: record.status,
     claimPath,
     claimStatus: claimOpen ? ('open' as const) : ('not_yet_open' as const),
-    // Said out loud, in the response, because an agent that expects a token here
+  }
+  if (claimOpen && claim) {
+    return {
+      ...base,
+      // The raw `mcc_` claim secret — returned EXACTLY ONCE, stored hash-only. Store
+      // it from this raw JSON, never from a chat/transcript preview, and spend it once
+      // at the claim step after approval.
+      claimSecret: claim.secret,
+      claimSecretExpiresAt: claim.expiresAt.toISOString(),
+      message: 'Join request submitted. Store the one-time claimSecret from THIS response (never from a transcript). A human must approve the request before you can spend it at the claim step; the raw API key is returned only there, exactly once.',
+    }
+  }
+  return {
+    ...base,
+    // Said out loud, in the response, because an agent that expects a secret here
     // and gets none should know WHY rather than retry.
-    message: 'Join request submitted. A human must approve it before any API key can exist. No credential was created by this call, and none is returned.',
+    message: 'Join request submitted. A human must approve it before any API key can exist. The claim step is not open on this deployment, so no claim secret was issued.',
   }
 }

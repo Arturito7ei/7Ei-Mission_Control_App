@@ -50,16 +50,24 @@ test('[ONB3] a valid join request builds a PENDING row — with no agent, no tok
   }
 })
 
-test('[ONB3] the join RESPONSE carries a requestId and a path — never a token or a claim secret', () => {
+test('[ONB4] the join RESPONSE carries the one-time claimSecret when claim is open — but NEVER an agent token', () => {
   const built = buildJoinRequest({ ...goodBody, invite: invite(), now: NOW })
   if (built.ok !== true) throw new Error('setup')
-  const res = joinAcceptedResponse(built.record, '/api/agent-join-requests/x/claim-api-key', TOKEN_CLAIM_IMPLEMENTED)
 
-  assert.deepEqual(Object.keys(res).sort(), ['claimPath', 'claimStatus', 'message', 'requestId', 'status'])
-  assert.equal(res.status, 'pending_approval')
-  assert.equal(res.claimStatus, 'not_yet_open', 'ONB4 is not built — the doc and the response must say so')
-  const blob = JSON.stringify(res)
-  assert.ok(!/mca_|claimSecret|token"/i.test(blob), `the join response leaked something credential-shaped: ${blob}`)
+  // Claim OPEN (ONB4): the response carries the `mcc_` claim secret + its expiry.
+  const claim = { secret: 'mcc_' + 'a'.repeat(64), expiresAt: new Date('2026-07-15T12:00:00.000Z') }
+  const open = joinAcceptedResponse(built.record, '/api/agent-join-requests/x/claim-api-key', true, claim)
+  assert.deepEqual(Object.keys(open).sort(), ['claimPath', 'claimSecret', 'claimSecretExpiresAt', 'claimStatus', 'message', 'requestId', 'status'])
+  assert.equal(open.claimStatus, 'open')
+  assert.equal((open as any).claimSecret, claim.secret, 'the raw claim secret is returned exactly once, here')
+  // The agent token (`mca_`) is NEVER in the join response — it is minted only at claim.
+  assert.ok(!/mca_/.test(JSON.stringify(open)), 'the join response must never carry an agent token')
+
+  // Claim CLOSED (or a build without the secret): no secret is returned.
+  const closed = joinAcceptedResponse(built.record, '/api/agent-join-requests/x/claim-api-key', false)
+  assert.deepEqual(Object.keys(closed).sort(), ['claimPath', 'claimStatus', 'message', 'requestId', 'status'])
+  assert.equal(closed.claimStatus, 'not_yet_open')
+  assert.ok(!/mca_|mcc_|claimSecret/.test(JSON.stringify(closed)), 'a closed claim surface issues no secret')
 })
 
 // ─── The carried audit caveat: NO free-text field ────────────────────────────
@@ -275,9 +283,9 @@ test('[ONB3] decisions parse strictly; the view never carries a secret; constant
   assert.equal(view.agentId, null)
   assert.ok(!('secrets' in view))
 
-  // The ONB3 posture, in one place: the join is built, the claim is not.
+  // The ONB4 posture, in one place: both the join AND the claim are built.
   assert.equal(PUBLIC_JOIN_IMPLEMENTED, true)
-  assert.equal(TOKEN_CLAIM_IMPLEMENTED, false)
+  assert.equal(TOKEN_CLAIM_IMPLEMENTED, true)
   assert.equal(JOIN_APPROVAL_TYPE, 'agent_join_request')
   assert.equal(JOIN_SECRET_SCOPE, 'join_request')
 })

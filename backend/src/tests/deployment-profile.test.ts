@@ -58,9 +58,10 @@ describe('[ONB1] onboarding posture — derived from the profile, never hardcode
     assert.equal(p.publicJoinEnabled, unmet.length === 0)
     assert.equal(p.publicJoinEnabled, PUBLIC_JOIN_IMPLEMENTED)
 
-    // And the CLAIM is still unbuilt: an approved agent has no credential to claim.
-    assert.equal(TOKEN_CLAIM_IMPLEMENTED, false)
-    assert.equal(p.tokenClaimEnabled, false)
+    // ONB4 built the CLAIM: the same enable now opens it too. The surviving invariant
+    // is control 4 — opening the flow never lets an OPERATOR see the claimed key.
+    assert.equal(TOKEN_CLAIM_IMPLEMENTED, true)
+    assert.equal(p.tokenClaimEnabled, true)
     assert.equal(p.operatorCanSeeClaimedKey, false)
   })
 

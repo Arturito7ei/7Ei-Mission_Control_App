@@ -33,6 +33,7 @@ import {
 } from '../services/agent-invites'
 import { buildOnboardingDoc, buildOnboardingPrompt } from '../services/onboarding-doc'
 import { consumeInviteUse } from '../services/invite-consume'
+import { claimApiKey, generateClaimSecret, claimSecretExpiry } from '../services/claim'
 import { applyJoinDecision, toJoinRecord } from '../services/join-approvals'
 import {
   buildJoinRequest, buildJoinApprovalCard, joinRequestView, joinAcceptedResponse, parseJoinDecision,
@@ -349,6 +350,13 @@ export async function agentJoinRoutes(app: FastifyInstance) {
 
     const record = built.record
 
+    // ── ONB4: mint the one-time CLAIM SECRET here, store it HASH-ONLY (+ a TTL never
+    //    exceeding the invite's own expiry), and return the raw `mcc_` secret to the
+    //    agent EXACTLY ONCE below. The agent spends it once at the claim step, AFTER
+    //    approval. Only minted when the claim surface is actually open. ──
+    const claim = TOKEN_CLAIM_IMPLEMENTED ? generateClaimSecret() : null
+    const claimExpiresAt = claim ? claimSecretExpiry(now, invite.expiresAt) : null
+
     // The declared secrets, encrypted at rest, parked against the REQUEST (an inert
     // scope: `resolveSecretsForAgent` resolves only `company` and `agent`, so no agent
     // can read these). Approval re-scopes them to the agent that then exists; rejection
@@ -379,12 +387,75 @@ export async function agentJoinRoutes(app: FastifyInstance) {
       config: JSON.stringify(record.config),
       secretKeys: JSON.stringify(record.secretKeys),
       status: record.status, approvalRequestId: approvalId, agentId: null,
-      decidedBy: null, decidedAt: null, createdAt: now,
+      decidedBy: null, decidedAt: null,
+      // ONB4: only the HASH of the claim secret is stored, with a TTL. The raw secret
+      // lives only in the response below and is never persisted or logged.
+      claimSecretHash: claim ? claim.hash : null,
+      claimSecretExpiresAt: claimExpiresAt,
+      claimedAt: null,
+      createdAt: now,
     } as any)
 
     reply.code(201)
-    // A requestId and a path. No token, no claim secret, no agent id.
-    return joinAcceptedResponse(record, `/api/agent-join-requests/${record.id}/claim-api-key`, TOKEN_CLAIM_IMPLEMENTED)
+    // A requestId, a path, and — since ONB4 — the one-time claim secret (raw, once).
+    // Still no agent token and no agent id: the `mca_` credential is minted at claim.
+    return joinAcceptedResponse(
+      record,
+      `/api/agent-join-requests/${record.id}/claim-api-key`,
+      TOKEN_CLAIM_IMPLEMENTED,
+      claim && claimExpiresAt ? { secret: claim.secret, expiresAt: claimExpiresAt } : undefined,
+    )
+  })
+
+  // ─── ONB4 — the ONE-TIME CLAIM ────────────────────────────────────────────
+  //
+  // The second UNAUTHENTICATED WRITE in the system, and the most security-critical:
+  // it mints and hands over the real `mca_` agent credential. What holds it safe:
+  //
+  //  * **Its exposure follows the deployment profile**, exactly like the join route
+  //    (`publicJoinEnabled`): hosted answers a flat 404 unless the operator explicitly
+  //    set `MC_ENABLE_REMOTE_ONBOARDING`. It is FALSE on our live backend today.
+  //  * **It is per-IP rate limited** (the same fixed limiter as join, keyed on the real
+  //    socket / `Fly-Client-IP`, never the spoofable `X-Forwarded-For` — AUDIT-ONB3 M-2).
+  //  * **Every failure is one identical flat 404** — unknown request, not approved,
+  //    missing agent row, wrong/expired/already-spent secret, lost race. No oracle: a
+  //    caller cannot learn a request's status from the claim endpoint.
+  //  * **The claim consume and the token mint are atomic CAS statements** owned by
+  //    `services/claim.ts` (`claimed_at IS NULL`, then `api_token_hash IS NULL`). Two
+  //    simultaneous claims yield exactly one token.
+  //  * **The raw token appears only in this response** — never persisted (hash-only on
+  //    the agent), never logged (`mcc_`/`mca_` are redacted), never in an operator UI.
+  const ClaimBody = z.object({ claimSecret: z.string().min(1).max(256) }).strict()
+
+  documentEndpoint('POST', '/api/agent-join-requests/:id/claim-api-key', {
+    summary: 'Claim the one-time API key for an APPROVED join request (public, claim-secret-bearer, profile-gated, rate-limited). Returns the raw agent token EXACTLY ONCE. Every failure is one flat 404.',
+    body: ClaimBody,
+    tag: 'onboarding',
+  })
+  app.post('/api/agent-join-requests/:id/claim-api-key', { preHandler: perIpRateLimit(JOIN_RATE_LIMIT_PER_MINUTE) }, async (req, reply) => {
+    const notFound = () => reply.code(404).send({ error: 'Not found' })
+    const posture = onboardingPosture(process.env)
+    // Closed by posture (or claim not built) → indistinguishable from an unknown request.
+    if (!posture.publicJoinEnabled || !posture.tokenClaimEnabled) return notFound()
+
+    const { id } = req.params as { id: string }
+    const parsed = ClaimBody.safeParse(req.body ?? {})
+    // A malformed body is the same flat 404 as a wrong secret — no field-level echo
+    // (the body carries a credential) and no oracle.
+    if (!parsed.success) return notFound()
+
+    const result = await claimApiKey({ joinRequestId: id, claimSecret: parsed.data.claimSecret })
+    if (result.ok === false) return notFound()
+
+    // The raw `mca_` token, EXACTLY ONCE, to the claimer. Never persisted (hash-only
+    // on the agent row), never logged, never shown to an operator (Invariant #4).
+    reply.header('cache-control', 'no-store')
+    return {
+      token: result.token,
+      tokenType: 'agent' as const,
+      agentId: result.agentId,
+      baseUrl: baseUrl(),
+    }
   })
 }
 

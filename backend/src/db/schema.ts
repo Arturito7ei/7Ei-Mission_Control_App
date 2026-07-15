@@ -349,6 +349,17 @@ export const agentInvites = sqliteTable('agent_invites', {
 // `api_token_hash = NULL` — the one-time key claim is ONB4. On reject nothing is
 // minted and the parked secrets are deleted. Declared secret fields never appear
 // here: only their KEY NAMES (`secret_keys`); the values are in the encrypted store.
+//
+// ONB4 — the one-time claim credential lives here, hash-only, same shape as
+// `arturita_bindings.bind_code_hash` (hash + TTL + single-use):
+//   * `claim_secret_hash`        — sha256 of the `mcc_` claim secret, minted at JOIN
+//     and returned to the joining agent EXACTLY ONCE in the join response. Only the
+//     hash is stored; a DB read yields no working claim secret. NULLed on claim.
+//   * `claim_secret_expires_at`  — the claim's TTL (≤ the invite's expiry). A claim
+//     after this is the same flat 404 as everything else.
+//   * `claimed_at`               — NULL until claimed; the single-use compare-and-set
+//     target (`claimed_at IS NULL` in the WHERE). Set once, atomically, when the raw
+//     `mca_` agent token is minted onto the (already-approved) agent row.
 export const agentJoinRequests = sqliteTable('agent_join_requests', {
   id: text('id').primaryKey(),
   orgId: text('org_id').notNull(),
@@ -364,6 +375,11 @@ export const agentJoinRequests = sqliteTable('agent_join_requests', {
   agentId: text('agent_id'),                           // set only on approve
   decidedBy: text('decided_by'),
   decidedAt: integer('decided_at', { mode: 'timestamp' }),
+  // ONB4 — the one-time claim (hash-only). Null on a pre-ONB4 row; a claim is
+  // impossible without a hash, so an un-migrated row simply cannot be claimed.
+  claimSecretHash: text('claim_secret_hash'),          // sha256 of the mcc_ secret; NULLed on claim
+  claimSecretExpiresAt: integer('claim_secret_expires_at', { mode: 'timestamp' }),
+  claimedAt: integer('claimed_at', { mode: 'timestamp' }), // the single-use CAS target
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

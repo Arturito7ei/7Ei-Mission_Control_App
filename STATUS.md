@@ -1,8 +1,24 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-15 (Epic ONB — **ONB3 audit H-1 CLOSED: the board-approval gate is owner-gated on both doors**; prior: ONB3 the join request + the board-approval gate; prior: the re-audit of the pre-ONB3 hardening; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (Epic ONB — **ONB4 the one-time key claim: the onboarding core (ONB1–ONB4) is complete**; prior: ONB3 audit H-1 closed; prior: ONB3 the join request + the board-approval gate; prior: the re-audit of the pre-ONB3 hardening; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-15) — Epic ONB / ONB3 audit H-1 CLOSED: the board-approval gate is now owner-gated on BOTH doors — the ONB4 blocker is cleared:**
+**Latest (2026-07-15) — Epic ONB / ONB4: the ONE-TIME KEY CLAIM — the credential lands, once, after approval. The onboarding core (ONB1–ONB4) is complete:**
+
+The last piece of the inverted token lifecycle. An approved agent finally gets a credential — minted only after a human approves, claimed exactly once by the party that will use it, never through an operator's clipboard or a log.
+
+- **The claim secret is minted at JOIN, hash-only.** A `mcc_` secret (256-bit, `services/claim.ts`) is generated when the agent submits its join request, stored as a **sha256 hash** with a TTL clamped to ≤ the invite's expiry, and returned to the agent **exactly once** in the join response. Only the hash is in the DB — a read yields no working secret (the `arturita_bindings` pattern).
+- **The claim is fail-closed with NO oracle.** Public `POST /api/agent-join-requests/:id/claim-api-key` `{claimSecret}`. **Every failure is one identical flat 404** — unknown request · not approved · **missing agent row** · wrong secret · expired · already claimed · lost race. (Deliberate hardening beyond design §3.6's distinct 403/409/410, matching the epic's no-oracle posture — flagged for the auditor.) The secret is checked with a **constant-time compare**, never a SQL `=` or a Node `===`.
+- **The agent-must-exist caveat is honoured (ONB3 auditor #3).** The claim re-reads the agent row and fails closed if it is absent or already credentialed — it never mints against `status='approved'` alone, which also neutralises M-1's ghost-agent shape.
+- **Single-use is two atomic CAS statements.** The claim consume is one conditional UPDATE (`claimed_at IS NULL` is the compare-and-set; `claimed_at` set + secret hash **cleared** in the same statement); the `mca_` token is then minted under a **second CAS** (`api_token_hash IS NULL`) and stored **hash-only** on the agent. A concurrency test proves two simultaneous claims yield **exactly one token**.
+- **The raw token appears once, to the claimer, nowhere else.** Never persisted plaintext (hash-only on the agent), never logged (`mcc_`/`mca_` redacted by `log-redaction.ts`), never in an operator UI — `operatorCanSeeClaimedKey` stays literal `false`. The claimed agent stays `low_trust_review` (the A2 gate still applies to dangerous actions); `claude_code` stays plan-mode.
+- **Posture + guard honest.** `TOKEN_CLAIM_IMPLEMENTED` flips **true**; the landmine guard now asserts the claim route exists **iff** the constant (both directions). Exposure follows the deployment profile exactly like the join — hosted prod answers a flat 404 without `MC_ENABLE_REMOTE_ONBOARDING`. `perIpRateLimit()` wired onto the claim (the fixed socket/`Fly-Client-IP` keying).
+- **Not touched:** the audit/telemetry hooks (still a no-op — operator's cost call), `allowShell`/`MC_ALLOW_SHELL`, the live adapter. No invariant weakened. **Stopped after ONB4 for the independent audit — ONB5/ONB6 not started.**
+
+**Invariant green: 1221 backend tests (+12 ONB4, ONB3 tests updated) · 11/11 evals · web build clean.**
+
+---
+
+**Prior (2026-07-15) — Epic ONB / ONB3 audit H-1 CLOSED: the board-approval gate is now owner-gated on BOTH doors — the ONB4 blocker is cleared:**
 
 The independent ONB3 audit (`docs/AUDIT-ONB3.md`) proved one HIGH: the generic `POST /api/approvals/:id/decide` route — the door the shipped Inbox card actually calls — carried **no membership and no role check**. An authenticated user with **no `org_members` row** could approve a join and mint an agent (200), while the dedicated owner route refused the same caller (403). The route has no `:orgId` path param, so `requireOrgRole` no-ops on it (the R-4 trap) and the MCA-85 leak guard couldn't see it. This was the blocker that had to land **before ONB4** turns "approved" into "claimable credential".
 
