@@ -23,7 +23,17 @@ let useAuth: () => { getToken: () => Promise<string | null>; isLoaded: boolean; 
 try {
   useAuth = require('@clerk/nextjs').useAuth
 } catch {
-  useAuth = () => ({ getToken: async () => null, isLoaded: true, isSignedIn: false })
+  // Epic H / H6 — the PACKAGED (loopback) build ships no Clerk. It authenticates as
+  // the single local operator instead: the Electron shell injects the per-install
+  // loopback session secret as the Authorization bearer on every request to the
+  // backend, so the browser never holds the real token (getToken returns a harmless
+  // non-null placeholder only so client guards that check "have a token?" proceed).
+  // isSignedIn is true so the dashboard renders as the operator rather than bouncing
+  // to the landing route. Gated on NEXT_PUBLIC_MC_PACKAGED so the hosted build (which
+  // has a real Clerk key and never reaches this catch) is completely unaffected.
+  useAuth = process.env.NEXT_PUBLIC_MC_PACKAGED === '1'
+    ? () => ({ getToken: async () => 'mc-loopback', isLoaded: true, isSignedIn: true })
+    : () => ({ getToken: async () => null, isLoaded: true, isSignedIn: false })
 }
 
 // MCA-80 — thin wrapper over the shared api() client (same call sites as the

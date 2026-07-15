@@ -9,18 +9,23 @@
 //   2. The Next.js UI, forked from its `standalone` server build, also on 127.0.0.1.
 //   3. A BrowserWindow pointed at the local Next server once both are healthy.
 //
-// It is deliberately minimal (a DE-RISK spike): no Tray (H1), no TCC wizard (H2),
-// no auto-update (H3), no config seeding (H4), no real loopback auth (H6). The
-// packaged profile here has an auth BYPASS (no Clerk keys) — it is NOT security-
-// complete; H6 builds the single-operator loopback identity.
+// H6 (this stage) lands REAL loopback auth: per-install keys are generated into the
+// macOS Keychain (SECRETS_ENC_KEY / RUN_TOKEN_SECRET / MC_LOOPBACK_SESSION_SECRET),
+// the backend runs the `packaged` profile with its Clerk hook swapped for the
+// single-operator loopback identity, and the shell injects that identity's bearer on
+// every BrowserWindow→backend request. Still deferred: Tray (H1), TCC wizard (H2),
+// auto-update (H3), config seeding (H4).
 //
-// Everything binds 127.0.0.1 — loopback is the trust boundary of `packaged`.
+// Everything binds 127.0.0.1 — loopback is the trust boundary of `packaged`, and the
+// injected header (never in page JS) is what makes the local operator the ONLY caller
+// that can drive the secured routes.
 
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, shell, session } = require('electron')
 const { spawn } = require('node:child_process')
 const http = require('node:http')
 const path = require('node:path')
 const fs = require('node:fs')
+const { getOrCreateKey } = require('./keychain.cjs')
 
 // ─── Fixed loopback ports (spike). H1 can make these dynamic/free-port-scan. ──
 const BACKEND_PORT = 8787
@@ -89,6 +94,49 @@ function findFile(dir, name, depth) {
 let backendProc = null
 let webProc = null
 let win = null
+/** The per-install loopback session secret (from the OS Keychain). It is the bearer
+ *  the shell injects on every BrowserWindow→backend request AND the secret the backend
+ *  validates. Held only in the trusted main process — never exposed to page JS. */
+let provisioned = null
+
+/**
+ * Generate-or-read the three per-install secrets from the macOS login Keychain
+ * (H6 / AUDIT-H1 #1). Runs once per boot, before the backend starts. FAIL-CLOSED:
+ * a keychain error throws — we never substitute a default, the backend's H6 boot
+ * guard would refuse it anyway, and no real secret is encrypted under a throwaway.
+ */
+function provisionSecrets() {
+  provisioned = {
+    // Distinct per-install values (#1 / #4): the run-token secret is its OWN key, not
+    // SECRETS_ENC_KEY reused via the agent-api fallback.
+    SECRETS_ENC_KEY: getOrCreateKey('SECRETS_ENC_KEY'),
+    RUN_TOKEN_SECRET: getOrCreateKey('RUN_TOKEN_SECRET'),
+    MC_LOOPBACK_SESSION_SECRET: getOrCreateKey('MC_LOOPBACK_SESSION_SECRET'),
+  }
+  return provisioned
+}
+
+/**
+ * Inject the loopback operator's bearer on every request the BrowserWindow makes to
+ * the backend origin. The web UI ships no Clerk keys, so its own fetches carry no (or
+ * a placeholder) Authorization header; this rewrites it to the real per-install
+ * session secret. The token therefore lives ONLY in the trusted main process and the
+ * loopback request — never in page JS (no XSS-readable credential) — and only requests
+ * from THIS window's session get it, so a stray localhost caller cannot authenticate.
+ */
+function installLoopbackAuthHeader() {
+  const filter = { urls: [`${BACKEND_ORIGIN}/*`] }
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, cb) => {
+    const headers = details.requestHeaders
+    for (const k of Object.keys(headers)) {
+      if (k.toLowerCase() === 'authorization') delete headers[k]
+    }
+    if (provisioned?.MC_LOOPBACK_SESSION_SECRET) {
+      headers['Authorization'] = `Bearer ${provisioned.MC_LOOPBACK_SESSION_SECRET}`
+    }
+    cb({ requestHeaders: headers })
+  })
+}
 const logDir = () => {
   const d = path.join(app.getPath('userData'), 'logs')
   fs.mkdirSync(d, { recursive: true })
@@ -115,11 +163,11 @@ function startBackend() {
     HOST: '127.0.0.1',
     PORT: String(BACKEND_PORT),
     NODE_ENV: 'production',
-    // TEMPORARY (H0/H1): no Clerk keys → the backend's clerkPlugin is skipped
-    // (auth BYPASS) and tenant routes 401 without a token. This is NOT security-
-    // complete: H6 lands real single-operator loopback identity + fail-closed-on-
-    // default-key. Do NOT treat this key as a secret.
-    SECRETS_ENC_KEY: process.env.SECRETS_ENC_KEY || 'h0-spike-local-only-not-secure',
+    // H6: real per-install keys from the OS Keychain (never a default). No Clerk keys
+    // → the backend swaps clerkAuth for the single-operator loopback identity, which
+    // validates MC_LOOPBACK_SESSION_SECRET as the bearer. The backend's H6 boot guard
+    // (assertSecretKeysSafe) REFUSES to start if any of these is missing/default.
+    ...provisioned,
   }
   // H1: packaged ships a COMPILED bundle (build-stage/backend/index.js), forked
   // straight from Electron's own Node — no tsx, no TS source, no dev toolchain.
@@ -207,16 +255,22 @@ function createWindow() {
 
 async function boot() {
   createWindow()
+  // Provision per-install keys + install the loopback auth header BEFORE anything
+  // starts, so the backend boots with real keys and every window→backend request
+  // carries the operator bearer. A keychain failure throws → the catch shows an error.
+  provisionSecrets()
+  installLoopbackAuthHeader()
   startBackend()
   startWeb()
   try {
     await waitForHttp(`${BACKEND_ORIGIN}/api/health`, { expectJsonOk: true })
-    console.log('[shell] backend healthy ✓ (packaged profile, local file DB)')
+    console.log('[shell] backend healthy ✓ (packaged profile, local file DB, loopback auth)')
     await waitForHttp(`${WEB_ORIGIN}/`)
     console.log('[shell] web UI up ✓')
-    // Land on the marketing/landing route: it renders without Clerk (the packaged
-    // auth path is H6). The dashboard needs loopback auth and is out of scope here.
-    await win.loadURL(WEB_ORIGIN + '/')
+    // H6: land on the authenticated DASHBOARD as the local operator. The web build is
+    // packaged-flagged (NEXT_PUBLIC_MC_PACKAGED=1) so the dashboard renders without a
+    // Clerk sign-in, and the shell-injected bearer authenticates every API call.
+    await win.loadURL(WEB_ORIGIN + '/dashboard')
   } catch (err) {
     console.error('[shell] boot failed:', err)
     const msg = String(err && err.message ? err.message : err).replace(/`/g, "'")

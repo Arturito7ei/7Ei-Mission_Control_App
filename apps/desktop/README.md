@@ -1,15 +1,19 @@
-# `apps/desktop` — Mission Control desktop shell (Epic H · H1)
+# `apps/desktop` — Mission Control desktop shell (Epic H · H1 + H6)
 
-> **Status: H1 — production-quality build pipeline, up to the Apple-cert gate.**
+> **Status: H1 build pipeline + H6 loopback auth — up to the Apple-cert gate.**
 > An Electron shell that boots the **packaged/loopback** Mission Control mesh (a
 > **compiled** Fastify backend + the Next.js UI) on a **local file database** as
 > ONE app, packaged as a release-quality but **UNSIGNED** `.app`/`.dmg`. Signing +
 > notarization are fully **wired but inert** until the operator supplies an Apple
 > Developer ID (H-Q1/H-Q2).
 >
-> It is **not** security-complete: the packaged profile still runs with the
-> temporary **auth bypass** (no Clerk keys). Real single-operator loopback auth is
-> **H6**.
+> **H6 (2026-07-15) landed real auth:** the packaged profile is no longer an auth
+> bypass — it enforces a **single-operator loopback identity**. On boot the shell
+> generates per-install `SECRETS_ENC_KEY` / `RUN_TOKEN_SECRET` /
+> `MC_LOOPBACK_SESSION_SECRET` into the **macOS Keychain** (`src/keychain.cjs`),
+> injects the session secret as the `Authorization` bearer on every window→backend
+> request, and the backend validates it as the local operator (Clerk swapped for
+> `loopbackAuth`; fail-closed on any default/missing key). See `docs/DESIGN-packaging.md` §17.
 
 ## What it does
 
@@ -59,11 +63,13 @@ The built app launches with **no dev toolchain** on the host: the compiled backe
 bundle + its pruned native `node_modules` and the Next standalone server all ship
 inside `Contents/Resources/` (unpacked, outside `asar`).
 
-## The one landing route
+## The authenticated dashboard (H6)
 
-The window opens the **landing page** (`/`) — it renders without Clerk. The
-`/dashboard` route uses Clerk hooks and needs the H6 loopback identity, so it is
-out of scope here (it would white-screen without auth).
+The window opens the **dashboard** (`/dashboard`) as the local operator. The desktop
+web build is flagged `NEXT_PUBLIC_MC_PACKAGED=1`, so the dashboard renders without a
+Clerk sign-in (the H0/H1 gap where it bounced to the landing route), and the
+shell-injected loopback bearer authenticates every API call. The bearer lives only in
+the Electron main process and the loopback request — never in page JS.
 
 ## Signing is a config/env flip (H1 wired it; the operator turns it on)
 
@@ -91,5 +97,8 @@ Nothing in `main.cjs`, the staging step, or the YAML structure changes — see
 - Tray/menubar, dynamic ports (**H1 follow-on / H2**)
 - First-run TCC permission wizard + Info.plist usage strings (**H2**)
 - Auto-update (**H3**)
-- Config/secret bootstrap + per-install Keychain keys (**H4**)
-- Real single-operator loopback auth + fail-closed-on-default-key (**H6**)
+- Fresh-machine config-bundle seeding — the config *bundle* apply-path (**H4**;
+  the per-install **Keychain key generation** it also names shipped here in H6)
+
+Done in H6: real single-operator loopback auth + per-install Keychain keys +
+fail-closed-on-default-key boot.
