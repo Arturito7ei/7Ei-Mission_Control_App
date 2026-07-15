@@ -92,6 +92,30 @@ test('[J2+] applyCustomModel keyless save drops any previously stored key', () =
   assert.equal(keyless.maskedKey, null)
 })
 
+// AVL-10 — the Arturita PIPELINE panel's blank-key behaviour, pinned explicitly.
+//
+// The pipeline route (arturita-custom-model.ts) passes the form's `apiKey` STRAIGHT
+// to applyCustomModel — so an OMITTED key (undefined) is treated identically to an
+// explicit '' and clears any stored key. There is deliberately NO keep-on-blank at
+// this layer: unlike the AGENT route (custom-models.ts:83-92), which restores the
+// stored blob on `undefined` because its dialog edits an existing model in place,
+// the pipeline panel (web AssistantPipelineConfig.tsx `CustomModelForm`) is
+// ADD-ONLY — it resets every field on each add and never reopens an existing entry
+// with a blank key. So there is no stored credential to protect: a blank key on the
+// pipeline panel always means "add a keyless entry". This test pins that
+// undefined ≡ '' equivalence so the two paths cannot silently diverge. (The
+// keep-on-blank path is the AGENT panel's, covered by custom-model-agent.test.ts:140.)
+test('[J2+] applyCustomModel (pipeline default) treats an OMITTED key the same as empty — no keep-on-blank (the pipeline panel is add-only)', () => {
+  const v = validateCustomModel({ label: 'Local', model: 'phi3', baseUrl: 'http://localhost:11434/v1', mode: 'local' })
+  const withKey = applyCustomModel({ deployConfig: {}, slug: v.slug!, entry: v.entry!, apiKey: 'k', encryptFn: enc })
+  assert.ok(encKeyKey(v.slug!) in withKey.deployConfig, 'precondition: a key is stored')
+  // apiKey omitted entirely (undefined) — exactly what the route passes when the
+  // pipeline form's key field is left blank (`apiKey.trim() || undefined`).
+  const omitted = applyCustomModel({ deployConfig: withKey.deployConfig, slug: v.slug!, entry: v.entry!, encryptFn: enc })
+  assert.ok(!(encKeyKey(v.slug!) in omitted.deployConfig), 'an omitted key clears the stored one, identically to apiKey: ""')
+  assert.equal(omitted.maskedKey, null)
+})
+
 // ─── round-trip through the pipeline parser + fallback chain ─────────────────
 
 test('[J2+] a saved custom entry round-trips through parseLlmChain with its label/baseUrl', () => {
