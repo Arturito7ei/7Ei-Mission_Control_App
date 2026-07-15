@@ -115,17 +115,22 @@ function startBackend() {
     HOST: '127.0.0.1',
     PORT: String(BACKEND_PORT),
     NODE_ENV: 'production',
-    // Spike only: no Clerk keys → the backend's clerkPlugin is skipped (auth
-    // bypass) and tenant routes 401 without a token. H6 lands real loopback auth
-    // + fail-closed-on-default-key; do NOT treat this as a secure secret.
+    // TEMPORARY (H0/H1): no Clerk keys → the backend's clerkPlugin is skipped
+    // (auth BYPASS) and tenant routes 401 without a token. This is NOT security-
+    // complete: H6 lands real single-operator loopback identity + fail-closed-on-
+    // default-key. Do NOT treat this key as a secret.
     SECRETS_ENC_KEY: process.env.SECRETS_ENC_KEY || 'h0-spike-local-only-not-secure',
   }
-  // `--import tsx` is a BARE specifier: Node resolves it from `cwd`, so cwd MUST
-  // be the backend dir (where tsx lives in node_modules). This runs the backend
-  // TypeScript source directly with no dev toolchain on the host — tsx ships as a
-  // bundled app resource. (H1: replace with a compiled/pruned bundle.)
-  console.log(`[shell] backend: DB=${dbPath} profile=${DEPLOYMENT_PROFILE} → ${BACKEND_ORIGIN}`)
-  backendProc = spawn(process.execPath, ['--import', 'tsx', path.join(backendDir, 'src', 'index.ts')], {
+  // H1: packaged ships a COMPILED bundle (build-stage/backend/index.js), forked
+  // straight from Electron's own Node — no tsx, no TS source, no dev toolchain.
+  // Dev mode (`npm run desktop`, app not packaged) still runs the repo TS source
+  // via `--import tsx` for parity + fast iteration; cwd is the backend dir either
+  // way so the pruned native deps (@libsql/client, officeparser) resolve.
+  const args = app.isPackaged
+    ? [path.join(backendDir, 'index.js')]
+    : ['--import', 'tsx', path.join(backendDir, 'src', 'index.ts')]
+  console.log(`[shell] backend: DB=${dbPath} profile=${DEPLOYMENT_PROFILE} → ${BACKEND_ORIGIN} (${app.isPackaged ? 'compiled' : 'tsx/dev'})`)
+  backendProc = spawn(process.execPath, args, {
     cwd: backendDir,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

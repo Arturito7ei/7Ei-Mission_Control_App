@@ -1,6 +1,6 @@
 # DESIGN — Epic H: Packaging & Distribution (a replicable, installable Mission Control)
 
-> **Status:** Design + story plan · **H0 spike BUILT + landed (2026-07-15, PR #268)** — see §15. The design below is the RESEARCH pass; H0 has now proven the bundling recommendation end-to-end (the packaged mesh boots on a local file DB inside a built, unsigned Electron `.app`). · **Date:** 2026-07-15 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** Design + story plan · **H0 spike BUILT (2026-07-15, PR #268) → H1 build pipeline BUILT (2026-07-15)** — see §15 (H0) + **§16 (H1)**. The design below is the RESEARCH pass; H0 proved the bundling recommendation and H1 hardened it to a production-grade, reproducible **unsigned** `.app`/`.dmg` (compiled backend; sign/notarize wired-but-inert behind a one-env-flip). **H1 STOPS for an independent audit.** · **Date:** 2026-07-15 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-agent-onboarding.md` §8 (the deployment-profile + config-bundle foundation this epic picks up), `docs/SECURITY-posture.md` (the model a packaged instance must preserve), `GO-LIVE.md` (the operator console/secret actions), `docs/PLAN-arturita.md` §0 (Epic H rows H0–H6). Verify claims against the repo before acting.
 
 The goal: **a replicable, installable product** — a macOS `.dmg` that stands up a full local "packaged/loopback" Mission Control instance on someone else's Mac (backend + web UI + local LLM/STT + the host adapters), plus an iPhone remote surface. The heavy foundations — the two-profile abstraction, the secret-free config bundle, the encrypted secret store, the launchd-supervised adapters, and a DB layer that **already** speaks to a local file — are shipped. So this epic is mostly the **installer + first-run experience + the macOS platform specifics that trip packaging projects up** (signing, notarization, TCC, per-install key generation, auto-update).
@@ -279,7 +279,7 @@ One PR per story, squash-merged `--admin`, invariant green each merge. Stories m
 | Story | Title | Scope | Acceptance criteria | Audit? | Deps |
 |---|---|---|---|---|---|
 | **H0** ✅ **DONE (#268)** | **Packaging spike + shell decision** | Throwaway PoC: Electron (and, if the operator wants a bake-off, Tauri) shell that forks the Fastify backend on a local libSQL file + serves the Next UI + opens a loopback window. Decide: shell, UI-ship mode (§2.3), Node-child vs sidecar, loopback-auth approach (§H6). | ✅ **MET** — a built, **unsigned** `.app`/`.dmg` (`apps/desktop/`) boots the backend + Next UI on `127.0.0.1` against a local libSQL file with `MC_DEPLOYMENT_PROFILE=packaged`; `/api/health` green from the **built app** (not `npm run`). Decision recorded in §15: **Electron confirmed**, **Node-child via `tsx` (H1 → compiled bundle)**, **web = Next standalone-as-child (§2.3 option a)**. Three *minimal, additive* prod edits were needed (not "zero" as originally scoped) — all no-ops for hosted, verified (§15). H1 unblocked. | no (spike) | — |
-| **H1** | **macOS installable bundle (sign + notarize)** | The real shell: Tray menubar, supervise backend (local libSQL file) + Next UI as children, `electron-builder` config, **hardened runtime + minimal entitlements**, Developer-ID sign, `notarytool` notarize + staple, `.dmg` layout. Sets `MC_DEPLOYMENT_PROFILE=packaged`. | A signed, notarized `.dmg` opens on a clean Mac **with no Gatekeeper warning**; app boots backend+UI on loopback; `/api/health` green; entitlements set is minimal + justified; the A2 gate chain proven intact in `packaged`. | **stage→audit** (entitlements, hardened runtime, signing surface) | H0 |
+| **H1** ⏳ **BUILD PIPELINE BUILT (2026-07-15) — sign/notarize RUN cert-gated; STOPPED for audit** | **macOS installable bundle (sign + notarize)** | The real shell: supervise backend (local libSQL file) + Next UI as children, `electron-builder` config, **hardened runtime + minimal entitlements**, Developer-ID sign, `notarytool` notarize + staple, `.dmg` layout. Sets `MC_DEPLOYMENT_PROFILE=packaged`. | ⏳ **PARTIAL — build pipeline MET (§16):** compiled esbuild backend (no dev toolchain), reproducible release-quality **unsigned** `.app` (463 MB) + `.dmg` (157 MB), correct appId/name/version/icon, boots backend+UI on loopback with `/api/health` green + fresh-DB migrations from the built app; **hardened runtime + minimal entitlements + afterSign notarize hook WIRED but inert** (one-env-flip). **PENDING (operator-gated):** the actual Developer-ID sign + notarize run → the *no-Gatekeeper-warning* criterion (H-Q1/H-Q2); Tray menubar (deferred to follow-on); the A2-gate-chain-in-`packaged` audit assertion (belongs to the H1 audit). | **stage→audit** (entitlements, hardened runtime, signing surface) — **STOPPED HERE** | H0 |
 | **H6** | **Packaged-profile identity & loopback auth + fail-closed boot** | Single-operator local identity replacing Clerk on `127.0.0.1` (a local session bound to the OS user / first-run pairing); **fail-closed on default `SECRETS_ENC_KEY`/`RUN_TOKEN_SECRET`** (GO-LIVE §1 follow-up); posture derivation verified `packaged`. | On packaged, the UI authenticates without Clerk; a second local account can't silently drive the instance; boot **refuses** on the dev-default key; onboarding posture reads loopback-open; hosted profile unaffected (Clerk path unchanged). | **stage→audit** (auth + fail-closed secrets) | H1 |
 | **H2** | **First-run TCC permission wizard** | Guided Mic (prompt) + Accessibility/Full-Disk/Automation (deep-link + poll-verify), least-privilege/opt-in/staged, re-entrant from the Tray, honest degradation per un-granted permission. Info.plist usage strings. | Mic requested by default and verified by a real capture probe; advanced grants behind explicit off-by-default toggles; each grant maps to a named capability; app fully usable with only Mic; wizard re-openable. | **stage→audit** (permission grants are whole-machine sensitive) | H1 |
 | **H4** | **Fresh-machine config/secret bootstrap** | Fold org/agent/budget/routine/pipeline/trust slices into the config bundle (extend `config-bundle.ts` using `portability.ts`); the **apply-path** that seeds a clean instance; **per-install key generation into Keychain**; the wizard prompts for exactly the re-supplied secrets a slice names. | Importing a starter/operator bundle seeds a working instance with **zero secrets in the bundle** (`assertNoSecrets` holds end-to-end); keys are generated per-install into Keychain, never in the image; two installs have different keys; the bundle version gate refuses a forward-incompatible bundle. | **stage→audit** (per-install secrets, no baked keys — highest-value audit in the epic) | H1, H6 |
@@ -374,3 +374,77 @@ npm run dist:mac                   # unsigned .app + .dmg → dist/
 ```
 
 **Verdict: the approach is confirmed. H1 (the real signed/notarized bundle) is unblocked** — its remaining blockers are operator-only (Apple Developer account + signing identity, H-Q1/H-Q2), not engineering.
+
+---
+
+## 16. H1 — RESULTS (built 2026-07-15) — production-grade build pipeline, minus the cert
+
+H1 hardened the H0 spike into a **production-quality build pipeline**, everything **up to the Apple-account-gated signing/notarization run**. The signing surface is fully **wired but inert**: turning it on is a config/env change, not a rearchitecture. **This stage STOPS for an independent audit** (entitlements, hardened runtime, signing surface — §11). All work is confined to `apps/desktop/`; the hosted Fly/Vercel build is untouched (verified below).
+
+### 16.1 The compiled-backend approach (H1 goal #1)
+
+H0 shipped `backend/src` + the **entire** `backend/node_modules` (incl. `tsx`, `typescript`, `drizzle-kit`) and forked it with `--import tsx` → a 619 MB `.app`. H1 replaces that with a **compiled bundle**:
+
+- **`scripts/build-desktop.mjs`** now bundles `backend/src/index.ts` with **esbuild** → one tree-shaken **ESM `index.js`** (5.1 MB) with the pure-JS deps inlined (Fastify, `@fastify/*`, drizzle-orm, `@clerk/*`, zod, `@anthropic-ai/sdk`, redis, dotenv). A `banner` supplies a real Node `require`/`__dirname`/`__filename` so any bundled CJS dep resolves at runtime.
+- **Externals kept out of the bundle** = exactly the two packages carrying native/wasm payloads that must load from a real filesystem path and cannot be bundled:
+  - `@libsql/client` → `@libsql/darwin-arm64/*.node` (the DB native addon, ABI-verified under Electron's Node in H0);
+  - `officeparser` → `tesseract.js` / `pdfjs-dist` / `@napi-rs/canvas` (OCR/PDF native + wasm).
+  These two are re-installed as a **minimal, PINNED (`@libsql/client@0.14.0`, `officeparser@7.1.0`), prod-only** `node_modules` beside the bundle, so their full transitive closure (incl. platform natives) ships intact (51 packages).
+- **`src/main.cjs`** forks the **compiled `backend/index.js`** in packaged mode (no `tsx`, no TS source, no dev toolchain); dev mode (`npm run desktop`) still runs the repo TS source via `--import tsx` for parity + fast iteration. Web ships unchanged as the **Next standalone-as-child** (§2.3 option a).
+- **Verified in the built app:** `Contents/Resources/backend/` contains `index.js` + the pruned `node_modules` only — **no `src/`, no `tsx`, no `typescript`, no `drizzle-kit`** — and the libSQL `.node` is present.
+
+### 16.2 Sizes (unsigned, arm64)
+
+| Artifact | H0 | **H1** | Δ |
+|---|---|---|---|
+| `.app` | 619 MB | **463 MB** | −156 MB (−25%) |
+| `.dmg` | 195 MB | **157 MB** | −38 MB (−19%) |
+
+Where the H1 `.app` weight lives: **Electron frameworks 233 MB** (irreducible for Electron) · **backend resources 164 MB** · **web standalone 67 MB**. The compiled `index.js` is only **5.1 MB** — the remaining backend weight is `officeparser`'s OCR/PDF native stack (`tesseract.js-core` ~43 MB, `pdfjs-dist` ~40 MB, `@napi-rs/canvas` ~25 MB), a **real runtime dependency** of document ingestion, kept intact for correctness rather than trimmed. The dev-toolchain fat (`tsx`/`typescript`/`drizzle-kit`/tests/TS source, ~90 MB+) is the win that's gone. Further shrink (making `officeparser` lazy/optional) is a **feature-behaviour** decision, out of the build-pipeline scope of H1.
+
+### 16.3 Boots the packaged mesh (H1 goal #3, verified from the built `.app`)
+
+Launching `dist/mac-arm64/7Ei Mission Control.app` on a **cleared** userData dir:
+- **backend** `/api/health` → `{status:"ok", db:"connected"}` on `127.0.0.1:8787` (a fresh 468 KB `mc.db` created, idempotent migrations ran on first boot, `MC_DEPLOYMENT_PROFILE=packaged`);
+- **web** → HTTP 200 on `127.0.0.1:8788`;
+- exactly the H0 behaviour, now from the compiled bundle.
+
+`npm run dist:mac` is reproducible and produces a release-quality unsigned `.app` + `.dmg` with the correct `appId` (`ai.7ei.missioncontrol`), `productName` (`7Ei Mission Control`), **version from `package.json`** (`0.1.0` → `7Ei Mission Control-0.1.0-arm64.dmg`), and an **icon** (`build/icon.png`, the 1024² 7Ei mark, auto-converted to `icon.icns`).
+
+### 16.4 Signing + notarization: WIRED but INERT (H1 goal #2)
+
+Everything the sign/notarize run needs is present and structured so enabling it is **config/env only**:
+
+| Piece | State in H1 | What the flip does |
+|---|---|---|
+| `mac.hardenedRuntime: true` | set now (a no-op until signing occurs) | takes effect on the first signed build |
+| `mac.entitlements` / `entitlementsInherit` → `build/entitlements.mac.plist` | present; **minimal** (`allow-jit`, `allow-unsigned-executable-memory`, `allow-dyld-environment-variables` only) | applied during the deep sign |
+| `afterSign: scripts/notarize.cjs` | present; **self-skips** when unsigned or no notarytool creds (logged: `[notarize] skipped…`) | submits to Apple notary + electron-builder staples |
+| `mac.identity` | not forced; `CSC_IDENTITY_AUTO_DISCOVERY=false` in the `dist:mac`/`pack:mac` scripts forces a deterministic unsigned build | drop that env → electron-builder discovers + deep-signs with the Developer ID |
+| `@electron/notarize` | present (transitive via electron-builder); lazily required only when notarizing | — |
+
+**Deliberately NOT included** (correct per §3.3): `disable-library-validation` — the libSQL `.node` is bundled and gets **re-signed with the same Developer ID** during the deep sign, so library validation passes without weakening it. **TCC usage strings** (`NSMicrophoneUsageDescription`, …) are Info.plist keys owned by the **H2** first-run wizard, not this build stage.
+
+### 16.5 EXACTLY what the Apple-account step adds (so it's a config flip, not a rebuild)
+
+Once the operator has enrolled (H-Q1) and created a **Developer ID Application** certificate + a notarytool credential (H-Q2), enabling a Gatekeeper-clean `.dmg` is:
+
+1. **Provide the cert** — `export CSC_LINK=<base64 of the .p12>` + `CSC_KEY_PASSWORD=<pw>` (or import the identity into the login Keychain).
+2. **Provide notarytool creds** — either the App-Store-Connect **API key** (preferred): `APPLE_API_KEY=/path/AuthKey_XXXX.p8` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`; or an Apple-ID app-specific password: `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`.
+3. **Drop `CSC_IDENTITY_AUTO_DISCOVERY=false`** from the `dist:mac` script (one edit) so electron-builder discovers the identity and deep-signs.
+4. Run `npm run dist:mac`. electron-builder signs (hardened runtime + the entitlements already wired) → `scripts/notarize.cjs` submits to Apple → electron-builder staples → a **signed, notarized, Gatekeeper-clean** `.dmg`.
+
+No YAML rearchitecture, no `main.cjs`/staging change. The only source edit is removing one env guard; everything else is credentials the assistant cannot create (same operator-only boundary as the Clerk/Fly console actions). This is mirrored in `GO-LIVE.md`.
+
+### 16.6 Scope discipline + honest flags
+
+- **Strictly the build pipeline.** No TCC wizard (H2), auto-update (H3), config seeding (H4), or loopback auth (H6) were built. Tray/menubar and dynamic ports were also left for a follow-on (the H0 fixed ports remain).
+- **Packaged auth is STILL the temporary bypass.** No Clerk keys → `clerkPlugin` is skipped; the per-route `clerkAuth` still 401s tenant data, but this is **not** security-complete. **H6** builds the single-operator loopback identity + fail-closed-on-default-key. `main.cjs` still injects the throwaway `SECRETS_ENC_KEY` default — clearly flagged, do not treat as a secret.
+- **The signed/notarized artifact does not exist yet** — the sign/notarize *run* is Apple-account-gated (H-Q1/H-Q2). H1 delivers everything up to that run.
+- **Reproducibility caveat:** the pruned-externals install (`npm install` of the two pinned packages) resolves their transitive OCR/PDF deps fresh at build time; this needs registry access (or a warm cache via `--prefer-offline`). Pinning the two roots keeps the app code deterministic; a lockfile for the externals could be added if strict transitive pinning is later required.
+
+### 16.7 Hosted build proven untouched
+
+All changes live in `apps/desktop/` (+ docs). Verified: backend **1263/1263** tests · **11/11** evals · backend + web **typecheck clean** · the hosted `web` build (**no `DESKTOP_BUILD`**) compiles and emits **no `standalone`** dir. The Fly backend + Vercel web build/deploy exactly as before.
+
+**Verdict: H1 delivers a reproducible, release-quality UNSIGNED `.app`/`.dmg` that boots the packaged mesh from a compiled backend, with the entire sign/notarize surface wired inert behind a one-env-flip. STOPPED for the independent H1 audit.**

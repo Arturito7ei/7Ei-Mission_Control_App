@@ -32,9 +32,11 @@ Owner: Arturito · Last updated: 2026-07-15 (Epic ONB Stage 7 — consolidated; 
 | 14 | File the epics as Jira (MCA) issues | Tracking | ⏳ pending | Epics A–H + ONB have no issue numbers | ~30 min |
 | 15 | Audit trail — **ON** (tuning only) | — | ✅ done | — | — |
 | 16 | Multi-tenant membership — **ENFORCED** (no action) | — | ✅ done | — | — |
+| 17 | **Packaged desktop app — Apple Developer ID** (sign + notarize the `.dmg`) | Vendor console + build env | ⚪ optional (Epic H) | The `.dmg` opens only via right-click→Open (Gatekeeper warns "cannot check for malware") | ~30 min + $99/yr |
 
 **Legend:** ⏳ pending · ⚪ optional · ✅ done. Items 1–12 + 14 are the real pending
-list; 13 is optional; 15–16 are shipped and here only for completeness.
+list; 13 + 17 are optional (17 only matters once you distribute the desktop app); 15–16
+are shipped and here only for completeness.
 
 ---
 
@@ -373,6 +375,60 @@ record → 403 — and a leak-guard fails CI if any new secured route ships unga
 `ownerId` as an implicit owner, so you keep full access with no migration or backfill. Only
 a non-member/wrong-org request newly gets a 403. If you add a second human to an org, give
 them an `org_members` row. Full model: `docs/SECURITY-posture.md` §4, `docs/AUDIT-MCA-membership.md`.
+
+---
+
+## 17. Packaged desktop app — when you have the Apple Developer ID
+
+> Only relevant if you distribute the **desktop app** (Epic H, `apps/desktop/`). The
+> build pipeline is done (H1): `npm run dist:mac` already produces a reproducible,
+> release-quality **UNSIGNED** `.app` + `.dmg` that boots the packaged mesh. This step
+> makes that `.dmg` open on someone else's Mac with **no Gatekeeper warning**. Nothing
+> in the repo needs rearchitecting — signing is fully wired and inert; this is a
+> credential + one-env-flip step. (`docs/DESIGN-packaging.md` §16.)
+
+**Why it's yours, not mine:** enrolling in the Apple Developer Program, creating a
+certificate, and generating a notarytool credential are vendor-console + payment actions
+— the same boundary as the Clerk/Fly/Google steps above. The assistant scripted the whole
+build/sign/notarize pipeline; it cannot create the account or the cert.
+
+**One-time setup (operator):**
+1. **Enroll** in the Apple Developer Program ($99/yr) — https://developer.apple.com/programs/ (H-Q1).
+2. Create a **"Developer ID Application"** certificate (Apple Developer portal → Certificates, or Xcode → Settings → Accounts → Manage Certificates). Export it as a password-protected `.p12`, or leave it in your login Keychain (H-Q2).
+3. Create a **notarytool credential** — preferred: an **App Store Connect API key** (Users and Access → Integrations → App Store Connect API → generate a key with the *Developer* role; download the `AuthKey_XXXX.p8`, note the Key ID + Issuer ID). Alternative: an **app-specific password** for your Apple ID (appleid.apple.com → Sign-In and Security → App-Specific Passwords).
+
+**Each release (the flip — no code change beyond dropping one env guard):**
+```bash
+cd apps/desktop
+
+# 1. The Developer ID cert (either export the .p12 + set these, or rely on the login Keychain)
+export CSC_LINK="$(base64 -i /path/to/DeveloperIDApplication.p12)"
+export CSC_KEY_PASSWORD="<the .p12 password>"
+
+# 2. notarytool creds — API key (preferred)…
+export APPLE_API_KEY="/path/to/AuthKey_XXXX.p8"
+export APPLE_API_KEY_ID="XXXXXXXXXX"
+export APPLE_API_ISSUER="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#    …or an Apple-ID app-specific password instead of the three above:
+# export APPLE_ID="you@apple.id"
+# export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+# export APPLE_TEAM_ID="TEAMID"
+
+# 3. Drop the one env guard that forces an unsigned build, then build:
+#    (edit apps/desktop/package.json → remove `CSC_IDENTITY_AUTO_DISCOVERY=false` from
+#     the dist:mac script, OR override it inline for this run)
+CSC_IDENTITY_AUTO_DISCOVERY=true npm run dist:mac
+```
+electron-builder deep-signs the app with your Developer ID (hardened runtime + the
+already-wired `build/entitlements.mac.plist`), `scripts/notarize.cjs` submits it to Apple's
+notary service, and electron-builder staples the ticket → a **signed, notarized,
+Gatekeeper-clean `.dmg`**. Verify with `spctl -a -vv "dist/mac-arm64/7Ei Mission Control.app"`
+(expect `accepted / source=Notarized Developer ID`).
+
+**What this does NOT do:** it does not make the packaged app secure to *use* by others —
+packaged auth is still the temporary bypass until **H6** (single-operator loopback identity
++ fail-closed-on-default-key). Sign/notarize is about *distribution trust* (Gatekeeper),
+not *runtime auth*.
 
 ---
 
