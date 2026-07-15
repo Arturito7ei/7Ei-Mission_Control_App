@@ -36,6 +36,7 @@ import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin, auditLogQueryRoutes } from './middleware/audit-log'
 import { clerkAuth } from './middleware/clerk-auth'
+import { requireOrgMembership } from './middleware/rbac'
 import { telemetryPlugin, telemetryQueryRoutes } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
@@ -116,6 +117,17 @@ async function start() {
   await app.register(async (secured) => {
     secured.addHook('onRequest', clerkAuth)
     secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
+    // ─── Multi-tenant membership gate (R-4 fix) ────────────────────────────
+    // ONE preHandler on the whole secured scope: every authenticated route now
+    // enforces org membership (baseline `member`) for the org it targets —
+    // derived from `:orgId`, or from the `:agentId`/`:taskId` record where the
+    // path carries no org id. Before this, only ~35 of ~159 org-scoped routes
+    // checked membership, so any logged-in user could act on any org by swapping
+    // `:orgId` (the cross-tenant gap the ONB2/ONB3 audits kept surfacing). Because
+    // it lives at the scope level, a NEW org route can't be added ungated — it is
+    // covered the moment it registers here. Stricter per-route gates
+    // (`requireOrgRole('owner')`) still layer on top. See middleware/rbac.ts.
+    secured.addHook('preHandler', requireOrgMembership)
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
     await secured.register(agentDetailRoutes)   // Epic AG — per-agent detail page (org-scoped)

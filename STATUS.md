@@ -1,8 +1,23 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-15 (Epic ONB — **audit M5: the shell-execution default is now OFF for new agents, existing grandfathered**; prior: audit H-1 the audit trail ENABLED for sensitive writes with 90-day retention; prior: ONB6 the create-invite UI + CLI [onboarding usable end-to-end]; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (**Multi-tenant membership hardening — org membership now enforced surface-wide (the R-4 fix)**; prior: Epic ONB — **audit M5: the shell-execution default is now OFF for new agents, existing grandfathered**; prior: audit H-1 the audit trail ENABLED for sensitive writes with 90-day retention; prior: ONB6 the create-invite UI + CLI [onboarding usable end-to-end]; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-15) — Epic ONB / audit M5 RESOLVED: the SHELL-EXECUTION DEFAULT is now OFF for new agents; existing agents (incl. the live OpenClaw ops agent) are GRANDFATHERED. Stopped for the independent audit.**
+**Latest (2026-07-15) — MULTI-TENANT MEMBERSHIP HARDENING: org membership is now enforced SURFACE-WIDE (the R-4 fix). Stopped for the independent audit.**
+
+The pre-existing cross-tenant gap the ONB2/ONB3 audits kept surfacing: the whole `/api/orgs/:orgId/*` surface was Clerk-AUTHENTICATED but not membership-CHECKED — only ~35 of ~159 org-scoped routes ran `requireOrgRole`, so any logged-in user could act on ANY org by swapping `:orgId`. Now closed with ONE shared, tested mechanism.
+
+- **ONE scope-level gate.** `requireOrgMembership` (a `preHandler` on the whole Clerk-secured scope, `index.ts`) enforces baseline `member` for the org every request targets — resolved from `:orgId`, or derived from the `:agentId`/`:taskId` **record** where the path has no org id (the R-4 tail). It reuses the single `enforceOrgRole` core; it **fails closed** (an id that resolves to no row → 403, never a skip); it skips `OPTIONS` (CORS). Because it rides the scope, a NEW org route is covered the moment it registers — it can't be added ungated. Stricter per-route `requireOrgRole('owner')` gates still layer on top.
+- **Grandfathered — the operator is never locked out.** `enforceOrgRole` now honours `organisations.ownerId` as an implicit **owner** when there's no `org_members` row (nothing backfilled pre-membership orgs). Every existing owner keeps full access with zero migration; only a genuine non-member/wrong-org request newly 403s. Driven test proves a legacy rowless owner still gets in.
+- **Two record-derived routes hardened in-handler** (`multi-org.ts`): `GET /api/users/:userId/orgs` is now **self-only**; `transfer`/`clone` now also membership-check the **target** org (the gate covered the source).
+- **Exempt set (precise + tested):** the agent-token API (`/api/agent/*`, token auth, separate scope — proven unaffected), the public onboarding surface (invite/join/claim — token-addressed, mint-nothing), `arturita/panic` (session-token authed in-handler), `auth/google` (OAuth handshake — pre-existing public), health/ready/openapi. None changed.
+- **Leak-guard extended.** `membership-scoping.test.ts` is behavioural: it enumerates EVERY `/api/orgs/:orgId/*` route (>80) and drives a non-member at each → all 403; member/owner positives; record-derived + grandfather + agent-API-unaffected cases. Plus `rbac-membership.test.ts` unit-pins the primitives. The MCA-85 guard's boot now mirrors `index.ts` (same hook).
+- **Not touched:** adapters, telemetry, `allowShell`/`MC_ALLOW_SHELL`, the live adapter, the deployment posture. No invariant weakened.
+
+**Invariant green: 1253 backend tests (+18) · 11/11 evals · typecheck clean. Full design + route inventory + flagged edge cases: `docs/AUDIT-MCA-membership.md`. Stopped for the independent audit.**
+
+---
+
+**Prior (2026-07-15) — Epic ONB / audit M5 RESOLVED: the SHELL-EXECUTION DEFAULT is now OFF for new agents; existing agents (incl. the live OpenClaw ops agent) are GRANDFATHERED. Stopped for the independent audit.**
 
 The operator took the M5 product call: align the shell-execution default to OFF, without breaking the live ops agent. The ONB1 audit flagged the drift — the server registry declares `allowShell: false` ("off unless the operator opts in") while the Add-Agent/Hire wizard's paste-able run-block emitted `MC_ALLOW_SHELL=1`, so every UI-onboarded agent got shell-on, contradicting the safe default. Now the two agree on OFF.
 

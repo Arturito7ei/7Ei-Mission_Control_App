@@ -343,6 +343,22 @@ the same way if/when you want request spans populated.
 
 ---
 
+## 8. Multi-tenant membership — ENFORCED surface-wide (the R-4 fix) ✅ DONE · NO operator action
+
+> **No console action required.** Org membership is now enforced on every Clerk-authed
+> `/api/orgs/:orgId/*` route (and the `:agentId`/`:taskId` record-derived tail) by one
+> scope-level gate (`requireOrgMembership`, `backend/src/middleware/rbac.ts`). Before
+> this, any logged-in user could act on any org by swapping `:orgId`.
+>
+> **Your own access is grandfathered automatically.** `enforceOrgRole` honours an org's
+> `ownerId` as an implicit owner, so you keep full access to your org(s) with **no
+> migration and no backfill** — even for orgs created before membership rows existed.
+> Only a non-member (or wrong-org) request newly gets a 403. If you ever add a second
+> human user to an org, give them an `org_members` row (org-create already does this for
+> the owner). Full design + route inventory: `docs/AUDIT-MCA-membership.md`.
+
+---
+
 ## Assistant boundaries (why some steps are yours)
 
 Per the operating rules, I don't create accounts, enter passwords/keys, complete

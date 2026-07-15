@@ -146,7 +146,12 @@ export async function orgRoutes(app: FastifyInstance) {
   })
   app.patch('/api/orgs/:orgId', async (req) => {
     const { orgId } = req.params as any
-    await db.update(schema.organisations).set(req.body as any).where(eq(schema.organisations.id, orgId))
+    // Strip identity/ownership columns from this general org-edit route. `ownerId` is
+    // now role-determinant (enforceOrgRole grandfathers the org owner as an implicit
+    // owner), so letting a plain member rewrite it via the unvalidated body would be a
+    // member→owner escalation. Ownership transfer, if ever needed, is a dedicated route.
+    const { ownerId: _o, id: _i, ...patch } = (req.body ?? {}) as any
+    await db.update(schema.organisations).set(patch).where(eq(schema.organisations.id, orgId))
     return { ok: true }
   })
   app.delete('/api/orgs/:orgId', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
