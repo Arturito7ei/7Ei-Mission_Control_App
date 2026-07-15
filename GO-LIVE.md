@@ -1,80 +1,80 @@
-# Mission Control — Go-Live Runbook
+# Mission Control — Go-Live checklist
 
-Operational steps to take Mission Control from "works for the founder in dev
-mode" to a hardened production setup. Each item is a **user action** in a vendor
-console (Clerk, Google Cloud, NVIDIA, GitHub, the Mac mini) — the engineering to
-make each a one-step change is already shipped; this doc gives the exact steps,
-env-var names, and where they're consumed.
+The single authoritative list of everything pending to take Mission Control from
+"works for the founder in dev mode" to a hardened production setup. Most items are a
+**user action** in a vendor console (Clerk, Google Cloud, NVIDIA, GitHub, Fly, the Mac
+mini) or a **Fly secret** — the engineering to make each a one-step change is already
+shipped; this doc gives the exact steps, env-var names, and where each is consumed.
 
-Owner: Arturito · Last updated: 2026-07-13 (added item 6 — Claude Code agent, Epic CC)
+Owner: Arturito · Last updated: 2026-07-15 (Epic ONB Stage 7 — consolidated; added remote-onboarding, wallet mainnet, local stack, Telegram, apex DNS, Jira-epics tracking)
 
-| # | Item | Risk if skipped | Effort |
-|---|------|-----------------|--------|
-| 1 | Clerk **production** instance | Dev keys rate-limit + show a dev banner; anyone can sign up | ~20 min |
-| 2 | Google consent screen: Gmail/Calendar scopes | Gmail/Calendar connectors can't read data | ~15 min |
-| 3 | Rotate exposed tokens (NVIDIA key, vault PAT) | Leaked creds usable by anyone who saw them | ~15 min |
-| 4 | Move OpenClaw to the Mac mini | Agent dies when the laptop sleeps/closes | ~10 min |
-| 5 | Set `SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET` on Fly | At-rest secret store & run-token HMAC fall back to a **public** default key → encrypted secrets decryptable / run-tokens forgeable | ~5 min |
-| 6 | Bring up a **Claude Code** engineering agent (Epic CC) | The office can't assign coding work to Claude Code | ~10 min |
+> Companions: `docs/RUNBOOK-agent-onboarding.md` (how to onboard an agent), `docs/SECURITY-posture.md` (the security model), `STATUS.md` (what's shipped), `HANDOFF.md` (state of the app).
 
 ---
 
-## 6. Claude Code engineering agent (Epic CC)
+## The list
 
-Makes Claude Code a first-class fleet member the office can assign tasks to
-(`docs/DESIGN-claude-code-agent.md`; adapter `adapters/claude-code/`). It runs on
-any host with the `claude` CLI — **not** the OpenClaw box; it never touches
-`~/.openclaw/`.
+| # | Item | Category | Status | Risk if skipped | Effort |
+|---|------|----------|--------|-----------------|--------|
+| 1 | **`SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET`** on Fly | Fly secret | ⏳ **pending** | Encrypted secrets decryptable with a source-visible key; run-tokens forgeable | ~5 min |
+| 2 | Clerk **production** instance | Vendor console | ⏳ pending | Dev keys rate-limit + dev banner; anyone can sign up | ~20 min |
+| 3 | Google consent screen — Gmail/Calendar scopes | Vendor console | ⏳ pending | Gmail/Calendar connectors can't read data | ~15 min |
+| 4 | Rotate exposed tokens (NVIDIA key, vault PAT) | Vendor console | ⏳ pending | Leaked creds usable by anyone who saw them | ~15 min |
+| 5 | Move OpenClaw to the Mac mini | Host | ⏳ pending | Agent dies when the laptop sleeps/closes | ~10 min |
+| 6 | **`GITHUB_VAULT_TOKEN`** (shared-memory writes) | Fly secret / Connector | ⏳ pending | Memory-bus features stay dormant | ~5 min |
+| 7 | **`WEBHOOK_SIGNING_SECRET`** on Fly | Fly secret | ⏳ pending | Inbound webhook receivers open in dev; blocks Telegram + webhook runtimes | ~5 min |
+| 8 | **`MC_ENABLE_REMOTE_ONBOARDING`** (open public join) | Fly secret | ⏳ pending (safe OFF) | Remote invite-onboarding stays 404 on the hosted backend | ~2 min |
+| 9 | Telegram bot token (D-epic remote surface) | Vendor console + Fly | ⏳ pending | No iPhone/Telegram remote control | ~15 min |
+| 10 | Local LLM/STT/TTS stack (Ollama · whisper.cpp · Piper) | Host | ⏳ pending | Arturita voice/answer path falls back to cloud (or fails off-Mac) | ~20 min |
+| 11 | **`WALLET_MAINNET_ENABLED`** — wallet is testnet-only | Fly secret | ⏳ pending (intentionally OFF) | (leaving OFF is the safe state) — enable only deliberately | ~5 min |
+| 12 | Apex DNS for `7ei.ai` → the `llms.txt` mirror | DNS | ⏳ pending | `llms.txt` discovery only at the app subdomain | ~10 min |
+| 13 | Bring up a **Claude Code** engineering agent (Epic CC) | Host | ⚪ optional | The office can't assign coding work to Claude Code | ~10 min |
+| 14 | File the epics as Jira (MCA) issues | Tracking | ⏳ pending | Epics A–H + ONB have no issue numbers | ~30 min |
+| 15 | Audit trail — **ON** (tuning only) | — | ✅ done | — | — |
+| 16 | Multi-tenant membership — **ENFORCED** (no action) | — | ✅ done | — | — |
 
-**Prereqs (on the host that will run the agent):**
-1. Install + log in to the **Claude Code CLI** (`claude --version`; `claude` must
-   be authenticated — its own login or `ANTHROPIC_API_KEY`).
-2. `python3` on PATH (stdlib only; no pip).
-
-**Steps:**
-1. **Onboard** a `claude_code` agent (Cockpit → Add agent → 🤖 Claude Code, or
-   `npx @7ei/mc onboard --org <id> --runtime claude_code --name "Claude Code"`).
-   Copy the one-time `mca_` token. Registration is **secure-by-default** (CC3):
-   the agent lands `low_trust_review` with an explicit capability list + a
-   boundary from the target workspace — not allow-all.
-2. **Install** on the host:
-   ```bash
-   cd adapters/claude-code
-   MC_AGENT_TOKEN=mca_… MC_WORKDIR=/path/to/checkout ./setup.sh
-   ```
-   This writes a chmod-600 `mc.env`, prints the posture (`--doctor`), smoke-polls
-   once, and loads a launchd keep-alive — all **propose-and-approve**.
-3. The agent now claims assigned tasks and **proposes** — it runs **no host
-   commands without an A2 approval** (verbatim `argv` + fresh-session step-up).
-
-**Enabling autonomous execution (optional, later, OFF by default):**
-Autonomy is fail-closed behind **two operator guards + the CC5 command
-denylist**. Only when you deliberately choose to, add to `mc.env`:
-```
-CC_PERMISSION_MODE=bypassPermissions
-CC_AUTONOMOUS=1
-CC_AUTONOMOUS_CONFIRM=1
-```
-then `python3 cc_adapter.py --doctor` → posture `AUTONOMOUS`. Even then, every
-command passes the CC5 denylist (catastrophic/privilege/exfil/reverse-shell are
-**refused**; unknown commands are still **proposed**; only allowlisted read-only
-commands run un-attended). Run against an **isolated `cc/` worktree** so file
-edits are reviewable as a diff. Remove those three lines to revert; `/panic` or
-pausing the agent also stops it. Details: `adapters/claude-code/README.md`.
+**Legend:** ⏳ pending · ⚪ optional · ✅ done. Items 1–12 + 14 are the real pending
+list; 13 is optional; 15–16 are shipped and here only for completeness.
 
 ---
 
-## 1. Clerk production instance
+## 1. `SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET` on Fly — do this FIRST
 
-The web app (`app.7ei.ai`, Vercel) currently runs on a Clerk **development**
-instance. Production needs its own instance + keys.
+The at-rest secret store (`backend/src/services/secrets.ts`) derives its AES-256-GCM
+key from `SECRETS_ENC_KEY`; the per-run HMAC tokens (`backend/src/routes/agent-api.ts`)
+sign with `RUN_TOKEN_SECRET || SECRETS_ENC_KEY`. **Both fall back to a hard-coded public
+default** (`'dev-7ei-mc-secrets-key'` / `'dev-7ei-mc-run'`) when unset — fine for dev,
+but in production it means every encrypted secret in the DB is decryptable with a key
+that lives in the source, and run-tokens are forgeable.
+
+```bash
+flyctl secrets set \
+  SECRETS_ENC_KEY=$(openssl rand -hex 32) \
+  RUN_TOKEN_SECRET=$(openssl rand -hex 32) \
+  --app 7ei-backend
+```
+Verify with `bash scripts/check-secrets.sh` (both now listed).
+
+> ⚠️ Set these **before** encrypting any secret via Cockpit → Secrets. Anything already
+> stored under the dev default won't decrypt under a new key — re-enter those secrets
+> (NVIDIA key, vault PAT, custom-model keys) after rotating.
+>
+> Engineering follow-up (tracked): a boot-time fail-closed guard so `NODE_ENV=production`
+> refuses to start on the default key.
+
+---
+
+## 2. Clerk production instance
+
+The web app (`app.7ei.ai`, Vercel) runs on a Clerk **development** instance. Production
+needs its own instance + keys.
 
 **Steps (Clerk dashboard → your app):**
-1. Create a **Production** instance (or "Deploy to production").
-2. Add `app.7ei.ai` as the production domain; complete the DNS records Clerk
-   shows (CNAMEs for `clerk.`, `accounts.`, etc.).
-3. Configure the production sign-in/up methods and (optionally) restrict sign-ups
-   to the `7ei.ai` domain.
+1. Create a **Production** instance ("Deploy to production").
+2. Add `app.7ei.ai` as the production domain; complete the DNS records Clerk shows
+   (CNAMEs for `clerk.`, `accounts.`, etc.).
+3. Configure the production sign-in/up methods and (optionally) restrict sign-ups to the
+   `7ei.ai` domain.
 4. Copy the **production** keys.
 
 **Set on Vercel (Project → Settings → Environment Variables, Production):**
@@ -84,289 +84,301 @@ instance. Production needs its own instance + keys.
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` |
 | `CLERK_SECRET_KEY` | `sk_live_…` |
 
-Keep `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `NEXT_PUBLIC_API_URL` as-is. Redeploy the
-web project so the new env is baked in. Verify: sign out, sign back in on
-`app.7ei.ai` — the dev banner is gone and the URL is your Clerk prod domain.
+Keep `NEXT_PUBLIC_CLERK_SIGN_IN_URL` / `NEXT_PUBLIC_API_URL` as-is. Redeploy the web
+project. Verify: sign out, sign back in on `app.7ei.ai` — the dev banner is gone.
 
-> Prohibited for the assistant: creating the Clerk account/instance and entering
-> keys must be done by you. I can't create accounts or enter credentials.
+> Prohibited for the assistant: creating the Clerk account/instance and entering keys is
+> yours — I can't create accounts or enter credentials.
 
 ---
 
-## 2. Google OAuth consent screen — Gmail + Calendar scopes
+## 3. Google OAuth consent screen — Gmail + Calendar scopes
 
-The Google connector already **requests** the full scope set (see
-`backend/src/services/google-auth.ts`):
-
-```
-openid
-.../auth/userinfo.email
-.../auth/userinfo.profile
-.../auth/drive.readonly
-.../auth/drive.file
-.../auth/gmail.readonly     ← sensitive
-.../auth/gmail.send         ← sensitive
-.../auth/calendar.events    ← sensitive
-```
-
-Google won't grant the sensitive ones until they're listed on the OAuth consent
-screen and (for an External/published app) the app passes verification.
+The Google connector already **requests** the full scope set (`backend/src/services/google-auth.ts`):
+`openid`, `userinfo.email`, `userinfo.profile`, `drive.readonly`, `drive.file`,
+`gmail.readonly` ←sensitive, `gmail.send` ←sensitive, `calendar.events` ←sensitive.
 
 **Steps (Google Cloud Console → the project holding `GOOGLE_CLIENT_ID`):**
-1. **APIs & Services → Enabled APIs**: enable **Gmail API** and **Google
-   Calendar API** (Drive already enabled).
-2. **OAuth consent screen → Data access / Scopes → Add or remove scopes**: add
-   `gmail.readonly`, `gmail.send`, `calendar.events` (Drive scopes already there).
-3. Fastest path for a small team: keep the app in **Testing** mode and add each
-   user (e.g. `arturito@7ei.ai`) under **Test users** — sensitive scopes work
-   immediately for listed testers, no Google verification needed.
-   - To go fully public later, **Publish** the app and complete Google's
-     sensitive-scope verification (privacy policy URL, demo video, etc.).
-4. Confirm the **Authorized redirect URI** matches
-   `${PUBLIC_URL}/api/auth/google/callback` — i.e.
-   `https://7ei-backend.fly.dev/api/auth/google/callback` (or your custom API
-   domain if `PUBLIC_URL` differs).
+1. **APIs & Services → Enabled APIs:** enable **Gmail API** and **Google Calendar API**
+   (Drive already enabled).
+2. **OAuth consent screen → Data access → Add or remove scopes:** add `gmail.readonly`,
+   `gmail.send`, `calendar.events`.
+3. Fastest path for a small team: keep the app in **Testing** mode and add each user
+   (e.g. `arturito@7ei.ai`) under **Test users** — sensitive scopes work immediately for
+   listed testers, no Google verification needed. (To go fully public later, **Publish**
+   and complete sensitive-scope verification.)
+4. Confirm the **Authorized redirect URI** matches `${PUBLIC_URL}/api/auth/google/callback`
+   (i.e. `https://7ei-backend.fly.dev/api/auth/google/callback`).
 
-**Backend env (Fly `7ei-backend` — already set, confirm values):**
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `PUBLIC_URL`.
-
-Verify: **Connectors → Google → Connect**, approve the consent screen, then hit
-**Test** on Gmail and Calendar — both should return data.
+**Backend env (Fly `7ei-backend` — already set, confirm):** `GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`, `PUBLIC_URL`. Verify: Connectors → Google → Connect, approve, then
+**Test** Gmail and Calendar.
 
 ---
 
-## 3. Rotate exposed tokens
+## 4. Rotate exposed tokens
 
-Two secrets were handled in plaintext during setup and should be rotated. **I
-can't rotate these for you** (that means authenticating to vendor consoles and
-minting credentials) — do the rotate in each console, then paste the new value
-into the app's encrypted store or Fly secrets as noted.
+Two secrets were handled in plaintext during setup and should be rotated. **I can't
+rotate these for you** — do the rotate in each console, then paste the new value into the
+app's encrypted store or Fly secrets.
 
-### 3a. NVIDIA NIM API key (the MiniMax brain)
-- Rotate: **NVIDIA NGC / build.nvidia.com → API keys → revoke the old key →
-  generate a new one** (`nvapi-…`).
-- Store it **once**, encrypted, in the app: **Cockpit → Secrets → set
-  `MC_LLM_API_KEY`** to the new key. The adapter pulls it at boot via
-  `GET /api/agent/secrets` and injects it into its env — so **no plaintext key
-  needs to live in `mc.env`** on any adapter host (this is the hardening in
-  `adapters/openclaw/mc_adapter.py`: `llm_chat()` and the `auto` executor read
-  `MC_LLM_API_KEY` from the environment at call time).
-- Remove any lingering `MC_LLM_API_KEY=nvapi-…` line from
-  `~/.openclaw/mc-adapter/mc.env` on every host, then restart the adapter.
+**4a. NVIDIA NIM API key (the MiniMax brain / hosted Chatterbox TTS)**
+- Rotate: NVIDIA NGC / build.nvidia.com → API keys → revoke the old → generate a new
+  `nvapi-…`.
+- Store it **once**, encrypted: Cockpit → Secrets → set `MC_LLM_API_KEY`. The adapter
+  pulls it at boot via `GET /api/agent/secrets` and injects it — so **no plaintext key
+  lives in `mc.env`** on any host.
+- Remove any lingering `MC_LLM_API_KEY=nvapi-…` from `~/.openclaw/mc-adapter/mc.env` on
+  every host, then restart the adapter.
 
-### 3b. Vault GitHub PAT (agent shared-memory writes)
-- Rotate: **GitHub → Settings → Developer settings → Personal access tokens →
-  regenerate** the token used for `Arturito7ei/7Ei-MC_TARCO`. Give it **repo
-  write** scope (fine-grained: Contents read/write on that repo) so agents can
-  commit memory.
-- Store it in the app: **Connectors → Obsidian Vault** (or the secret store key
-  `GITHUB_VAULT_TOKEN`, part of `VAULT_CONFIG`). Test the connector — the tree
-  should list and a write should commit.
+**4b. Vault GitHub PAT (agent shared-memory writes) — see also item 6**
+- Rotate: GitHub → Settings → Developer settings → PATs → regenerate the token for
+  `Arturito7ei/7Ei-MC_TARCO`. Give it **Contents read/write** on that repo.
+- Store it: Connectors → Obsidian Vault (secret-store key `GITHUB_VAULT_TOKEN`, part of
+  `VAULT_CONFIG`). Test the connector.
 
-> After rotating, the old values in any chat scrollback or local file are dead.
-> Don't paste live secrets into chat again — set them directly in the console /
-> the app's Secrets UI.
+> After rotating, old values in chat scrollback / local files are dead. Don't paste live
+> secrets into chat again.
 
 ---
 
-## 4. Move OpenClaw to the Mac mini
+## 5. Move OpenClaw to the Mac mini
 
 Run the always-on adapter on the Mac mini instead of the laptop.
 
-1. On the Mac mini, check out the repo (or copy the `adapters/` folder).
-2. Mint a fresh agent token: **app → Cockpit → the OpenClaw agent → rotate
-   token** (`POST /api/agents/:id/rotate-token`). This also invalidates the
-   laptop's token.
+1. On the Mac mini, check out the repo (or copy `adapters/`).
+2. Mint a fresh agent token: app → Cockpit → the OpenClaw agent → rotate token
+   (`POST /api/agents/:id/rotate-token`). This invalidates the laptop's token.
 3. Install in one command:
    ```bash
    cd 7Ei-Mission_Control_App/adapters/mac-mini
    MC_AGENT_TOKEN=mca_xxx ./setup.sh --preset nvidia-minimax --yes
    ```
-   It installs `mc_adapter.py`, writes `~/.openclaw/mc-adapter/mc.env`
-   (chmod 600, **no LLM key** — pulled from the secret store per §3a), renders +
-   loads the launchd keep-alive, and runs a one-pass smoke test.
-4. On the **laptop**, stop the old service so two hosts don't double-claim:
-   ```bash
-   launchctl unload ~/Library/LaunchAgents/com.7ei.mc-adapter.plist
-   ```
-5. Verify on the Mac mini: `tail -f ~/.openclaw/mc-adapter/adapter.log` and watch
-   a heartbeat go green in the app's Cockpit. Assign a test task and confirm it
-   reaches **done**.
+   Installs `mc_adapter.py`, writes `~/.openclaw/mc-adapter/mc.env` (chmod 600, **no LLM
+   key** — pulled from the store per §4a), loads the launchd keep-alive, runs a smoke test.
+4. On the **laptop**, stop the old service:
+   `launchctl unload ~/Library/LaunchAgents/com.7ei.mc-adapter.plist`
+5. Verify on the Mac mini: `tail -f ~/.openclaw/mc-adapter/adapter.log`, watch a heartbeat
+   go green, assign a test task to **done**.
 
-See `adapters/mac-mini/README.md` for flags and operations.
+See `adapters/mac-mini/README.md`.
 
 ### Shell-execution default (Epic ONB, audit M5) — new agents are shell-OFF
 
-The shell-execution default was aligned to **OFF for new agents** (the operator's
-M5 call). What this means for onboarding:
+The shell default is **OFF for new agents** (the operator's M5 call). Enforcement is
+**client-side only** — the adapter's local `MC_ALLOW_SHELL` decides; no server gate reads
+a stored `allowShell` — so this **cannot** affect an already-running agent.
 
-- **UI-onboarded agents (Cockpit → Add agent / Hire):** the paste-able `mc.env`
-  now ships `MC_ALLOW_SHELL=0` — matching the server registry's `allowShell: false`.
-  An operator who wants a new agent to run host commands ticks the **"Allow shell
-  execution on the host" (advanced)** checkbox on the token screen, which flips the
-  block to `MC_ALLOW_SHELL=1`. Enforcement is **client-side only** — the adapter's
-  own local `MC_ALLOW_SHELL` decides; the backend never gates shell from the
-  registry — so this default change **cannot** affect an already-running agent.
-- **The live OpenClaw ops agent is GRANDFATHERED.** Its `mc.env` on its host
-  (`~/.openclaw/mc-adapter/`) is untouched; it keeps whatever shell posture it was
-  installed with. Nothing about this change reaches a running host.
-- **The mac-mini installer (`setup.sh`) still defaults `MC_ALLOW_SHELL=1`** (its
-  default preset is `shell` — a deliberate shell-executor setup) and exposes
-  `--no-shell` to disable. This was **left as-is on purpose**: it is *this* ops
-  agent's installer, and flipping its default would change the §4 re-install path
-  above. ⚠️ **Operator/auditor decision:** if you want the CLI installer to also
-  default shell-OFF, flip `ALLOW_SHELL="0"` in `adapters/mac-mini/setup.sh`, add a
-  `--shell` opt-in, and pass it here for the ops agent. Not done in the M5 PR to
-  keep the live-agent path stable.
+- **UI-onboarded agents:** the paste-able `mc.env` ships `MC_ALLOW_SHELL=0`. Tick the
+  advanced **"Allow shell execution on the host"** checkbox to flip it to `=1`.
+- **The live OpenClaw ops agent is GRANDFATHERED** — its `mc.env` is untouched; it keeps
+  whatever posture it was installed with.
+- **The mac-mini installer (`setup.sh`) still defaults `MC_ALLOW_SHELL=1`** (its `shell`
+  preset — a deliberate shell-executor setup; `--no-shell` disables). Left as-is on
+  purpose so the §5 re-install path stays stable. ⚠️ To also default the CLI installer
+  shell-OFF: flip `ALLOW_SHELL="0"` in `adapters/mac-mini/setup.sh`, add a `--shell`
+  opt-in, and pass it here for the ops agent.
 
 ---
 
-## 5. Set the secret-store & run-token keys on Fly
+## 6. `GITHUB_VAULT_TOKEN` — shared memory / vault writes
 
-The at-rest secret store (`backend/src/services/secrets.ts`) derives its AES-256-GCM
-key from `SECRETS_ENC_KEY`; the per-run HMAC tokens (`backend/src/routes/agent-api.ts`)
-sign with `RUN_TOKEN_SECRET || SECRETS_ENC_KEY`. **Both fall back to a hard-coded
-public default** (`'dev-7ei-mc-secrets-key'` / `'dev-7ei-mc-run'`) when unset — which
-is fine for dev but means that, in production without them, every encrypted secret in
-the DB is decryptable with a key that lives in the source, and run-tokens are forgeable.
+Memory-bus features (agent shared-memory writes to the Obsidian vault, the in-app Memory
+graph) stay **dormant until `GITHUB_VAULT_TOKEN` is set**. This is the same token as §4b
+(rotate + store). Set it via Connectors → Obsidian Vault or the secret store. Without it,
+the zero-auth static vault-graph preview (`app.7ei.ai/vault-graph.html`) still renders,
+but live memory reads/writes don't.
 
-**Steps (once — do this BEFORE storing any real secret via Cockpit → Secrets):**
+---
+
+## 7. `WEBHOOK_SIGNING_SECRET` on Fly
+
+Inbound webhook receivers verify a per-org HMAC shared secret (`services/webhook-auth.ts`),
+gated on `WEBHOOK_SIGNING_SECRET`. Until set, receivers are **open in dev**. It is a hard
+prerequisite for the Telegram remote surface (§9) and any future push/webhook runtime
+(ONB5). Set it, then **re-register integrations** so they carry the signature.
+
 ```bash
-flyctl secrets set \
-  SECRETS_ENC_KEY=$(openssl rand -hex 32) \
-  RUN_TOKEN_SECRET=$(openssl rand -hex 32) \
-  --app 7ei-backend
+flyctl secrets set WEBHOOK_SIGNING_SECRET=$(openssl rand -hex 32) --app 7ei-backend
 ```
-Verify with `bash scripts/check-secrets.sh` (both are now listed).
-
-> ⚠️ Set `SECRETS_ENC_KEY` **before** encrypting any secret. Anything already stored
-> under the dev default won't decrypt under a new key — re-enter those secrets (NVIDIA
-> key, vault PAT, custom-model keys) via Cockpit → Secrets after rotating.
-
-Engineering follow-up (tracked in the review report): add a boot-time fail-closed
-guard so `NODE_ENV=production` refuses to start on the default key.
 
 ---
 
-## 7. Audit trail — ENABLED for sensitive writes (Epic ONB, audit H-1) ✅ DONE
+## 8. `MC_ENABLE_REMOTE_ONBOARDING` — open the public join surface
 
-> **DECISION TAKEN (2026-07-15, operator-approved): option (b).** The audit trail is
-> now LIVE for the sensitive half — every mutating method (POST/PUT/PATCH/DELETE)
-> plus the onboarding/invite/join/approval surfaces — with **90-day retention**. The
-> read-only `GET` flood is NOT recorded. **Telemetry was left OFF** (separate concern —
-> see the note at the end of this section). Shipped behind the independent audit.
->
-> **Tune it:**
-> - **Retention window:** set `MC_AUDIT_RETENTION_DAYS` (Fly secret) to a whole
->   number of days **≥ 1**; unset / junk / 0 / negative / any sub-one-day fraction
->   (`0.5`, `.5`, `1e-9`) safe-defaults to **90** — so no typo can collapse the
->   window to 0 and wipe the table on the next prune. Rows older than the window are
->   pruned on a daily scheduler tick (`services/audit-retention.ts`, ~03:00 UTC). No
->   cap on row count — the age window is the bound.
-> - **Scope:** edit `shouldAudit(method, path)` in `middleware/audit-log.ts`
->   (`SENSITIVE_METHODS` + `AUDITED_PATH_SEGMENTS`). It is a pure, tested helper.
-> - **Recurring-agent-write exclusions (audit M-A):** `isHighFrequencyAgentWrite()`
->   in `middleware/audit-log.ts` is a denylist of high-frequency recurring
->   agent-runtime writes that `shouldAudit` skips even though they are mutating
->   methods — **`POST /api/agent/heartbeat`**, **`POST /api/agent/runs/:id/log`**,
->   **`POST /api/agent/messages`**. These are liveness/telemetry chatter posted on
->   the adapter poll loop or streamed continuously during a run; each was otherwise
->   one Turso INSERT at `active agents × poll cadence`, so heartbeat/run-log traffic
->   could dominate the onboarding events the trail was framed around. Excluding them
->   bounds the **daily insert rate away from the heartbeat cadence** — the write
->   volume is now driven by real actions, not liveness pings. To tune: add a path to
->   that denylist (skip more) or remove one (audit it again); it is a pure, tested
->   helper (`[AUDIT-MA]` tests in `audit-onb-enable.test.ts`). **Kept audited on
->   purpose** (meaningful and not per-poll): task result-posting + claim, approvals,
->   `run-token` minting, memory writes, plugin-job claim/result, workspace runtime,
->   and all org-scoped writes (agent create/config, credentials/secrets, wallet, RBAC).
->   When unsure whether an endpoint is security-relevant, KEEP it — be conservative.
-> - **Turn it off again:** revert the hoist in `src/index.ts` (the `auditLogPlugin(app)`
->   call at the top of `start()`) back to an encapsulated `app.register(auditLogPlugin)`
->   — the `[ONB2-H1]` tripwire in `audit-onb2-fix.test.ts` guards the wiring either way.
->
-> **Cost, stated honestly:** one fire-and-forget Turso `INSERT` per SENSITIVE request
-> (writes + the low-volume onboarding surfaces), **minus the recurring agent-runtime
-> writes** (heartbeat / run-log / messages, audit M-A) which are excluded so the daily
-> insert rate is bounded away from the heartbeat cadence. The insert is
-> `.catch()`-swallowed, so it can never add latency to or fail the request it records.
-> The `GET` dashboard-poll flood — the expensive, low-value half — is skipped by
-> construction.
+The invite-based onboarding machinery (Epic ONB) is fully built and tested, but on the
+**hosted** backend the onboarding document, join, and claim routes answer a **flat 404
+until this is set** — the safe default. (A **packaged/loopback** deployment has them open
+by default.) Full flow: `docs/RUNBOOK-agent-onboarding.md`.
 
-**The original problem (now fixed): `audit_logs` recorded nothing.**
-`auditLogPlugin` and `telemetryPlugin` added their `onResponse` hooks inside an
-encapsulated `app.register()` child, so the hooks never fired for the plugins'
-siblings — i.e. for any route in the app (`docs/AUDIT-ONB2.md` H-1, confirmed
-empirically). The audit hook is now **hoisted onto the root instance** (a bare
-`auditLogPlugin(app)` call before any `register()`, mirroring the `onRoute` hook), so
-it fires for every route; `audit-onb-enable.test.ts` proves it records for a sibling.
+```bash
+flyctl secrets set MC_ENABLE_REMOTE_ONBOARDING=1 --app 7ei-backend
+```
 
-**The hardening PR (#248), plus the re-audit that followed it, made the trail safe
-to enable — and stopped there, on purpose.** The things that had to be true first
-are now true: the query routes are Clerk/owner-gated (H-2), `sanitizeBody` recurses
-so a secret nested in `agentDefaultsPayload` cannot reach a row (H-3), and the
-telemetry span URL is redacted (M-1).
-
-> The **re-audit** (`docs/AUDIT-ONB2-hardening.md`) found #248 had closed two of
-> those one layer short, and fixed both — worth knowing before you enable anything:
-> the traces route was authenticated but **not tenant-isolated** (now
-> `GET /api/orgs/:orgId/traces`, owner-gated, org-filtered), and `sanitizeBody`
-> did not redact `http_webhook.webhookAuthHeader` — a **bearer credential the
-> adapter registry declares secret** — so the very first row the trail ever recorded
-> could have carried a live token in plaintext. The registry is now the source of
-> truth for redaction. Enabling the hook **before** that fix would have been the
-> exact failure this section exists to prevent.
-
-The prerequisites that made this safe are all in place: the query routes are
-Clerk/owner-gated (H-2), `sanitizeBody` recurses over the registry-declared secret
-keys so a secret nested in `agentDefaultsPayload` cannot reach a row (H-3, R-2), and
-the path is redacted before persistence. The end-to-end proof lives in
-`audit-onb-enable.test.ts`: a real join request carrying a nested `apiKey` + a
-registry `webhookAuthHeader` bearer + a token in the path is driven through the
-now-live hook, and the persisted row has the path redacted and **no** secret anywhere.
-
-**Which option was taken: (b).** Sensitive methods + onboarding/invite/join/approval
-surfaces, GET flood skipped, 90-day retention. (Not (a) — the onboarding flow now has a
-trail; not (c) — the GET flood stays out.)
-
-**Telemetry was deliberately left OFF.** `telemetryPlugin` is a *separate* concern from
-the audit trail: it is an in-memory span ring buffer (no Turso writes, bounded to 1000
-spans, so no storage-growth or retention concern), and its `GET /api/orgs/:orgId/traces`
-under-reports until `llm.call` spans carry an org id. The operator's H-1 decision was
-scoped to the audit trail. Enabling telemetry is its own call — hoist `telemetryPlugin`
-the same way if/when you want request spans populated.
-
-> ⚠️ **Historical rows:** `audit_logs` never recorded before this change (H-1 was a
-> no-op since the wiring existed), so there is no backlog of rows that were readable
-> under the old public query route — the table is empty until the first sensitive
-> request after deploy. Nothing to purge.
+> Set this **only after** the onboarding security prerequisites are true — they are, as
+> of ONB4: approval gate, single-use invites, short TTL, per-IP rate limit (wired, on),
+> low-trust containment, no-oracle flat-404 failures. See `docs/SECURITY-posture.md` §2.
+> Leaving it OFF is a valid, safe posture — the manual Add-Agent/Hire wizard and legacy
+> `7ei-mc onboard` still work without it.
 
 ---
 
-## 8. Multi-tenant membership — ENFORCED surface-wide (R-4 + HIGH-1 record routes) ✅ DONE · NO operator action
+## 9. Telegram bot token (D-epic remote surface)
 
-> **No console action required.** Org membership is now enforced on every Clerk-authed
-> `/api/orgs/:orgId/*` route, the `:agentId`/`:taskId` record-derived tail, **and the ~25
-> top-level record routes** (`/api/secrets/:id`, `/api/knowledge/:itemId`,
-> `/api/projects/:projectId`, `/api/webhooks/:id`, … — HIGH-1 close, 2026-07-15) by one
-> scope-level gate (`requireOrgMembership`, `backend/src/middleware/rbac.ts`). The gate is
-> now truly **surface-wide and fail-closed** — a missing/foreign record → 403 — and a
-> leak-guard (`membership-scoping.test.ts`) fails CI if any new secured route ships ungated.
-> Before this, any logged-in user could act on any org by swapping `:orgId` or an id.
->
-> **Your own access is grandfathered automatically.** `enforceOrgRole` honours an org's
-> `ownerId` as an implicit owner, so you keep full access to your org(s) with **no
-> migration and no backfill** — even for orgs created before membership rows existed.
-> Only a non-member (or wrong-org) request newly gets a 403. If you ever add a second
-> human user to an org, give them an `org_members` row (org-create already does this for
-> the owner). Full design + route inventory: `docs/AUDIT-MCA-membership.md`.
+Arturita's iPhone/remote surface v1 is Telegram-only (voice notes, text, files, one-tap
+approvals). Blocked on two things:
+1. **`WEBHOOK_SIGNING_SECRET`** (§7) — a hard prerequisite for the HMAC Telegram receiver.
+2. A **Telegram bot token** from @BotFather, stored in the encrypted store / Fly secret,
+   with the webhook pointed at the backend receiver.
+
+D1/D2 are otherwise `todo` in the tracker (`docs/PLAN-arturita.md` §0). Until both are in
+place, remote control degrades honestly.
+
+---
+
+## 10. Local LLM / STT / TTS stack (Arturita voice + answer path)
+
+Arturita is **local-first** by default (`DEFAULT_LLM_CHAIN` is Ollama-first; STT is
+whisper-first). To make the fully-local path work on the operator's machine:
+
+- **LLM (Ollama):** set `OLLAMA_ORIGINS=https://app.7ei.ai` and restart Ollama, so the
+  browser-direct local streaming path can reach it (real tokens, on-device, $0; cloud
+  fallback if absent). Off the operator's Ollama machine, live talk falls back to a cloud
+  key — set optional `GROQ_API_KEY` / `GEMINI_API_KEY` (free-tier) as fallbacks.
+- **STT (local Whisper):** "Speech Error: network" in Brave = the browser disabled Web
+  Speech STT. Start the zero-dep local Whisper bridge — `adapters/arturita-stt` (one
+  command) — for a working local STT leg. whisper.cpp is the host engine.
+- **TTS:** browser `SpeechSynthesis` is the zero-install default; Piper / local-Chatterbox
+  are the local host engines; NVIDIA-hosted Chatterbox uses `MC_LLM_API_KEY` (§4a).
+
+> Per-org overrides can pin a cloud key even when the default is local — reset via the
+> Arturita ⚙ Pipeline config if live talk unexpectedly needs cloud. Invariants (local-first
+> LLM + whisper-first STT) are test-locked.
+
+---
+
+## 11. `WALLET_MAINNET_ENABLED` — wallet is testnet-only (leave OFF unless deliberate)
+
+The wallet ships **read / prepare / simulate + testnet-only signing**. The policy engine
+allows bounded autonomous signing (**< $100** per-tx from a dedicated capped burner;
+**≥ $100 → A2 approval**), but **mainnet signing is blocked** — `wallet-policy.ts` returns
+`signing blocked: mainnet disabled this wave (WALLET_MAINNET_ENABLED=false)`.
+
+To enable mainnet (a deliberate, high-consequence step — not part of a routine go-live):
+1. Set `WALLET_MAINNET_ENABLED=true` on Fly.
+2. Fund the dedicated **capped burner** wallet (never a primary wallet).
+3. Confirm the WalletConnect id + the live testnet signer wiring first (E2 follow-up).
+4. Re-verify the per-tx caps and the A2 approval threshold in `wallet_policy`.
+
+See `docs/WALLET-KEYSTORE-arturita.md` and `docs/DECISIONS-arturita.md` (S4). **No mainnet
+signing, no key in code today** — every dangerous path stays behind the A2 gate.
+
+---
+
+## 12. Apex DNS for `7ei.ai` → the `llms.txt` mirror
+
+The self-describing `llms.txt` (MCA-85 D2) is served at the app subdomain. To also serve
+it at the apex (`7ei.ai/llms.txt`) for discovery, add the apex DNS record pointing at the
+mirror. Cosmetic/discovery only — the app-subdomain copy already works.
+
+---
+
+## 13. Claude Code engineering agent (Epic CC) — optional
+
+Makes Claude Code a first-class fleet member the office can assign coding work to
+(`docs/DESIGN-claude-code-agent.md`; adapter `adapters/claude-code/`). Runs on any host
+with the `claude` CLI — **not** the OpenClaw box; never touches `~/.openclaw/`.
+
+**Prereqs (on the host):** `claude` CLI installed + authenticated (its own login or
+`ANTHROPIC_API_KEY`); `python3` on PATH (stdlib only).
+
+**Steps:**
+1. **Onboard** a `claude_code` agent — via an invite (`docs/RUNBOOK-agent-onboarding.md`
+   §4b, the safe path) or Cockpit → Add agent → 🤖 Claude Code / `npx @7ei/mc onboard
+   --runtime claude_code`. Registration is **secure-by-default** (CC3): `low_trust_review`
+   + explicit capability list + workspace boundary.
+2. **Install** on the host:
+   ```bash
+   cd adapters/claude-code
+   MC_AGENT_TOKEN=mca_… MC_WORKDIR=/path/to/checkout ./setup.sh
+   ```
+   Writes a chmod-600 `mc.env`, prints posture (`--doctor`), smoke-polls, loads a launchd
+   keep-alive — all **propose-and-approve**.
+3. The agent claims assigned tasks and **proposes** — **no host commands run without an A2
+   approval** (verbatim `argv` + fresh-session step-up).
+
+**Enabling autonomous execution (optional, later, OFF by default):** fail-closed behind
+**two operator guards + the CC5 denylist**. Only when you deliberately choose to, add to
+`mc.env`:
+```
+CC_PERMISSION_MODE=bypassPermissions
+CC_AUTONOMOUS=1
+CC_AUTONOMOUS_CONFIRM=1
+```
+then `python3 cc_adapter.py --doctor` → posture `AUTONOMOUS`. Even then, every command
+passes the CC5 denylist (catastrophic/privilege/exfil/reverse-shell **refused**; unknown
+**proposed**; only allowlisted read-only commands run un-attended). Run against an isolated
+`cc/` worktree. Remove those three lines (or `/panic`) to revert. Details:
+`adapters/claude-code/README.md`.
+
+---
+
+## 14. File the epics as Jira (MCA) issues
+
+Several epics were designed and shipped in build sessions where Atlassian Rovo OAuth is
+unavailable, so they have **no MCA issue numbers**: the Arturita epics **A–G**, packaging
+epic **H**, and **Epic ONB** (invite-based onboarding). File them interactively in Jira
+(projects MCA + OS, cloudId `5dadc567-085a-4cd8-99a3-c0bd9886fee9`) and back-fill the
+numbers into `docs/PLAN-arturita.md` §0. Also pending: Jira transitions on shipped work.
+
+---
+
+## 15. Audit trail — ✅ ON (tuning only)
+
+The audit trail is **LIVE** for the sensitive half — every mutating method (POST/PUT/
+PATCH/DELETE) plus the onboarding/invite/join/approval surfaces — with **90-day
+retention**. The read-only `GET` flood is not recorded; high-frequency agent-runtime writes
+(heartbeat/run-log/messages) are excluded. Telemetry is deliberately **OFF** (a separate
+in-memory concern). Full model: `docs/SECURITY-posture.md` §5.
+
+**Tune it:**
+- **Retention:** `MC_AUDIT_RETENTION_DAYS` (Fly secret), a whole number ≥ 1; junk / 0 /
+  negative / sub-one-day safe-defaults to **90** so a typo can't wipe the table. Rows older
+  than the window are pruned on a daily scheduler tick (~03:00 UTC).
+- **Scope:** edit `shouldAudit(method, path)` in `middleware/audit-log.ts`. When unsure
+  whether an endpoint is security-relevant, KEEP it (be conservative).
+- **Recurring-write exclusions:** `isHighFrequencyAgentWrite()` denylists heartbeat /
+  run-log / messages. Add a path to skip more; remove one to audit it again.
+- **Turn off:** revert the `auditLogPlugin(app)` hoist in `src/index.ts` back to an
+  encapsulated `app.register(auditLogPlugin)` — the `[ONB2-H1]` tripwire guards either way.
+
+**Cost, honestly:** one fire-and-forget Turso `INSERT` per sensitive request (writes + the
+low-volume onboarding surfaces), minus the recurring agent-runtime writes. The insert is
+`.catch()`-swallowed, so it can never add latency to or fail the request it records.
+
+> The hardening that made this safe (query routes owner-gated + tenant-isolated,
+> `sanitizeBody` recurses over the registry secret detector, path/telemetry redaction) is
+> all on main. Details + history: `docs/AUDIT-audit-trail.md`, `docs/AUDIT-ONB2-hardening.md`.
+
+---
+
+## 16. Multi-tenant membership — ✅ ENFORCED surface-wide (no operator action)
+
+Org membership is enforced on every Clerk-authed `/api/orgs/:orgId/*` route, the
+`:agentId`/`:taskId` record-derived tail, **and the ~25 top-level record routes** (R-4 +
+HIGH-1) by one scope-level gate (`requireOrgMembership`). Fail-closed — a missing/foreign
+record → 403 — and a leak-guard fails CI if any new secured route ships ungated.
+
+**Your own access is grandfathered automatically** — `enforceOrgRole` honours an org's
+`ownerId` as an implicit owner, so you keep full access with no migration or backfill. Only
+a non-member/wrong-org request newly gets a 403. If you add a second human to an org, give
+them an `org_members` row. Full model: `docs/SECURITY-posture.md` §4, `docs/AUDIT-MCA-membership.md`.
 
 ---
 
 ## Assistant boundaries (why some steps are yours)
 
-Per the operating rules, I don't create accounts, enter passwords/keys, complete
-OAuth consent, change account settings, or rotate/enter credentials on your
-behalf. Everything I *can* automate — the adapter hardening, the one-command
-installer, this runbook — is done; the four items above are the console actions
-that only you can perform.
+Per the operating rules, I don't create accounts, enter passwords/keys, complete OAuth
+consent, change account settings, or rotate/enter credentials on your behalf. Everything I
+*can* automate — the adapter hardening, the one-command installer, this runbook — is done;
+the console/secret actions above are the ones only you can perform.
