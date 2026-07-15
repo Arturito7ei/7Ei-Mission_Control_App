@@ -397,6 +397,11 @@ export async function agentJoinRoutes(app: FastifyInstance) {
     } as any)
 
     reply.code(201)
+    // Since ONB4 this response body carries the raw one-time `mcc_` claim secret, so
+    // it is a credential-bearing response like the claim itself and the onboarding doc
+    // — keep it out of every intermediary cache (AUDIT-ONB4, LOW-1). (A POST is not
+    // cached by default, but every other credential path here says `no-store` out loud.)
+    reply.header('cache-control', 'no-store')
     // A requestId, a path, and — since ONB4 — the one-time claim secret (raw, once).
     // Still no agent token and no agent id: the `mca_` credential is minted at claim.
     return joinAcceptedResponse(
