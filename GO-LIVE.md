@@ -414,10 +414,14 @@ export APPLE_API_ISSUER="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 # export APPLE_TEAM_ID="TEAMID"
 
-# 3. Drop the one env guard that forces an unsigned build, then build:
-#    (edit apps/desktop/package.json → remove `CSC_IDENTITY_AUTO_DISCOVERY=false` from
-#     the dist:mac script, OR override it inline for this run)
+# 3. Enable signing. The dist:mac script defaults CSC_IDENTITY_AUTO_DISCOVERY to
+#    `false` (a deterministic UNSIGNED build) but honours an exported override, so
+#    export it true for this run — no script edit needed:
 CSC_IDENTITY_AUTO_DISCOVERY=true npm run dist:mac
+#    (After signing, VERIFY: `spctl -a -vv "dist/mac-arm64/7Ei Mission Control.app"`
+#     must report `source=Notarized Developer ID` — a bare "accepted" or an
+#     "unsigned" result means the flip did not take and you'd otherwise ship an
+#     unsigned/unnotarized app that Gatekeeper blocks on other Macs.)
 ```
 electron-builder deep-signs the app with your Developer ID (hardened runtime + the
 already-wired `build/entitlements.mac.plist`), `scripts/notarize.cjs` submits it to Apple's
