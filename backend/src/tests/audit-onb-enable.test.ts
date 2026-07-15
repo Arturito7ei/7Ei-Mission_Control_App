@@ -18,7 +18,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 
-import { auditLogPlugin, auditLogQueryRoutes, shouldAudit, type AuditRow } from '../middleware/audit-log'
+import { auditLogPlugin, auditLogQueryRoutes, shouldAudit, isHighFrequencyAgentWrite, type AuditRow } from '../middleware/audit-log'
 import { telemetryQueryRoutes } from '../services/telemetry'
 import { createClerkAuth } from '../middleware/clerk-auth'
 import {
@@ -126,6 +126,52 @@ test('[ONB-H1] shouldAudit is a pure method/route filter', () => {
   assert.equal(shouldAudit('GET', '/health'), false)
   assert.equal(shouldAudit('GET', '/ready'), false)
   assert.equal(shouldAudit('GET', '/api/health'), false)
+})
+
+// ─── audit M-A — the recurring agent-runtime write flood is NOT audited ─────────
+
+test('[AUDIT-MA] recurring agent-runtime writes (heartbeat / run-log / messages) are NOT audited', () => {
+  // These are the per-poll / per-run-stream chatter that would otherwise be one Turso
+  // INSERT each at `active agents × poll cadence` — liveness/telemetry, no security event.
+  assert.equal(shouldAudit('POST', '/api/agent/heartbeat'), false, 'heartbeat is a per-poll liveness ping, not an audit event')
+  assert.equal(shouldAudit('POST', '/api/agent/messages'), false, 'free-form runtime chatter is not an audit event')
+  // redactPath leaves the run :id UUID verbatim, so run-log arrives with a real UUID.
+  assert.equal(shouldAudit('POST', '/api/agent/runs/550e8400-e29b-41d4-a716-446655440000/log'), false,
+    'the run-progress stream is not an audit event')
+  // The predicate is method-agnostic and tightly scoped by prefix+suffix.
+  assert.equal(isHighFrequencyAgentWrite('/api/agent/heartbeat'), true)
+  assert.equal(isHighFrequencyAgentWrite('/api/agent/messages'), true)
+  assert.equal(isHighFrequencyAgentWrite('/api/agent/runs/any-uuid-here/log'), true)
+  assert.equal(isHighFrequencyAgentWrite('/api/agent/runs/'), false, 'the runs collection is not a run-log')
+})
+
+test('[AUDIT-MA] the security-relevant agent + org writes are STILL audited', () => {
+  // Everything the trail was framed around stays in. Result-posting is per-task
+  // (terminal, not per-poll) and meaningful, so it is KEPT despite the "result" name.
+  const stillAudited: Array<[string, string]> = [
+    ['POST', '/api/agent/tasks/t1/result'],          // task result-posting — meaningful, low-frequency
+    ['POST', '/api/agent/tasks/t1/claim'],           // claiming work
+    ['POST', '/api/agent/approvals'],                // human sign-off request (machine_exec / wallet_tx / …)
+    ['POST', '/api/agent/run-token'],                // mints an HMAC credential
+    ['PUT',  '/api/agent/memory/file'],              // vault write
+    ['POST', '/api/agent/plugin-jobs/j1/claim'],     // plugin-job state transition
+    ['POST', '/api/agent/plugin-jobs/j1/result'],
+    ['POST', '/api/agent/workspaces/w1/runtime'],
+    ['POST', '/api/orgs/o1/credentials'],            // secrets
+    ['POST', '/api/orgs/o1/agents'],                 // agent create
+    ['DELETE', '/api/orgs/o1/agents/a1'],            // agent delete
+    ['POST', '/api/agent-invites'],                  // onboarding / invite
+    ['POST', '/api/agent-invites/:token/join'],      // join (redacted token)
+    ['POST', '/api/orgs/o1/wallet/tx'],              // wallet
+    ['PATCH', '/api/orgs/o1'],                       // org config / RBAC changes
+  ]
+  for (const [m, p] of stillAudited) {
+    assert.equal(shouldAudit(m, p), true, `${m} ${p} must still be audited (security-relevant write)`)
+  }
+  // A generic mutating write on an unmodelled path is still audited (default-on for writes).
+  assert.equal(shouldAudit('POST', '/api/orgs/o1/something-new'), true, 'a generic mutating write stays audited')
+  // The onboarding GET surfaces still audited; the run-log arm did not over-match audit-log reads.
+  assert.equal(shouldAudit('GET', '/api/orgs/o1/audit-log'), false, 'a plain org read is still not audited (and not a /log match)')
 })
 
 // ─── 4 — enabling WRITES did not open the READ routes ─────────────────────────
