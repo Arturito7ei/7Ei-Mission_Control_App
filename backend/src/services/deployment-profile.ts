@@ -75,16 +75,22 @@ export interface HardeningRequirement {
 export const PUBLIC_JOIN_IMPLEMENTED = true
 
 /**
- * Is the one-time TOKEN CLAIM built? **No — that is ONB4.**
+ * Is the one-time TOKEN CLAIM built? **Yes — ONB4.**
  *
- * This is the honest half of the ONB3 posture, and it is deliberately a SEPARATE
- * constant rather than a widening of the one above: ONB3 lets an agent describe
- * itself and lets a human approve it, and an approved agent is created with NO
- * claimable credential. `POST /api/agent-join-requests/:id/claim-api-key` does not
- * exist, and the landmine guard (`auth-scoping.test.ts`) asserts that no claim
- * route is registered while this is false. Flip it in the PR that lands ONB4.
+ * ONB4 lands the credential lifecycle the ONB3 posture deliberately deferred: a
+ * `mcc_` claim secret is minted at join (hash-only, TTL), and after a human approves,
+ * the agent spends it ONCE at `POST /api/agent-join-requests/:id/claim-api-key` to
+ * mint its `mca_` token (hash-only on the agent, raw only in that one response). The
+ * claim consume and the token mint are atomic CAS statements (`services/claim.ts`);
+ * every failure is one flat 404.
+ *
+ * This stays a SEPARATE constant from `PUBLIC_JOIN_IMPLEMENTED` (the join surface
+ * shipped in ONB3, before the claim). The landmine guard (`auth-scoping.test.ts`)
+ * now asserts BOTH directions off this flag: the claim route exists iff this is true.
+ * Flipping this without wiring the hashed, single-use, approval-gated claim — or
+ * wiring it without flipping this — fails the guard.
  */
-export const TOKEN_CLAIM_IMPLEMENTED = false
+export const TOKEN_CLAIM_IMPLEMENTED = true
 
 /** ONB3 — the public join endpoint is per-IP rate limited (`perIpRateLimit`, which
  *  ONB1's audit found had zero call-sites). The ONB2 re-audit's M-3 condition:

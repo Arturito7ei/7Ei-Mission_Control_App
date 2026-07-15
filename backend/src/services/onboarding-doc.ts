@@ -258,10 +258,13 @@ export function buildOnboardingDoc(input: OnboardingDocInput): OnboardingDoc {
     candidate(u, i === 0 ? 'the canonical public base URL of this Mission Control' : 'alternate address for this Mission Control'))
 
   const joinOpen = input.posture.publicJoinEnabled
-  // ONB3 lands the join + the approval gate; the CLAIM is ONB4. These are two facts,
-  // not one — a document that reported them as one boolean would either promise a key
-  // that cannot be claimed or hide a join surface that is open. Read them separately.
-  const claimOpen = input.posture.tokenClaimEnabled === true
+  // ONB3 landed the join + the approval gate; ONB4 landed the CLAIM. The claim is now
+  // BUILT (`tokenClaimEnabled`), but it is only REACHABLE where the whole flow is —
+  // the claim route is posture-gated exactly like the join (`publicJoinEnabled &&
+  // tokenClaimEnabled`). So the doc reports the claim as open only when BOTH hold; a
+  // profile that shuts the join shuts the claim with it, and the doc must not promise
+  // a key the deployment will 404.
+  const claimOpen = joinOpen && input.posture.tokenClaimEnabled === true
 
   const endpoints: OnboardingDoc['endpoints'] = {
     health: {
@@ -283,12 +286,16 @@ export function buildOnboardingDoc(input: OnboardingDocInput): OnboardingDoc {
     join: {
       method: 'POST', path: `${urls.invitePath}/join`, url: `${urls.inviteUrl}/join`,
       status: joinOpen ? 'open' : 'not_yet_open', landsIn: 'ONB3',
-      description: 'Submit your join request: who you are, which adapter you are, the capabilities you need, and your `agentDefaultsPayload`. This creates NO agent and NO credential — it creates a row in a human\'s approval queue. The response carries `{ requestId, status, claimPath }` and nothing else: there is no token and no secret in it.',
+      description: claimOpen
+        ? 'Submit your join request: who you are, which adapter you are, the capabilities you need, and your `agentDefaultsPayload`. This creates NO agent and NO API key — it creates a row in a human\'s approval queue. The response carries `{ requestId, status, claimPath, claimSecret, claimSecretExpiresAt }`: store the one-time `claimSecret` from that RAW response — you spend it once at Step 4 after approval. There is no agent token here.'
+        : 'Submit your join request: who you are, which adapter you are, the capabilities you need, and your `agentDefaultsPayload`. This creates NO agent and NO credential — it creates a row in a human\'s approval queue. The response carries `{ requestId, status, claimPath }` and nothing else: there is no token and no secret in it.',
     },
     claim: {
       method: 'POST', path: CLAIM_PATH_TEMPLATE, url: `${primary}${CLAIM_PATH_TEMPLATE}`,
       status: claimOpen ? 'open' : 'not_yet_open', landsIn: 'ONB4',
-      description: 'Claim your API key ONCE, AFTER a human approves. Single-use, expiring, and illegal before approval. NOT BUILT YET — an approved agent currently exists with no key at all.',
+      description: claimOpen
+        ? 'Claim your API key ONCE, AFTER a human approves, with the `claimSecret` you were given at join. Single-use, expiring, and illegal before approval. The raw token is returned EXACTLY ONCE in this response — store it from the raw JSON. Every failure is one flat 404.'
+        : 'Claim your API key ONCE, AFTER a human approves. Single-use, expiring, and illegal before approval. NOT BUILT YET — an approved agent currently exists with no key at all.',
     },
   }
 
@@ -455,9 +462,11 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
     '',
     `\`capabilities\` is an ALLOW-LIST, not prose: pick from \`${JOINABLE_CAPABILITIES.join('`, `')}\`, and ask only for what you need. There is deliberately **no free-text field** anywhere in this body — not a note, not a description, not a role. Do not try to smuggle one in under another key; the request will be refused. If you have something to say to the human approving you, say it to your operator.`,
     '',
-    'The response carries `{ requestId, status, claimPath }`. **There is no token and no secret in it** — that is not an omission, it is the design (see Step 3).',
+    doc.posture.claimOpen
+      ? 'The response carries `{ requestId, status, claimPath, claimSecret, claimSecretExpiresAt }`. **Store the `claimSecret` from that RAW JSON response now** — it is a one-time bearer you spend once at Step 4, after approval, and it is never shown again. There is no agent token here; that is minted only at the claim.'
+      : 'The response carries `{ requestId, status, claimPath }`. **There is no token and no secret in it** — that is not an omission, it is the design (see Step 3).',
     '',
-    'What this step does NOT do: it creates no agent, mints no credential, and grants no access. It creates a row in a human\'s approval queue.',
+    'What this step does NOT do: it creates no agent, mints no API key, and grants no access. It creates a row in a human\'s approval queue.',
     '',
     '---',
     '',
@@ -479,9 +488,9 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
 
   if (doc.endpoints.claim.status === 'not_yet_open') {
     out.push(
-      `> **NOT BUILT YET** (it lands in ${doc.endpoints.claim.landsIn}). Today an approved agent exists in Mission Control with **no API key at all** — there is nothing to claim, and no endpoint to claim it from. Do not go looking for another way to get one: there isn't one, and a key you obtained by any other means is not a Mission Control key. Your operator will tell you when this step opens.`,
+      `> **This endpoint is not open on this deployment.** The onboarding flow is gated by the deployment profile, and it is shut here — the claim answers the same flat 404 as the join above. Do not go looking for another way to get a key: there isn't one, and a key you obtained by any other means is not a Mission Control key. Your operator will tell you when the flow opens.`,
       '',
-      '> The rules below are still the rules — read them now, because they are the part of this document most likely to go wrong when it does open.',
+      '> The rules below are still the rules — read them now, because they are the part of this document most likely to go wrong when the flow opens.',
       '',
     )
   }
@@ -495,12 +504,10 @@ export function renderOnboardingText(doc: OnboardingDoc): string {
     '',
     ...doc.claimSecurity.rules.map((r, i) => `${i + 1}. ${r}`),
     '',
-    'Failure states, so you can tell them apart:',
+    'Failure states — deliberately indistinguishable, so this endpoint is never an oracle:',
     '',
-    '- `403` — not approved yet (or a wrong `claimSecret`). Wait, or ask your operator.',
-    '- `409` — already claimed. You (or something acting as you) already has the key. **Do not** re-claim, and do not invent one — find where it was written.',
-    '- `410` — the claim secret expired. The invite must be re-issued.',
-    '- `404` — unknown request. Re-check the `requestId` you were given.',
+    '- `404` — the ONLY failure. It means exactly one of: unknown `requestId`; not approved yet; a wrong, expired, or already-spent `claimSecret`; or a lost race. They are one identical response ON PURPOSE — a caller cannot use the claim endpoint to learn your request\'s status. If you get a 404, do NOT retry blindly and do NOT invent a key: confirm with your operator that you were approved, that you are using the exact `claimSecret` from your join response, and that it has not expired.',
+    '- `200` — success, exactly once. Your raw token is in `token`. Read the rules above BEFORE you print anything.',
     '',
     '---',
     '',

@@ -232,11 +232,22 @@ test('[ONB1-audit] the onboarding surface is shut: invites are Clerk-gated, only
   //                                       owner's approval queue), its exposure follows
   //                                       the deployment profile, it consumes the invite
   //                                       with an atomic CAS, and it is per-IP rate limited.
+  //   POST /api/agent-join-requests/:id/claim-api-key
+  //                                       the one-time claim (ONB4). Unauthenticated by
+  //                                       design — the mcc_ claim secret is the bearer.
+  //                                       Safe because it mints the token ONLY for an
+  //                                       APPROVED request whose secret matches (constant-
+  //                                       time), exposure follows the deployment profile,
+  //                                       the claim consume + token mint are atomic CAS,
+  //                                       every failure is one flat 404, and it is per-IP
+  //                                       rate limited. The raw token appears only in the
+  //                                       response, never persisted plaintext or logged.
   // Anything else public that touches invites/onboarding/join/claim is a leak.
   const PUBLIC_ONBOARDING_ALLOWLIST = new Set([
     'GET /api/agent-invites/:token/onboarding',
     'GET /api/agent-invites/:token/onboarding.txt',
     'POST /api/agent-invites/:token/join',
+    'POST /api/agent-join-requests/:id/claim-api-key',
   ])
   const publicOnboarding = routes
     .filter(r => r.auth === 'none' && /agent-invite|onboarding|\/join|\/claim/.test(r.url))
@@ -285,17 +296,27 @@ test('[ONB3] the join surface exists iff PUBLIC_JOIN_IMPLEMENTED; the claim surf
     assert.deepEqual(join, [], 'PUBLIC_JOIN_IMPLEMENTED is false, so no join route may be registered in any scope.')
   }
 
-  // The claim is ONB4 and does not exist. Scoped to the ONBOARDING namespace:
-  // `POST /api/agent/tasks/:taskId/claim` is the long-standing agent-token task
-  // claim and has nothing to do with onboarding.
+  // The claim is ONB4. Scoped to the ONBOARDING namespace: `POST
+  // /api/agent/tasks/:taskId/claim` is the long-standing agent-token task claim and
+  // has nothing to do with onboarding; the owner routes live under `/api/orgs/...`.
   const claimish = routes
     .filter(r => /claim-api-key/.test(r.url) || /^\/api\/agent-invites\/.*\/claim\b/.test(r.url) || /^\/api\/agent-join-requests\//.test(r.url))
-    .map(r => `${r.method} ${r.url}`)
-  if (!TOKEN_CLAIM_IMPLEMENTED) {
+    .map(r => `${r.method} ${r.url} [${r.auth}]`)
+  if (TOKEN_CLAIM_IMPLEMENTED) {
+    // Both directions, and stricter than "skip when true": the claim route must EXIST
+    // exactly once and be public (the mcc_ claim secret is the bearer — a joining
+    // agent has no session). It is safe unauthenticated only because it mints the
+    // token solely for an APPROVED request whose secret matches, is posture-gated,
+    // consumes the claim with an atomic CAS, and is per-IP rate limited.
+    assert.deepEqual(
+      claimish, ['POST /api/agent-join-requests/:id/claim-api-key [none]'],
+      'TOKEN_CLAIM_IMPLEMENTED is true, so the one-time claim route must exist exactly once and be token-addressed (auth: none).',
+    )
+  } else {
     assert.deepEqual(
       claimish, [],
       'a token-claim route is registered while TOKEN_CLAIM_IMPLEMENTED is false. ONB3 deliberately ships NO credential: an approved ' +
-      'agent has a null api_token_hash. Land ONB4 (hashed single-use claimSecret, constant-time compare, CAS, 403-before-approval) and flip the constant in that PR.',
+      'agent has a null api_token_hash. Land ONB4 (hashed single-use claimSecret, constant-time compare, CAS, flat-404-on-every-failure) and flip the constant in that PR.',
     )
   }
 })

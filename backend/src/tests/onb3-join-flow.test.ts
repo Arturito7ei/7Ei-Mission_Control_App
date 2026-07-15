@@ -111,8 +111,13 @@ test('[ONB3] a join creates a pending request + an approval card — and NO agen
   const out = res.json()
   assert.ok(out.requestId)
   assert.equal(out.status, 'pending_approval')
-  assert.equal(out.claimStatus, 'not_yet_open')
-  assert.ok(!/mca_|claimSecret|"token"/.test(JSON.stringify(out)), 'the join response must carry no credential')
+  // ONB4: the claim surface is built and (packaged) open, so the join response now
+  // carries the one-time `mcc_` claim secret — but NEVER an agent token (`mca_`), and
+  // never the claim-response `token` field: that is minted only at the claim.
+  assert.equal(out.claimStatus, 'open')
+  assert.ok(/^mcc_[0-9a-f]{64}$/.test(out.claimSecret), 'the join response carries the one-time claim secret')
+  assert.ok(out.claimSecretExpiresAt, 'and its expiry')
+  assert.ok(!/mca_|"token"/.test(JSON.stringify(out)), 'the join response must carry no agent token')
 
   // The DB, inspected. This is the assertion the whole epic turns on.
   const agents = await rows(schema.agents)
@@ -124,6 +129,11 @@ test('[ONB3] a join creates a pending request + an approval card — and NO agen
   assert.equal(jr[0].agentId, null)
   assert.ok(!JSON.stringify(jr[0]).includes('sk-live-CANARY'), 'the secret VALUE must not be in the join-request row')
   assert.deepEqual(JSON.parse(jr[0].secretKeys), ['apiKey'], 'only the key name is persisted')
+  // ONB4: the claim secret is stored HASH-ONLY. Only the sha256 hash is in the row;
+  // the raw `mcc_` secret (returned to the agent above) is nowhere in the DB.
+  assert.ok(/^[0-9a-f]{64}$/.test(jr[0].claimSecretHash), 'the claim secret is stored as a sha256 hash')
+  assert.equal(jr[0].claimedAt, null, 'unclaimed at join time')
+  assert.ok(!JSON.stringify(jr[0]).includes(out.claimSecret), 'the RAW claim secret must never be persisted')
 
   // The board's queue item — in the SHIPPED approvals store, not a parallel one.
   const approvals = await rows(schema.approvalRequests)

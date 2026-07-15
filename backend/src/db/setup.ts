@@ -203,11 +203,25 @@ export async function setupDatabase() {
   // decided yet", never "approved". No credential column exists here BY DESIGN: the
   // one-time claim (and its hashed, expiring secret) lands in ONB4.
   try {
-    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_join_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, invite_id TEXT NOT NULL, agent_name TEXT NOT NULL, adapter_type TEXT NOT NULL, runtime TEXT NOT NULL, capabilities TEXT NOT NULL, config TEXT NOT NULL, secret_keys TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending_approval', approval_request_id TEXT, agent_id TEXT, decided_by TEXT, decided_at INTEGER, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_join_requests (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, invite_id TEXT NOT NULL, agent_name TEXT NOT NULL, adapter_type TEXT NOT NULL, runtime TEXT NOT NULL, capabilities TEXT NOT NULL, config TEXT NOT NULL, secret_keys TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending_approval', approval_request_id TEXT, agent_id TEXT, decided_by TEXT, decided_at INTEGER, claim_secret_hash TEXT, claim_secret_expires_at INTEGER, claimed_at INTEGER, created_at INTEGER NOT NULL)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_org ON agent_join_requests(org_id)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_invite ON agent_join_requests(invite_id)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_join_requests_status ON agent_join_requests(status)`)
   } catch { /* already exists */ }
+
+  // Epic ONB / ONB4: the one-time claim credential columns on agent_join_requests.
+  // Additive and idempotent — an existing ONB3 row gets all three as NULL, which is
+  // exactly right: a NULL `claim_secret_hash` means the row was created before ONB4
+  // and simply cannot be claimed (there is no secret to match). Each ALTER is its own
+  // try/catch so "column already exists" on one never skips the others. The fresh
+  // CREATE above already carries these columns; these ALTERs migrate live tables.
+  for (const col of [
+    `ALTER TABLE agent_join_requests ADD COLUMN claim_secret_hash TEXT`,
+    `ALTER TABLE agent_join_requests ADD COLUMN claim_secret_expires_at INTEGER`,
+    `ALTER TABLE agent_join_requests ADD COLUMN claimed_at INTEGER`,
+  ]) {
+    try { await dbClient.execute(col) } catch { /* column already exists */ }
+  }
 
   // Sprint 7: audit_logs table
   try {
