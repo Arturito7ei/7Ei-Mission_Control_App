@@ -75,6 +75,19 @@ async function start() {
   // rank is order-independent, so it doesn't matter which hook fires first.
   app.addHook('onRoute', (r) => recordRoute('none', r.method, r.url))
 
+  // ─── Audit trail — HOISTED + ENABLED (Epic ONB, audit finding H-1) ────────
+  // The audit hook is installed on the ROOT instance, before any register(), so its
+  // onResponse fires for every descendant route (a request-lifecycle hook on the
+  // root propagates to all child scopes, exactly like the onRoute hook above). This
+  // is what closes H-1: registering it via `app.register(auditLogPlugin)` would
+  // encapsulate the hook into a child whose onResponse never runs for its siblings —
+  // the original no-op. It records the SENSITIVE half only (see `shouldAudit`): every
+  // mutating method + the onboarding/invite/join/approval surfaces, skipping the
+  // read-only GET flood; every row is path-redacted + body-sanitized by construction;
+  // and rows are pruned older than N days (default 90) by the scheduler. Turso cost is
+  // one fire-and-forget INSERT per SENSITIVE request. See GO-LIVE.md §7.
+  await auditLogPlugin(app)
+
   // Security headers
   await app.register(helmet, {
     contentSecurityPolicy: false,  // API — no CSP needed
@@ -186,13 +199,14 @@ async function start() {
   // Public routine webhook/API trigger (MCA-PC C3) — token-authenticated by URL.
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
-  // The audit + telemetry HOOKS. Both are still no-ops by encapsulation (ONB2
-  // audit H-1): a hook added inside a register()'d child never fires for its
-  // siblings. Left that way ON PURPOSE — hoisting them turns on one Turso INSERT
-  // per request with no retention policy, which is an operator cost decision, not
-  // a hardening one. Their query routes now live in the secured scope above.
+  // The TELEMETRY hook. Still a no-op by encapsulation (ONB2 audit H-1): a hook
+  // added inside a register()'d child never fires for its siblings. Left that way
+  // ON PURPOSE — telemetry is a SEPARATE concern from the audit trail (an in-memory
+  // span ring buffer, no Turso writes, and its /traces query under-reports until
+  // llm.call spans carry an org id), and the operator's H-1 decision was scoped to
+  // the audit trail. Enabling telemetry is its own call. The AUDIT hook is hoisted
+  // + enabled at the top of start(); its query route lives in the secured scope.
   await app.register(telemetryPlugin)
-  await app.register(auditLogPlugin)
 
   // Health + readiness
   const startTime = Date.now()

@@ -14,7 +14,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 
-import { sanitizeBody, buildAuditRow, auditLogQueryRoutes } from '../middleware/audit-log'
+import { sanitizeBody, buildAuditRow, auditLogQueryRoutes, shouldAudit } from '../middleware/audit-log'
 import { telemetryPlugin, getRecentSpans } from '../services/telemetry'
 import { createClerkAuth } from '../middleware/clerk-auth'
 
@@ -136,16 +136,53 @@ test('[ONB2-M1] the telemetry span carries a redacted path, never a raw invite t
   assert.equal(span!.name, 'GET /api/agent-invites/:token/onboarding.txt')
 })
 
-// ─── H-1 — still dead, still deliberate ──────────────────────────────────────
+// ─── H-1 — the trail is now ENABLED, and the tripwire guards its safety ENVELOPE ─
 
-test('[ONB2-H1] the audit + telemetry hooks are STILL not enabled — that is an operator decision', async () => {
-  // A tripwire, not an aspiration: this asserts the fix PR did NOT quietly turn on
-  // one Turso INSERT per request. `index.ts` must keep registering both plugins
-  // with plain `app.register()` (encapsulated ⇒ hook never fires for siblings) and
-  // must not wrap them in fastify-plugin or hoist their hooks to the root.
+test('[ONB2-H1] the AUDIT hook is hoisted (enabled) and TELEMETRY stays encapsulated (off)', async () => {
+  // This tripwire used to hold the hook SHUT (it failed if the hook was hoisted).
+  // The operator has taken the H-1 decision: enable the audit trail for sensitive
+  // writes. So it now guards the SHAPE of that enablement, not its absence —
+  //   • the audit hook must be HOISTED to the root (a bare `auditLogPlugin(app)`
+  //     call, NOT `app.register(auditLogPlugin)` which re-encapsulates it into the
+  //     original no-op), so it actually fires for sibling routes; and
+  //   • telemetry must stay a plain encapsulated `register()` — enabling it is a
+  //     separate concern the operator did NOT turn on here.
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
-  assert.ok(/await app\.register\(auditLogPlugin\)/.test(src), 'auditLogPlugin must stay a plain, encapsulated register()')
-  assert.ok(/await app\.register\(telemetryPlugin\)/.test(src), 'telemetryPlugin must stay a plain, encapsulated register()')
-  assert.ok(!/fastify-plugin/.test(src), 'wrapping the hooks in fastify-plugin enables the trail — operator call, not a hardening PR')
+  assert.ok(/await auditLogPlugin\(app\)/.test(src),
+    'the audit hook must be hoisted onto the root instance (auditLogPlugin(app)) so it fires for siblings')
+  assert.ok(!/await app\.register\(auditLogPlugin\)/.test(src),
+    're-encapsulating the audit hook via app.register(auditLogPlugin) reverts it to the H-1 no-op')
+  assert.ok(/await app\.register\(telemetryPlugin\)/.test(src),
+    'telemetry must stay encapsulated (off) — enabling it is a separate operator call')
+})
+
+test('[ONB2-H1] SAFETY ENVELOPE: enabling the hook is only safe because every recorded row is redacted', async () => {
+  // The envelope, guarded behaviorally so it fails if a future change enables the
+  // hook WITHOUT the prerequisites. Every row the (now-live) hook can persist is
+  // built by `buildAuditRow`, which unconditionally redacts the path and recursively
+  // sanitizes the body. If either prerequisite regresses, this fails — which is the
+  // point: the hook must never persist an un-redacted row.
+  const row = buildAuditRow({
+    method: 'POST',
+    url: '/api/agent-invites/mci_inv_dddddddddddddddddddd/join',
+    statusCode: 201,
+    durationMs: 3,
+    body: { adapterId: 'http_webhook', agentDefaultsPayload: { webhookAuthHeader: 'Bearer envelope-canary' } },
+  })
+  const s = JSON.stringify(row)
+  assert.equal(row.path, '/api/agent-invites/:token/join', 'path redaction is a precondition of enabling the hook')
+  assert.ok(!s.includes('mci_inv_dddd'), 'a raw invite token in a persisted row means the redaction envelope is broken')
+  assert.ok(!s.includes('envelope-canary'), 'a registry-declared secret in a persisted row means sanitize is broken')
+})
+
+test('[ONB2-H1] SCOPE: the hook records sensitive writes + onboarding surfaces, and SKIPS the GET flood', () => {
+  // The enablement is scoped (operator recommendation): the read-only GET flood must
+  // stay OUT of the trail, or "one INSERT per request" is back. This locks that scope.
+  assert.equal(shouldAudit('POST', '/api/orgs/o1/agents'), true, 'a write must be audited')
+  assert.equal(shouldAudit('DELETE', '/api/orgs/o1/credentials/c1'), true, 'a delete must be audited')
+  assert.equal(shouldAudit('GET', '/api/agent-invites/:token/onboarding.txt'), true, 'onboarding doc reads are security-relevant')
+  assert.equal(shouldAudit('GET', '/api/agent-join-requests/j1'), true, 'join-queue reads are security-relevant')
+  assert.equal(shouldAudit('GET', '/api/orgs/o1/agents'), false, 'the dashboard GET flood must NOT be audited')
+  assert.equal(shouldAudit('GET', '/api/health'), false, 'health probes are never audited')
 })

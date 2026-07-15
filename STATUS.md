@@ -1,8 +1,24 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-15 (Epic ONB — **ONB6 the create-invite UI + copy-able onboarding prompt + CLI: onboarding is usable end-to-end**; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (Epic ONB — **audit H-1: the audit trail is ENABLED for sensitive writes, with 90-day retention**; prior: ONB6 the create-invite UI + CLI [onboarding usable end-to-end]; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-15) — Epic ONB / ONB6: the CREATE-INVITE experience — onboarding is now usable end-to-end. One paste onboards an agent. Stopped for the independent ONB6 audit.**
+**Latest (2026-07-15) — Epic ONB / audit H-1: the AUDIT TRAIL is now LIVE for sensitive writes — the previously-dead subsystem records, safely and scoped. Stopped for the independent audit.**
+
+The operator took the H-1 decision (GO-LIVE §7 option **b**): enable the audit trail for the sensitive half only, with retention. This turns on a previously-dead subsystem that writes to hosted Turso — done conservatively, behind every prerequisite the ONB2 audits demanded.
+
+- **HOISTED so it actually fires.** The audit hook was a no-op because it lived inside an encapsulated `app.register()` child (H-1: it recorded **zero** rows for any sibling route). It is now installed on the **root instance** — a bare `auditLogPlugin(app)` before any `register()`, mirroring the already-correct `onRoute` hook — so its `onResponse` fires for every route. `audit-onb-enable.test.ts` **proves it records for a sibling** (the exact thing the ONB2 audit proved it did not). **Telemetry was deliberately left OFF** — a separate concern (in-memory span ring buffer, no Turso writes); its `telemetryPlugin` stays encapsulated.
+- **SCOPED to sensitive only — no GET flood.** A pure, tested `shouldAudit(method, path)` records every mutating method (POST/PUT/PATCH/DELETE) **plus** the onboarding/invite/join/approval surfaces (`/agent-invites`, `/agent-join-requests`, `/approvals` — including security-relevant GET reads of the token-addressed doc), and **skips** the read-only dashboard-poll flood. So this is **not** one Turso INSERT on every request — only on the sensitive, mostly-low-volume half. The insert is fire-and-forget (`.catch()`-swallowed): it can never add latency to or fail the request it records.
+- **RETENTION — bounded, not unbounded.** `services/audit-retention.ts`: rows older than `MC_AUDIT_RETENTION_DAYS` (default **90**; junk/0/negative safe-defaults to 90 so a typo can't wipe the table) are pruned on a daily scheduler tick (~03:00 UTC). Cutoff math, env parsing, and the daily gate are pure + tested; a `created_at` index (`setup.ts`) serves both the prune and the query `ORDER BY`.
+- **REDACTION re-proven THROUGH the live hook.** End-to-end test: a real join request carrying a nested `apiKey`, a registry-declared `webhookAuthHeader` bearer, and an `mci_inv_` token in the path is driven through the now-live hook; the persisted row has the **path redacted to `:token`** and **no secret/token anywhere** (`buildAuditRow` → `redactPath` + recursive registry-driven `sanitizeBody`).
+- **Reads stay gated.** `GET /api/orgs/:orgId/audit-log` and `…/traces` remain Clerk + `requireOrgRole('owner')` in the secured scope (from #248). Enabling writes did **not** open reads — a test boots both query routes and asserts 401 without a session.
+- **Tripwire REWORKED, not deleted.** The `[ONB2-H1]` guard used to fail if the hook was hoisted (it held the hook shut). It now guards the **safety envelope**: it PERMITS the hoisted enablement, requires telemetry to stay off, and fails if a future change enables the hook **without** the redaction/sanitize/gating prerequisites (behavioral checks on `buildAuditRow` + `shouldAudit`).
+- **Not touched:** `allowShell`/`MC_ALLOW_SHELL`, the live adapter, the deployment posture, adapters. No invariant weakened, no posture constant flipped.
+
+**Invariant green: 1232 backend tests (+11) · 11/11 evals · typecheck clean · web build clean. Stopped for the independent audit.**
+
+---
+
+**Prior (2026-07-15) — Epic ONB / ONB6: the CREATE-INVITE experience — onboarding is now usable end-to-end. One paste onboards an agent. Stopped for the independent ONB6 audit.**
 
 The operator-facing half of the epic. No backend change — the ONB1–ONB4 contract was already complete; ONB6 surfaces it.
 

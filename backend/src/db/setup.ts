@@ -228,6 +228,10 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_org ON audit_logs(org_id)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)`)
+    // Epic ONB / audit H-1: the trail is now live and retention-pruned. This index
+    // serves BOTH the query route's `ORDER BY created_at DESC` and the daily
+    // retention DELETE's `WHERE created_at < cutoff` (services/audit-retention.ts).
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)`)
   } catch { /* already exists */ }
 
   console.log('✅ Database ready')

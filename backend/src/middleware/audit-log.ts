@@ -91,6 +91,36 @@ function classifyAction(method: string, path: string): string {
 
 const SENSITIVE_METHODS = ['POST', 'DELETE', 'PATCH', 'PUT']
 
+/**
+ * Path surfaces that are security-relevant to audit even on a READ (`GET`): the
+ * onboarding / invite / join / board-approval routes. A `GET` on the token-addressed
+ * onboarding document, or on an org's join queue, is a "who looked at what" event
+ * worth keeping; a `GET` on the dashboard's org/agent/task poll is not.
+ *
+ * Matched against the REDACTED path (so the invite token is already `:token`), and
+ * the `:id` UUIDs on join/approval routes stay verbatim — that is fine, they are the
+ * subject of the event, and these surfaces are low-volume, not a per-request flood.
+ */
+const AUDITED_PATH_SEGMENTS = ['/agent-invites', '/agent-join-requests', '/approvals']
+
+/**
+ * The should-this-request-be-audited filter (audit H-1, enablement scope).
+ *
+ * The operator enabled the trail for the SENSITIVE half only — every mutating
+ * method anywhere, plus any method on the onboarding/invite/join/approval surfaces —
+ * and deliberately SKIPS the read-only `GET` flood (org/agent/task dashboard polls),
+ * which is the expensive, low-value half of "one Turso INSERT per request".
+ *
+ * Pure: (method, redacted-path) → boolean. Tested in `audit-onb-enable.test.ts`.
+ * Health/readiness probes are never audited.
+ */
+export function shouldAudit(method: string, path: string): boolean {
+  const p = String(path).split('?')[0]
+  if (p === '/health' || p === '/ready' || p === '/api/health') return false
+  if (SENSITIVE_METHODS.includes(String(method).toUpperCase())) return true
+  return AUDITED_PATH_SEGMENTS.some(seg => p.includes(seg))
+}
+
 /** The row the hook persists. Built by a pure function so the redaction is
  *  testable without a DB, and so there is exactly ONE place a path is written. */
 export interface AuditRow {
@@ -149,26 +179,40 @@ const dbSink: AuditSink = (row) => {
 }
 
 /**
- * The audit HOOK.
+ * The audit HOOK. ENABLED (audit finding H-1 — operator decision taken).
  *
- * ⚠️ ONB2 audit finding H-1: this hook is a NO-OP in production. `app.register()`
- * creates an encapsulated child context, so an `onResponse` hook added in here
- * fires for this plugin's own routes and descendants only — never for its
- * siblings, which is every route in the app. Nothing is persisted today.
+ * HISTORY, because the wiring is the whole point:
+ *   Originally this hook was added inside `app.register(auditLogPlugin)`, which
+ *   creates an encapsulated child context, so its `onResponse` never fired for the
+ *   plugin's siblings — i.e. for any route in the app. The trail recorded NOTHING
+ *   (H-1, confirmed empirically by the ONB2 audit: zero rows for a sibling request).
  *
- * That is left DELIBERATELY unfixed: hoisting the hook (fastify-plugin, or adding
- * it at the root instance before any register()) switches on one Turso INSERT per
- * request, forever, with no retention policy. That is an OPERATOR cost decision —
- * see docs/AUDIT-ONB2.md H-1 and HANDOFF.md. This PR makes the trail
- * SAFE-TO-ENABLE-BY-CONSTRUCTION (query route gated, body recursively sanitized,
- * path + telemetry URL redacted); it does not enable it.
+ *   It is now HOISTED: `src/index.ts` calls `auditLogPlugin(app)` directly on the
+ *   ROOT instance (not via `register`), before any route is registered, exactly like
+ *   the `onRoute` hook. A request-lifecycle hook on the root runs for every
+ *   descendant route, so the trail now records for real. `audit-onb-enable.test.ts`
+ *   proves it fires for a SIBLING route, which is what the audit proved it did NOT.
+ *
+ * SCOPE: only `shouldAudit(method, path)` rows are persisted — every mutating method
+ * plus the onboarding/invite/join/approval surfaces; the read-only `GET` flood is
+ * skipped. So this is NOT one Turso INSERT on every dashboard poll.
+ *
+ * SAFE-BY-CONSTRUCTION: every persisted row goes through `buildAuditRow`, which
+ * unconditionally redacts the path (invite tokens → `:token`) and recursively
+ * sanitizes the body via the registry-driven secret detector — a nested
+ * `agentDefaultsPayload` secret can never reach `audit_logs.metadata`. The write is
+ * fire-and-forget (`dbSink` swallows insert errors) so the trail can never add
+ * latency to, or fail, the request it is recording.
+ *
+ * RETENTION: rows are pruned older than N days (default 90) by the scheduler —
+ * `services/audit-retention.ts`. See GO-LIVE.md §7 for how to tune scope + retention.
  */
 export async function auditLogPlugin(app: FastifyInstance, opts: { sink?: AuditSink } = {}) {
   const sink = opts.sink ?? dbSink
 
   app.addHook('onResponse', async (req, reply) => {
-    // Skip health/ready checks
-    if (req.url === '/health' || req.url === '/ready' || req.url === '/api/health') return
+    const path = redactPath(req.url)
+    if (!shouldAudit(req.method, path)) return
 
     sink(buildAuditRow({
       method: req.method,
