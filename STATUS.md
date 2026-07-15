@@ -1,8 +1,22 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-15 (Epic ONB — **audit H-1: the audit trail is ENABLED for sensitive writes, with 90-day retention**; prior: ONB6 the create-invite UI + CLI [onboarding usable end-to-end]; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (Epic ONB — **audit M5: the shell-execution default is now OFF for new agents, existing grandfathered**; prior: audit H-1 the audit trail ENABLED for sensitive writes with 90-day retention; prior: ONB6 the create-invite UI + CLI [onboarding usable end-to-end]; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-15) — Epic ONB / audit H-1: the AUDIT TRAIL is now LIVE for sensitive writes — the previously-dead subsystem records, safely and scoped. Stopped for the independent audit.**
+**Latest (2026-07-15) — Epic ONB / audit M5 RESOLVED: the SHELL-EXECUTION DEFAULT is now OFF for new agents; existing agents (incl. the live OpenClaw ops agent) are GRANDFATHERED. Stopped for the independent audit.**
+
+The operator took the M5 product call: align the shell-execution default to OFF, without breaking the live ops agent. The ONB1 audit flagged the drift — the server registry declares `allowShell: false` ("off unless the operator opts in") while the Add-Agent/Hire wizard's paste-able run-block emitted `MC_ALLOW_SHELL=1`, so every UI-onboarded agent got shell-on, contradicting the safe default. Now the two agree on OFF.
+
+- **Enforcement is CLIENT-ONLY — confirmed end to end.** `MC_ALLOW_SHELL` is read at `adapters/openclaw/mc_adapter.py:31` into the local `ALLOW_SHELL`, which gates `shell_execute` (:105) and the `llm_execute` tool loop (:175). **No server/registry code gates shell or `machine_exec` from an agent's `allowShell`** — the registry field is only the `agentDefaultsPayload` contract's declared default (validated + stored, never consulted to block). So the wizard default is the *only* lever, and flipping it **cannot** retroactively disable a running agent.
+- **New agents ship shell-OFF.** `web/lib/adapterProfile.ts`: the openclaw profile no longer hardcodes `MC_ALLOW_SHELL=1`. `mcEnv`/`runBlock` now append an explicit `MC_ALLOW_SHELL=0` for shell-capable runtimes (openclaw, custom) — matching the registry — with an operator opt-in (`{ allowShell: true }` → `=1`) surfaced as an **advanced, off-by-default checkbox** in both the Add-Agent wizard and the Hire dialog. Cursor/Claude Code never emit the flag (plan-mode / inbox model — unchanged).
+- **Existing agents GRANDFATHERED — automatic.** The live OpenClaw ops agent runs from its own `mc.env` on its host (`~/.openclaw/mc-adapter/`), which the wizard never rewrites; the adapter reads the flag from that local env; and there is no server gate to flip. Its `MC_ALLOW_SHELL=1` is untouched → it keeps running. **No server gate was touched.**
+- **Registry ↔ wizard reconciled.** Both now declare shell-off as the default (registry `allowShell: false` was already correct + test-locked at `adapter-registry.test.ts:65`; the wizard now matches). Tests lock: a new agent's run-block does NOT enable shell; an explicit opt-in does; non-shell runtimes never emit the flag; the wizard default agrees with the registry default.
+- **Not touched:** the live adapter install, telemetry, the deployment posture, any server-side gate. No invariant weakened, no posture constant flipped.
+
+**Invariant green: 1235 backend tests (unchanged — no backend edit) · 11/11 evals · web build clean · adapterProfile suite 13 tests (+6). Stopped for the independent audit.**
+
+---
+
+**Prior (2026-07-15) — Epic ONB / audit H-1: the AUDIT TRAIL is now LIVE for sensitive writes — the previously-dead subsystem records, safely and scoped. Stopped for the independent audit.**
 
 The operator took the H-1 decision (GO-LIVE §7 option **b**): enable the audit trail for the sensitive half only, with retention. This turns on a previously-dead subsystem that writes to hosted Turso — done conservatively, behind every prerequisite the ONB2 audits demanded.
 

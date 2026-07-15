@@ -195,6 +195,30 @@ Run the always-on adapter on the Mac mini instead of the laptop.
 
 See `adapters/mac-mini/README.md` for flags and operations.
 
+### Shell-execution default (Epic ONB, audit M5) — new agents are shell-OFF
+
+The shell-execution default was aligned to **OFF for new agents** (the operator's
+M5 call). What this means for onboarding:
+
+- **UI-onboarded agents (Cockpit → Add agent / Hire):** the paste-able `mc.env`
+  now ships `MC_ALLOW_SHELL=0` — matching the server registry's `allowShell: false`.
+  An operator who wants a new agent to run host commands ticks the **"Allow shell
+  execution on the host" (advanced)** checkbox on the token screen, which flips the
+  block to `MC_ALLOW_SHELL=1`. Enforcement is **client-side only** — the adapter's
+  own local `MC_ALLOW_SHELL` decides; the backend never gates shell from the
+  registry — so this default change **cannot** affect an already-running agent.
+- **The live OpenClaw ops agent is GRANDFATHERED.** Its `mc.env` on its host
+  (`~/.openclaw/mc-adapter/`) is untouched; it keeps whatever shell posture it was
+  installed with. Nothing about this change reaches a running host.
+- **The mac-mini installer (`setup.sh`) still defaults `MC_ALLOW_SHELL=1`** (its
+  default preset is `shell` — a deliberate shell-executor setup) and exposes
+  `--no-shell` to disable. This was **left as-is on purpose**: it is *this* ops
+  agent's installer, and flipping its default would change the §4 re-install path
+  above. ⚠️ **Operator/auditor decision:** if you want the CLI installer to also
+  default shell-OFF, flip `ALLOW_SHELL="0"` in `adapters/mac-mini/setup.sh`, add a
+  `--shell` opt-in, and pass it here for the ops agent. Not done in the M5 PR to
+  keep the live-agent path stable.
+
 ---
 
 ## 5. Set the secret-store & run-token keys on Fly
