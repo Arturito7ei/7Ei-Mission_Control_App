@@ -1,0 +1,48 @@
+# Epic H / H0 spike — electron-builder config for the Mission Control desktop shell.
+#
+# This produces an UNSIGNED .app/.dmg. Signing + notarization are H1 and are
+# BLOCKED on the Apple Developer account (H-Q1/H-Q2). The config is deliberately
+# structured so H1 is a CONFIG ADDITION, not a rearchitecture: flip `identity`,
+# `hardenedRuntime`, add `entitlements`/`entitlementsInherit` + an `afterSign`
+# notarize hook and a `notarize` block — nothing here needs to move.
+appId: ai.7ei.missioncontrol
+productName: 7Ei Mission Control
+copyright: © 7Ei
+
+directories:
+  output: dist
+  buildResources: build
+
+# The Electron app's OWN code (the supervisor) → packed into app.asar.
+files:
+  - src/**/*
+  - package.json
+
+# The service mesh payload → shipped UNPACKED in Contents/Resources (outside
+# asar). Native addons (libSQL's *.node) load only from a real filesystem path,
+# and the backend/web child processes read plain files — so the whole mesh lives
+# outside asar by construction. The build-desktop.mjs step stages these dirs.
+extraResources:
+  - from: build-stage/backend
+    to: backend
+  - from: build-stage/web
+    to: web
+
+asar: true
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - dir
+  # ── UNSIGNED (H0). H1 replaces the next three lines with a real Developer ID ──
+  identity: null            # H1: set to the "Developer ID Application" identity
+  hardenedRuntime: false    # H1: true (required for notarization)
+  gatekeeperAssess: false
+  # H1 also adds, alongside the above:
+  #   entitlements: build/entitlements.mac.plist
+  #   entitlementsInherit: build/entitlements.mac.plist
+  #   notarize: { teamId: "<TEAMID>" }   (+ NOTARYTOOL creds in env/CI)
+
+dmg:
+  title: 7Ei Mission Control

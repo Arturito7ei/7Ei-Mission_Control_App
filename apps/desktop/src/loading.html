@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>7Ei Mission Control — booting</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        background: #0b0b0d; color: #e7e7ea;
+        font-family: -apple-system, system-ui, sans-serif;
+      }
+      .box { text-align: center; max-width: 460px; }
+      .logo { font-size: 40px; margin-bottom: 14px; }
+      h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; }
+      p { font-size: 13px; color: #9a9aa2; margin: 4px 0; line-height: 1.5; }
+      .spin {
+        margin: 22px auto 0; width: 26px; height: 26px; border-radius: 50%;
+        border: 3px solid #2a2a30; border-top-color: #8b5cf6;
+        animation: spin 0.8s linear infinite;
+      }
+      code { color: #b8a4f0; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <div class="logo">🛰️</div>
+      <h1>Starting Mission Control</h1>
+      <p>Profile <code>packaged</code> · local file database · loopback only</p>
+      <p>Booting the Fastify backend and Next.js UI as one app…</p>
+      <div class="spin"></div>
+    </div>
+  </body>
+</html>

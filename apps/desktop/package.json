@@ -1,0 +1,16 @@
+{
+  "name": "@7ei/mission-control-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Epic H / H0 spike — Electron shell that boots the packaged/loopback Mission Control mesh (Fastify backend + Next.js UI) on a local file DB as one app.",
+  "main": "src/main.cjs",
+  "scripts": {
+    "desktop": "node scripts/build-desktop.mjs --stage-only && electron .",
+    "dist:mac": "node scripts/build-desktop.mjs && electron-builder --mac --config electron-builder.yml",
+    "pack:mac": "node scripts/build-desktop.mjs && electron-builder --mac dir --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  }
+}

@@ -106,7 +106,23 @@ async function start() {
 
   await app.register(websocket)
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } })  // 25 MB document uploads
-  await app.register(clerkPlugin)
+  // ─── Clerk plugin — registered only when a publishable key is configured ──
+  // @clerk/fastify's clerkPlugin installs a GLOBAL onRequest hook (withClerkMiddleware)
+  // that authenticates EVERY request — and it *throws* (→ 500 on every route,
+  // including the public /api/health) when no CLERK_PUBLISHABLE_KEY is present.
+  // The `packaged`/loopback profile (Epic H) ships NO Clerk keys: it is single-
+  // tenant on 127.0.0.1, and H6 replaces Clerk with a local single-operator
+  // identity. So register the plugin only when a key exists — the same graceful
+  // degradation the web already does (`if (NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY)` in
+  // web/app/layout.tsx + middleware.ts). Hosted (Fly) sets CLERK_PUBLISHABLE_KEY,
+  // so this is a NO-OP there; a keyless packaged boot no longer 500s.
+  //   NOTE (H0 spike): skipping the plugin is NOT auth for packaged — it is an
+  //   auth *bypass*. The per-route `clerkAuth` hook on the `secured` scope below
+  //   still 401s tenant data without a bearer token; real loopback auth is H6 and
+  //   is deliberately NOT built here (the packaged profile is not security-complete).
+  if (process.env.CLERK_PUBLISHABLE_KEY) {
+    await app.register(clerkPlugin)
+  }
   await setupDatabase()
   await ensureIndex()  // Pinecone (non-blocking)
 
@@ -288,7 +304,11 @@ async function start() {
   })
 
   const port = Number(process.env.PORT) || 3001
-  await app.listen({ port, host: '0.0.0.0' })
+  // Bind host is env-overridable so the packaged/loopback profile (Epic H) can
+  // bind 127.0.0.1 — the trust boundary of the `packaged` profile (nothing on a
+  // routable interface). Hosted (Fly) sets no HOST → keeps 0.0.0.0 as today.
+  const host = process.env.HOST || '0.0.0.0'
+  await app.listen({ port, host })
   console.log(`\ud83d\ude80 7Ei backend v0.6.0 \u2192 http://localhost:${port}`)
 
   // Start cron scheduler after server is up

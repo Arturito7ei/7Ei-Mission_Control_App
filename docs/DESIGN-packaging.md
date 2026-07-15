@@ -1,6 +1,6 @@
 # DESIGN — Epic H: Packaging & Distribution (a replicable, installable Mission Control)
 
-> **Status:** Design + story plan (RESEARCH pass — no installer built this wave, exactly like the onboarding design pass). · **Date:** 2026-07-15 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** Design + story plan · **H0 spike BUILT + landed (2026-07-15, PR #268)** — see §15. The design below is the RESEARCH pass; H0 has now proven the bundling recommendation end-to-end (the packaged mesh boots on a local file DB inside a built, unsigned Electron `.app`). · **Date:** 2026-07-15 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-agent-onboarding.md` §8 (the deployment-profile + config-bundle foundation this epic picks up), `docs/SECURITY-posture.md` (the model a packaged instance must preserve), `GO-LIVE.md` (the operator console/secret actions), `docs/PLAN-arturita.md` §0 (Epic H rows H0–H6). Verify claims against the repo before acting.
 
 The goal: **a replicable, installable product** — a macOS `.dmg` that stands up a full local "packaged/loopback" Mission Control instance on someone else's Mac (backend + web UI + local LLM/STT + the host adapters), plus an iPhone remote surface. The heavy foundations — the two-profile abstraction, the secret-free config bundle, the encrypted secret store, the launchd-supervised adapters, and a DB layer that **already** speaks to a local file — are shipped. So this epic is mostly the **installer + first-run experience + the macOS platform specifics that trip packaging projects up** (signing, notarization, TCC, per-install key generation, auto-update).
@@ -278,7 +278,7 @@ One PR per story, squash-merged `--admin`, invariant green each merge. Stories m
 
 | Story | Title | Scope | Acceptance criteria | Audit? | Deps |
 |---|---|---|---|---|---|
-| **H0** | **Packaging spike + shell decision** | Throwaway PoC: Electron (and, if the operator wants a bake-off, Tauri) shell that forks the Fastify backend on a local libSQL file + serves the Next UI + opens a loopback window. Decide: shell, UI-ship mode (§2.3), Node-child vs sidecar, loopback-auth approach (§H6). | A running (unsigned) local bundle that boots the backend + UI on `127.0.0.1` and loads the dashboard; a written decision (shell + rationale) appended here; H1 unblocked. No production code paths changed. | no (spike) | — |
+| **H0** ✅ **DONE (#268)** | **Packaging spike + shell decision** | Throwaway PoC: Electron (and, if the operator wants a bake-off, Tauri) shell that forks the Fastify backend on a local libSQL file + serves the Next UI + opens a loopback window. Decide: shell, UI-ship mode (§2.3), Node-child vs sidecar, loopback-auth approach (§H6). | ✅ **MET** — a built, **unsigned** `.app`/`.dmg` (`apps/desktop/`) boots the backend + Next UI on `127.0.0.1` against a local libSQL file with `MC_DEPLOYMENT_PROFILE=packaged`; `/api/health` green from the **built app** (not `npm run`). Decision recorded in §15: **Electron confirmed**, **Node-child via `tsx` (H1 → compiled bundle)**, **web = Next standalone-as-child (§2.3 option a)**. Three *minimal, additive* prod edits were needed (not "zero" as originally scoped) — all no-ops for hosted, verified (§15). H1 unblocked. | no (spike) | — |
 | **H1** | **macOS installable bundle (sign + notarize)** | The real shell: Tray menubar, supervise backend (local libSQL file) + Next UI as children, `electron-builder` config, **hardened runtime + minimal entitlements**, Developer-ID sign, `notarytool` notarize + staple, `.dmg` layout. Sets `MC_DEPLOYMENT_PROFILE=packaged`. | A signed, notarized `.dmg` opens on a clean Mac **with no Gatekeeper warning**; app boots backend+UI on loopback; `/api/health` green; entitlements set is minimal + justified; the A2 gate chain proven intact in `packaged`. | **stage→audit** (entitlements, hardened runtime, signing surface) | H0 |
 | **H6** | **Packaged-profile identity & loopback auth + fail-closed boot** | Single-operator local identity replacing Clerk on `127.0.0.1` (a local session bound to the OS user / first-run pairing); **fail-closed on default `SECRETS_ENC_KEY`/`RUN_TOKEN_SECRET`** (GO-LIVE §1 follow-up); posture derivation verified `packaged`. | On packaged, the UI authenticates without Clerk; a second local account can't silently drive the instance; boot **refuses** on the dev-default key; onboarding posture reads loopback-open; hosted profile unaffected (Clerk path unchanged). | **stage→audit** (auth + fail-closed secrets) | H1 |
 | **H2** | **First-run TCC permission wizard** | Guided Mic (prompt) + Accessibility/Full-Disk/Automation (deep-link + poll-verify), least-privilege/opt-in/staged, re-entrant from the Tray, honest degradation per un-granted permission. Info.plist usage strings. | Mic requested by default and verified by a real capture probe; advanced grants behind explicit off-by-default toggles; each grant maps to a named capability; app fully usable with only Mic; wizard re-openable. | **stage→audit** (permission grants are whole-machine sensitive) | H1 |
@@ -321,3 +321,56 @@ The Epic H rows in `docs/PLAN-arturita.md` §0 are refreshed to this plan: H1–
 Packaging Mission Control is **mostly assembly, not invention** — the two-profile abstraction, the secret-free config bundle, the local-file-capable DB, the encrypted secret store, and the launchd-supervised zero-dep adapters were built (in Epic ONB and the adapter epics) *anticipating* this exact installer. The real net-new work is a supervising **Electron shell**, a **loopback identity** to replace Clerk on `127.0.0.1`, a **least-privilege TCC wizard**, **per-install key generation**, and a **signed-update path** — five focused stories plus a de-risking spike, four of which stop for an independent audit because they touch the machine's permission, secret, and update surfaces.
 
 **One line:** *a signed, notarized `.dmg` that boots the packaged profile on loopback, generates its own keys, seeds itself from the secret-free config bundle, guides the user through the minimum macOS grants, and updates itself over a signature-verified channel — reusing ~70% of what Epic ONB already shipped, with loopback auth as the one genuinely load-bearing new piece.*
+
+---
+
+## 15. H0 spike — RESULTS (built 2026-07-15, PR #268)
+
+The H0 spike is **built and landed** in `apps/desktop/` (it becomes the H1 seed, not throwaway). It is an Electron shell that supervises the **packaged/loopback mesh as ONE app** and was verified **from the built, unsigned `.app`** — not just `npm run`.
+
+### 15.1 What the spike PROVES (all goals met)
+
+- **The packaged mesh boots on a local file DB inside a built Electron app.** Launching `dist/mac-arm64/7Ei Mission Control.app` starts, as children of Electron's own Node:
+  1. the **Fastify backend** — `MC_DEPLOYMENT_PROFILE=packaged`, `DATABASE_URL=file:~/Library/Application Support/@7ei/mission-control-desktop/mc.db`, idempotent migrations run on first boot (479 KB DB created), bound `127.0.0.1:8787`;
+  2. the **Next.js UI** from its `standalone` server, `127.0.0.1:8788`, built with `NEXT_PUBLIC_API_URL` baked to the loopback backend;
+  3. a **BrowserWindow** on the local Next server once `/api/health` is green.
+- **`/api/health` returns `{status:"ok", db:"connected"}` from the built app** in ~3 s; the deployment profile resolves to **`packaged`** (env set by the shell; the resolver is pure + unit-tested); the UI renders (the landing route).
+- **Artifacts:** an **unsigned** `.app` (619 MB) and `.dmg` (195 MB) via `electron-builder` (code-signing skipped by `identity: null`, as designed — H1/Apple-account-gated).
+- **Runs with no dev toolchain on the host:** `tsx`, the backend source + `node_modules` (incl. the **libSQL native addon**), and the Next standalone server all ship inside `Contents/Resources/` (unpacked, outside `asar`).
+
+### 15.2 Surprises / gotchas found (the point of a de-risk spike)
+
+1. **`@clerk/fastify`'s `clerkPlugin` installs a GLOBAL request hook that 500s EVERY request — including the public `/api/health` — when no publishable key is present.** The packaged profile ships no Clerk keys, so a keyless boot was dead on arrival until fixed. Resolved by gating the plugin on `CLERK_PUBLISHABLE_KEY` (the web already degrades the same way). This is also the **H6 direction** (Clerk is replaced by loopback identity on `127.0.0.1`). **Note:** skipping the plugin is an auth *bypass*, not auth — the per-route `clerkAuth` hook still 401s tenant data; the packaged profile is **not security-complete** until H6.
+2. **`next build` does NOT copy `.next/static` or `public/` into the standalone output.** The build step must copy them next to `server.js`, or the UI serves unstyled/404s assets. (Handled in `apps/desktop/scripts/build-desktop.mjs`.)
+3. **Plain `tsc` output is not directly runnable** (`moduleResolution: "bundler"` + extensionless ESM imports → Node can't resolve them). The spike therefore forks the backend via **`tsx`** (dev-parity, lowest risk). Trade-off: the `.app` is heavy (619 MB) because the whole backend `node_modules` + `tsx` ship uncompiled. **H1 should compile/bundle + prune the backend** (esbuild single-file, native deps external) to shrink it.
+4. **The libSQL native addon (`@libsql/darwin-arm64/*.node`) loads cleanly under Electron's bundled Node 20 ABI** (it's N-API/ABI-stable). This was the top native-module risk and it is a **non-issue** — no `nodeGypRebuild`/`electron-rebuild` needed for it. (Shipped unpacked outside `asar` so the `.node` loads from a real path.)
+5. **Monorepo standalone nesting** (Next sometimes nests `server.js` under a workspace-relative path) is handled by recording the built `server.js` location in a manifest the shell reads. Here `web/` is its own npm root (no root `workspaces` field), so it landed at the standalone root — the simplest case.
+6. **`userData` nests under `@7ei/`** because the desktop `package.json` name is scoped (`@7ei/mission-control-desktop`) → `~/Library/Application Support/@7ei/mission-control-desktop/`. Cosmetic; H1 can set an explicit `productName`-derived path.
+
+### 15.3 Decisions CONFIRMED for H1
+
+- **Shell: Electron** (H-Q3) — stack-fit held: the backend runs as a child of Electron's own Node with one runtime; Chromium renders the Next UI with zero WebKit risk; `electron-builder` produced the bundle in one config. **No reason found to bake off Tauri.**
+- **Backend hosting: Node-child** (§2.2) — forked from Electron's Node (`ELECTRON_RUN_AS_NODE` + `--import tsx`); **H1 swaps `tsx`-of-source for a compiled/pruned bundle**, same supervision shape.
+- **UI ship mode: Next standalone-as-child** (§2.3 **option (a)**) — SSR/route handlers work unchanged; the window just points at `http://127.0.0.1:<port>`.
+- **DB: pure local libSQL file** (H-Q4) — confirmed; migrations run on boot; no Turso.
+- **Signing structure:** `electron-builder.yml` is written so H1 is a **config addition** (flip `identity`/`hardenedRuntime`, add an entitlements plist + `notarize` block) — **not a rearchitecture**.
+
+### 15.4 Minimal production edits made (all additive, hosted verified no-op)
+
+The spike scope said "no production code paths changed"; in practice **three minimal, additive edits** were required to boot the packaged profile, each a no-op for hosted:
+
+- `backend/src/index.ts` — register `clerkPlugin` only when `CLERK_PUBLISHABLE_KEY` is set (§15.2 #1); bind `host = process.env.HOST || '0.0.0.0'` so packaged can bind loopback (Fly sets no `HOST` → unchanged).
+- `web/next.config.ts` — `output: 'standalone'` only when `DESKTOP_BUILD=1` (Vercel never sets it → byte-identical hosted build).
+
+**Hosted proven untouched:** backend **1263/1263** tests · **11/11** evals · backend + web typecheck clean · the hosted `web` build (no `DESKTOP_BUILD`) emits **no standalone**. The Fly backend + Vercel web build/deploy exactly as before; the desktop shell is purely additive (`apps/desktop/`).
+
+### 15.5 Dev + build commands
+
+```bash
+cd apps/desktop && npm install     # electron + electron-builder (first time)
+npm run desktop                    # DEV: build web standalone, launch Electron against repo backend (tsx)
+npm run pack:mac                   # unsigned .app  → dist/mac-arm64/
+npm run dist:mac                   # unsigned .app + .dmg → dist/
+```
+
+**Verdict: the approach is confirmed. H1 (the real signed/notarized bundle) is unblocked** — its remaining blockers are operator-only (Apple Developer account + signing identity, H-Q1/H-Q2), not engineering.
