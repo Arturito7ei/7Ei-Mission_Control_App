@@ -104,19 +104,50 @@ const SENSITIVE_METHODS = ['POST', 'DELETE', 'PATCH', 'PUT']
 const AUDITED_PATH_SEGMENTS = ['/agent-invites', '/agent-join-requests', '/approvals']
 
 /**
+ * High-frequency recurring agent-runtime writes EXCLUDED from the trail (audit
+ * finding M-A). Without this, "sensitive writes" swept in the entire agent-API
+ * write chatter: each is one fire-and-forget Turso INSERT, and the *rate* is set by
+ * `active agents × poll cadence`, not by any security event — the heartbeat alone
+ * fires once per adapter poll loop, per agent, even when nothing is happening. These
+ * three carry no onboarding / RBAC / wallet / secret / config action to record, so
+ * dropping them bounds the daily insert rate away from the heartbeat cadence without
+ * losing a single meaningful audit event.
+ *
+ *   POST /api/agent/heartbeat        — liveness ping, once per poll loop per agent
+ *   POST /api/agent/runs/:id/log     — run-progress stream (log line + running cost/tokens)
+ *   POST /api/agent/messages         — free-form runtime progress/chatter
+ *
+ * Deliberately NOT excluded — meaningful and NOT per-poll, so kept audited:
+ *   task result-posting, task claim, approvals, run-token minting, memory writes,
+ *   plugin-job claim/result, workspace runtime. When unsure, KEEP auditing (be
+ *   conservative — the goal is to cut the flood, not to stop recording actions).
+ *
+ * Matched against the REDACTED path (query already dropped). `redactPath` only
+ * rewrites minted token segments (`mci_inv_`/`mca_`/…), NOT the run `:id` UUID, so
+ * the run-log arm matches by prefix+suffix rather than an exact string. See GO-LIVE §7.
+ */
+export function isHighFrequencyAgentWrite(path: string): boolean {
+  if (path === '/api/agent/heartbeat' || path === '/api/agent/messages') return true
+  if (path.startsWith('/api/agent/runs/') && path.endsWith('/log')) return true
+  return false
+}
+
+/**
  * The should-this-request-be-audited filter (audit H-1, enablement scope).
  *
  * The operator enabled the trail for the SENSITIVE half only — every mutating
  * method anywhere, plus any method on the onboarding/invite/join/approval surfaces —
  * and deliberately SKIPS the read-only `GET` flood (org/agent/task dashboard polls),
- * which is the expensive, low-value half of "one Turso INSERT per request".
+ * which is the expensive, low-value half of "one Turso INSERT per request". The
+ * recurring agent-runtime write chatter is skipped too (audit M-A, see above).
  *
  * Pure: (method, redacted-path) → boolean. Tested in `audit-onb-enable.test.ts`.
- * Health/readiness probes are never audited.
+ * Health/readiness probes and the recurring agent-runtime writes are never audited.
  */
 export function shouldAudit(method: string, path: string): boolean {
   const p = String(path).split('?')[0]
   if (p === '/health' || p === '/ready' || p === '/api/health') return false
+  if (isHighFrequencyAgentWrite(p)) return false
   if (SENSITIVE_METHODS.includes(String(method).toUpperCase())) return true
   return AUDITED_PATH_SEGMENTS.some(seg => p.includes(seg))
 }

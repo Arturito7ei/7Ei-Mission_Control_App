@@ -241,14 +241,33 @@ guard so `NODE_ENV=production` refuses to start on the default key.
 >   cap on row count — the age window is the bound.
 > - **Scope:** edit `shouldAudit(method, path)` in `middleware/audit-log.ts`
 >   (`SENSITIVE_METHODS` + `AUDITED_PATH_SEGMENTS`). It is a pure, tested helper.
+> - **Recurring-agent-write exclusions (audit M-A):** `isHighFrequencyAgentWrite()`
+>   in `middleware/audit-log.ts` is a denylist of high-frequency recurring
+>   agent-runtime writes that `shouldAudit` skips even though they are mutating
+>   methods — **`POST /api/agent/heartbeat`**, **`POST /api/agent/runs/:id/log`**,
+>   **`POST /api/agent/messages`**. These are liveness/telemetry chatter posted on
+>   the adapter poll loop or streamed continuously during a run; each was otherwise
+>   one Turso INSERT at `active agents × poll cadence`, so heartbeat/run-log traffic
+>   could dominate the onboarding events the trail was framed around. Excluding them
+>   bounds the **daily insert rate away from the heartbeat cadence** — the write
+>   volume is now driven by real actions, not liveness pings. To tune: add a path to
+>   that denylist (skip more) or remove one (audit it again); it is a pure, tested
+>   helper (`[AUDIT-MA]` tests in `audit-onb-enable.test.ts`). **Kept audited on
+>   purpose** (meaningful and not per-poll): task result-posting + claim, approvals,
+>   `run-token` minting, memory writes, plugin-job claim/result, workspace runtime,
+>   and all org-scoped writes (agent create/config, credentials/secrets, wallet, RBAC).
+>   When unsure whether an endpoint is security-relevant, KEEP it — be conservative.
 > - **Turn it off again:** revert the hoist in `src/index.ts` (the `auditLogPlugin(app)`
 >   call at the top of `start()`) back to an encapsulated `app.register(auditLogPlugin)`
 >   — the `[ONB2-H1]` tripwire in `audit-onb2-fix.test.ts` guards the wiring either way.
 >
 > **Cost, stated honestly:** one fire-and-forget Turso `INSERT` per SENSITIVE request
-> (writes + the low-volume onboarding surfaces). The insert is `.catch()`-swallowed, so
-> it can never add latency to or fail the request it records. The `GET` dashboard-poll
-> flood — the expensive, low-value half — is skipped by construction.
+> (writes + the low-volume onboarding surfaces), **minus the recurring agent-runtime
+> writes** (heartbeat / run-log / messages, audit M-A) which are excluded so the daily
+> insert rate is bounded away from the heartbeat cadence. The insert is
+> `.catch()`-swallowed, so it can never add latency to or fail the request it records.
+> The `GET` dashboard-poll flood — the expensive, low-value half — is skipped by
+> construction.
 
 **The original problem (now fixed): `audit_logs` recorded nothing.**
 `auditLogPlugin` and `telemetryPlugin` added their `onResponse` hooks inside an
