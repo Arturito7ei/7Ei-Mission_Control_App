@@ -151,8 +151,9 @@ async function start() {
   }
 
   // ─── Protected routes (MCA-14) ──────────────────────────────────────────
-  // Every route in this encapsulated scope requires a valid Clerk JWT. The
-  // onRequest hook attaches req.userId / req.clerkSession (and req.auth for
+  // Every route in this encapsulated scope requires a valid session — a Clerk JWT
+  // on hosted, the single-operator loopback bearer on packaged (H6, branched below).
+  // The onRequest hook attaches req.userId / req.clerkSession (and req.auth for
   // rbac/audit/telemetry compat) or replies 401. OPTIONS preflight is skipped.
   // The identity source for the secured scope is PROFILE-BRANCHED (H6): hosted
   // authenticates with Clerk exactly as before; packaged authenticates with the
