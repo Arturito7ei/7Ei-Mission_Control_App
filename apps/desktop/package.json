@@ -7,8 +7,8 @@
   "author": "7Ei",
   "scripts": {
     "desktop": "node scripts/build-desktop.mjs --stage-only && electron .",
-    "dist:mac": "node scripts/build-desktop.mjs && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config electron-builder.yml",
-    "pack:mac": "node scripts/build-desktop.mjs && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --config electron-builder.yml"
+    "dist:mac": "node scripts/build-desktop.mjs && CSC_IDENTITY_AUTO_DISCOVERY=${CSC_IDENTITY_AUTO_DISCOVERY:-false} electron-builder --mac --config electron-builder.yml",
+    "pack:mac": "node scripts/build-desktop.mjs && CSC_IDENTITY_AUTO_DISCOVERY=${CSC_IDENTITY_AUTO_DISCOVERY:-false} electron-builder --mac dir --config electron-builder.yml"
   },
   "devDependencies": {
     "electron": "^33.2.1",

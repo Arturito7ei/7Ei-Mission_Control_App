@@ -420,7 +420,7 @@ Everything the sign/notarize run needs is present and structured so enabling it 
 | `mac.hardenedRuntime: true` | set now (a no-op until signing occurs) | takes effect on the first signed build |
 | `mac.entitlements` / `entitlementsInherit` → `build/entitlements.mac.plist` | present; **minimal** (`allow-jit`, `allow-unsigned-executable-memory`, `allow-dyld-environment-variables` only) | applied during the deep sign |
 | `afterSign: scripts/notarize.cjs` | present; **self-skips** when unsigned or no notarytool creds (logged: `[notarize] skipped…`) | submits to Apple notary + electron-builder staples |
-| `mac.identity` | not forced; `CSC_IDENTITY_AUTO_DISCOVERY=false` in the `dist:mac`/`pack:mac` scripts forces a deterministic unsigned build | drop that env → electron-builder discovers + deep-signs with the Developer ID |
+| `mac.identity` | not forced; `CSC_IDENTITY_AUTO_DISCOVERY=${CSC_IDENTITY_AUTO_DISCOVERY:-false}` in the `dist:mac`/`pack:mac` scripts defaults to a deterministic unsigned build | export `CSC_IDENTITY_AUTO_DISCOVERY=true` → electron-builder discovers + deep-signs with the Developer ID |
 | `@electron/notarize` | present (transitive via electron-builder); lazily required only when notarizing | — |
 
 **Deliberately NOT included** (correct per §3.3): `disable-library-validation` — the libSQL `.node` is bundled and gets **re-signed with the same Developer ID** during the deep sign, so library validation passes without weakening it. **TCC usage strings** (`NSMicrophoneUsageDescription`, …) are Info.plist keys owned by the **H2** first-run wizard, not this build stage.
@@ -431,7 +431,7 @@ Once the operator has enrolled (H-Q1) and created a **Developer ID Application**
 
 1. **Provide the cert** — `export CSC_LINK=<base64 of the .p12>` + `CSC_KEY_PASSWORD=<pw>` (or import the identity into the login Keychain).
 2. **Provide notarytool creds** — either the App-Store-Connect **API key** (preferred): `APPLE_API_KEY=/path/AuthKey_XXXX.p8` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER`; or an Apple-ID app-specific password: `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID`.
-3. **Drop `CSC_IDENTITY_AUTO_DISCOVERY=false`** from the `dist:mac` script (one edit) so electron-builder discovers the identity and deep-signs.
+3. **Export `CSC_IDENTITY_AUTO_DISCOVERY=true`** for the run so electron-builder discovers the identity and deep-signs. The `dist:mac` script reads `CSC_IDENTITY_AUTO_DISCOVERY=${CSC_IDENTITY_AUTO_DISCOVERY:-false}` — it defaults to a deterministic unsigned build but honours the exported override, so no script edit is needed. (H1-audit fix: the script previously hard-set `=false` inline, which shadowed any exported override — an operator following the "override inline" runbook would have silently shipped an unsigned build.)
 4. Run `npm run dist:mac`. electron-builder signs (hardened runtime + the entitlements already wired) → `scripts/notarize.cjs` submits to Apple → electron-builder staples → a **signed, notarized, Gatekeeper-clean** `.dmg`.
 
 No YAML rearchitecture, no `main.cjs`/staging change. The only source edit is removing one env guard; everything else is credentials the assistant cannot create (same operator-only boundary as the Clerk/Fly console actions). This is mirrored in `GO-LIVE.md`.
