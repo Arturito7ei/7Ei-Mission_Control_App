@@ -20,6 +20,17 @@ export function defaultApiUrl(): string {
   return fromEnv && fromEnv.trim() ? fromEnv.trim().replace(/\/+$/, '') : DEFAULT_API_URL
 }
 
-// Present iff the operator supplied a Clerk publishable key. Phase 1 ships
-// token-paste auth; Clerk-Expo (story MOB-2) reads this to mount its provider.
-export const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? ''
+// Present iff the operator supplied a Clerk publishable key (the SAME key the web
+// app uses — a non-secret `pk_test_…`/`pk_live_…` that ships in the bundle). When
+// set, the app mounts <ClerkProvider> and Clerk becomes the primary sign-in
+// (MOB-2). When absent, the app falls back to token-paste (MOB-1) so it always
+// boots — Clerk is additive, never a hard requirement.
+export const CLERK_PUBLISHABLE_KEY = (process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '').trim()
+
+// True when a plausibly-valid Clerk publishable key is configured. We check the
+// `pk_` prefix (not just non-empty) so a stray whitespace/placeholder value
+// doesn't mount Clerk into a broken state — a malformed key would make
+// clerk-js throw at init and wedge the whole app on a blank screen.
+export function clerkEnabled(): boolean {
+  return CLERK_PUBLISHABLE_KEY.startsWith('pk_')
+}

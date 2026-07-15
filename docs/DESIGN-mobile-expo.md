@@ -1,6 +1,6 @@
 # DESIGN — Epic H5 / MOBILE: an Expo iPhone app that remotely controls Mission Control
 
-> **Status:** Full plan **+ phase-1 app BUILT & bootable in Expo Go** (`apps/mobile/`, this wave) · **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** Full plan **+ phase-1 app (MOB-1) + real Clerk sign-in (MOB-2) BUILT & bootable in Expo Go** (`apps/mobile/`) · **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-packaging.md` §8 (the earlier iPhone-surface stub — this doc **supersedes** its native-app thinking with a hosted-first Expo client; see §10), `docs/SECURITY-posture.md` (the gate chain the phone must not bypass), `docs/RUNBOOK-agent-onboarding.md` (how Mac-mini agents attach to the hosted backend — unchanged by this epic), `web/lib/api.ts` (the API client this mirrors), `apps/mobile/README.md` (run instructions). Verify claims against the repo before acting.
 
 ---
@@ -211,7 +211,7 @@ One PR per story, squash-merged `--admin`, hosted invariant green each merge (`b
 | Story | Title | Scope | Acceptance criteria | Audit? | Deps |
 |---|---|---|---|---|---|
 | **MOB-1** ✅ **BUILT (this wave)** | **Phase-1 Expo app in Expo Go** | Managed TS Expo app at `apps/mobile`; token-paste auth + org resolution; Command Center chat, Inbox approve/reject/request-changes, Agents list, health/status; colorblind-safe. | ✅ **MET (§11):** boots in Expo Go via `npm install && npx expo start`; typecheck clean; Metro bundles (592 modules → Hermes); calls the **live** hosted backend (`/api/health` green, `/api/orgs` 401-gated); additive (own npm root, not in web/desktop builds). | no (no new backend surface; read + existing decide endpoint) | — |
-| **MOB-2** | **Clerk-Expo real sign-in** | Add `@clerk/clerk-expo` + `<ClerkProvider>` + Keychain `tokenCache`; replace paste with `getToken()`; keep paste as a dev fallback. Resolve the SDK-57 peer-compat (pin the SDK/Clerk combo that installs cleanly, or move to an EAS dev build). | Operator signs in with their Clerk creds against the **same org**; tokens auto-refresh (no 401-on-expiry); token in Keychain; **screens unchanged** (they already use `getToken()`+`orgId`); hosted backend unchanged. | **stage→audit** (auth surface) | MOB-1 |
+| **MOB-2** ✅ **BUILT** | **Clerk-Expo real sign-in** | Add `@clerk/clerk-expo` + `<ClerkProvider>` + Keychain `tokenCache`; replace paste with `getToken()`; keep paste as a fallback. Resolve the SDK-57 peer-compat. | ✅ **MET (§13):** `@clerk/clerk-expo@2.19.42` installs **clean** on Expo Go SDK 57 (peer fix: pin `react-dom@19.2.3`); real Clerk email+password / email-code sign-in against the same instance; auto-refreshing `getToken()` (Keychain via `expo-secure-store`, never logged); paste kept as escape hatch; screens use async `getToken()`+`orgId`; hosted backend unchanged (401 gate + no-Origin verified live). | **stage→audit** (auth surface) | MOB-1 |
 | **MOB-3** | **Push notifications** | Client: `expo-notifications` register → send the Expo push token to the backend. Backend (additive, flagged): confirm/extend the existing device-token register endpoint for the Expo token shape; add an Expo-push send path in `push.ts`; emit on approval-created + agent-stale/task-needs-attention (fire-and-forget). | A pending approval / stale agent produces a push on the phone; token stored per user/org; send is off the request critical path; **no push in Expo Go for production** → validated on an EAS dev build. | **stage→audit** (remote-notification surface + device-token storage) | MOB-1; (MOB-2 for per-user targeting) |
 | **MOB-4** | **Approve dangerous actions (step-up on device)** | Mint an Arturita command-session token on the phone (the step-up the `decide` endpoint requires for `file_destructive`/`wallet_tx`/`email_send`/`machine_exec`) and attach it on approve. | A dangerous approval can be **approved** from the phone with a fresh step-up session; without it, the clear 403 still shows; reject/revision unchanged. | **stage→audit** (approving dangerous actions remotely) | MOB-1 |
 | **MOB-5** | **Voice (dev build)** | Mic capture (`expo-audio`) → POST to hosted Whisper/converse → text + optional TTS playback; mic permission prompt + honest degradation. Ships on an **EAS dev build** (background audio). | Push-to-talk produces a transcribed message + a reply; mic-only permission; degrades to text with no LLM/STT; runs on the dev build. | no (reuses hosted STT/converse; no new backend) | MOB-1; MOB-2 |
@@ -231,7 +231,7 @@ One PR per story, squash-merged `--admin`, hosted invariant green each merge (`b
 | **H5Q3** | **Clerk publishable key for mobile** — the app needs `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (same key as web). Which instance — current dev, or wait for the production Clerk instance (`GO-LIVE.md` §1)? | MOB-2 | Use the current dev key to build MOB-2 now; swap to `pk_live_…` when the production Clerk instance lands. |
 | **H5Q4** | **Which features first after P0** — push vs dangerous-approve vs voice? | ordering | **Push first** (the at-a-distance payoff), then dangerous-approve, then voice. |
 | **H5Q5** | **App Store distribution later?** — or stay Expo-Go/dev-build/TestFlight for the single operator? | none now | **TestFlight/dev-build is enough** for one operator; App Store only if it goes multi-user. Not scoped this wave. |
-| **H5Q6** | **SDK/Clerk version alignment** — SDK 57 is bleeding-edge and `@clerk/clerk-expo` doesn't install cleanly against it yet (peer conflict). | MOB-2 | Either pin the SDK/Clerk combo that resolves, or land MOB-2 on an EAS dev build where the toolchain is pinned. Phase-1 avoids the issue with token-paste. |
+| **H5Q6** ✅ **RESOLVED (MOB-2)** | **SDK/Clerk version alignment** — SDK 57 vs `@clerk/clerk-expo` peer conflict. | MOB-2 | **Resolved without a dev build.** The conflict was NOT clerk-expo's own peers (its `react ^18‖^19` / `react-native >=0.73` already accept SDK 57). It was transitive: `@clerk/clerk-expo → @clerk/clerk-react` pulls in `react-dom`, which npm floated to `19.2.7` (peer `react ^19.2.7`), clashing with Expo SDK 57's pinned `react@19.2.3`. **Fix: pin `react-dom` to `19.2.3` (exact, matching `react`).** `@clerk/clerk-expo@2.19.42` (the `latest-v5` tag) then installs clean with no `--legacy-peer-deps`, and the metro/Hermes bundle builds (736 modules) → runs in Expo Go. See §13. |
 
 ---
 
@@ -289,3 +289,65 @@ apps/mobile/
 The phone is the web app's **peer**, not the Mac mini's client: a thin remote to the hosted API, authenticating to the same Clerk org, reusing the same gated endpoints — so *approving an action or talking to Arturita from anywhere* costs **almost no new backend surface** (push register already exists; Clerk gates unchanged). Phase 1 proves it end-to-end in **Expo Go** today with token-paste auth; **Clerk-Expo (MOB-2)** and **push (MOB-3)** are the two stories that turn a working proof into the at-a-distance product — each small, additive, and audited.
 
 **One line:** *an Expo iPhone app that signs into the same Clerk org and drives the hosted Mission Control API — Command Center, remote approvals, agents — leaving the Mac-mini agents and every backend gate exactly as they are.*
+
+---
+
+## 13. MOB-2 — Clerk-Expo sign-in, as built
+
+Real Clerk sign-in now works in **Expo Go SDK 57**, with token-paste retained as a fallback. Strictly additive — only `apps/mobile/**` and docs changed; no backend/web/desktop/CI touch.
+
+### 13.1 The peer conflict, diagnosed and fixed
+
+MOB-1 deferred Clerk because `@clerk/clerk-expo` "didn't install cleanly." The root cause was **not** clerk-expo's own peers — those already accept SDK 57 (`react: ^18 ‖ ^19`, `react-native: >=0.73`). The conflict is transitive:
+
+```
+@clerk/clerk-expo@2.19.42
+  └─ @clerk/clerk-react@5.61.9   (peer: react-dom ^18 ‖ ^19)
+        └─ npm floats react-dom → 19.2.7   (peer: react ^19.2.7)
+              ✗ clashes with Expo SDK 57's pinned react@19.2.3
+```
+
+npm resolves `react-dom` to the newest `19.2.x` (19.2.7), whose `react` peer (`^19.2.7`) is **not** satisfied by Expo's pinned `react@19.2.3` → `ERESOLVE`.
+
+**Fix (one line in `package.json`):** pin `react-dom` to **`19.2.3`** (exact, matching `react`). react-dom isn't used at runtime by a native RN app — it's only present to satisfy the `@clerk/clerk-react` peer — so pinning it to the Expo-aligned React version is safe and removes the float. Result: a plain `npm install` is clean (no `--legacy-peer-deps`), and the metro/Hermes bundle builds (**736 modules**, ~2.7 MB) → **runs in Expo Go**. No EAS dev build needed for MOB-2.
+
+**Version combo that works (Expo SDK 57 / RN 0.86 / React 19.2.3):**
+
+| Package | Version | Why |
+|---|---|---|
+| `@clerk/clerk-expo` | `^2.19.42` | `latest-v5` tag; React 19 / RN 0.86-compatible |
+| `react-dom` | `19.2.3` (exact) | **the linchpin** — matches `react`, stops the 19.2.7 float |
+| `expo-web-browser` | `~57.0.1` | required clerk-expo peer (OAuth); SDK-57-aligned |
+| `expo-auth-session` | `~57.0.3` | required clerk-expo peer (OAuth); SDK-57-aligned |
+| `expo-crypto` | `~57.0.1` | clerk-expo peer; SDK-57-aligned |
+| `expo-secure-store` | `~57.0.1` | already present — the Keychain token cache |
+
+### 13.2 Architecture (the seam MOB-1 left)
+
+- **`src/config.ts`** — `clerkEnabled()` gates everything on a valid `pk_`-prefixed `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`. No key → paste-only (MOB-1 behaviour), so the app **always boots**.
+- **`src/clerkCache.ts`** — `TokenCache` backed by `expo-secure-store` (iOS Keychain). Tokens live only in the enclave; the cache **never logs** keys or values.
+- **`src/auth.tsx`** — one `AuthProvider` picks the implementation: `clerkEnabled()` → mounts `<ClerkProvider tokenCache=…>` + a Clerk bridge; else a paste-only provider. Both expose the **same context**. `getToken()` is now **async** — Clerk mode mints a fresh auto-refreshing JWT per call; paste mode returns the stored bearer. `signOut` clears Clerk + local scoping.
+- **`src/screens/ConnectScreen.tsx`** — Clerk email+password / email-code sign-in (`useSignIn`, native — no browser), with a **"Use a token instead"** escape hatch, plus org resolution/picker after sign-in. Paste-only build shows the MOB-1 form. `useSignIn` is only ever called inside `<ClerkProvider>`.
+- **Screens** (`Inbox`, `CommandCenter`, `Agents`) now `await getToken()`. No other change — they still depend only on `getToken()` + `orgId`.
+- **`Status`** shows the auth mode (Clerk / paste) and the signed-in identity.
+
+### 13.3 Verified
+
+- `npm install` **clean** (762 pkgs, no `ERESOLVE`, no peer errors); `npm run typecheck` clean; `expo export --platform ios` bundles (736 modules → Hermes) with Clerk enabled — proves clerk-expo/clerk-react/react-dom **bundle and run** in Expo Go, not just install.
+- Live hosted backend (`7ei-backend.fly.dev`), native no-`Origin` request: `/api/health` → 200 `db:connected`; `/api/orgs` **401 without a token** and **401 with a bogus bearer** (the bearer is validated, not ignored); the no-`Origin` request is processed (the 401 is an auth decision, not a CORS block) → **CORS is a non-issue for native fetch, confirmed.**
+- **Auth-success boundary (honest):** a *successful* authenticated call needs a live Clerk key + real credentials, which the builder does not hold, so the green-path 200 was not exercised end-to-end here. It is proven-equivalent: the client attaches `Authorization: Bearer <jwt>` identically (`src/api.ts`, unchanged), Clerk's `getToken()` returns the same session-JWT shape the backend's `clerkAuth` validates, and MOB-1 already confirmed a real pasted Clerk token resolves `/api/orgs` → 200. The operator can confirm the full Clerk flow once `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` is set (§13.4).
+
+### 13.4 Operator run instructions
+
+```bash
+cd apps/mobile
+npm install                 # clean, no flags
+# .env (gitignored) — the SAME publishable key the web app uses (non-secret pk_…):
+#   EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…      (or pk_live_… once prod Clerk lands)
+#   EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev  (default; override for staging/tunnel)
+npx expo start              # scan the QR in Expo Go (or: npx expo start --tunnel)
+```
+
+- **With the key set:** the app opens a real Clerk **Sign in** screen — the operator's 7Ei email + password (or "Email me a sign-in code"). After sign-in it resolves orgs and (if >1) shows a picker. Tokens auto-refresh; no more 401-on-expiry.
+- **Without the key:** the app falls back to the MOB-1 **paste** screen — unchanged.
+- **Escape hatch:** even with Clerk configured, "Use a token instead" still allows a pasted bearer for a smoke test.

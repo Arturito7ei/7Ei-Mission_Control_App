@@ -1,18 +1,29 @@
-// Persistent, encrypted-at-rest storage for the session (bearer token, API base
-// URL, selected org). Uses expo-secure-store (iOS Keychain / Android Keystore) so
-// the bearer token is not left in plaintext. Ships in Expo Go — no dev build.
+// Persistent, encrypted-at-rest storage for the session (auth mode, bearer token,
+// API base URL, selected org). Uses expo-secure-store (iOS Keychain / Android
+// Keystore) so the bearer token is not left in plaintext. Ships in Expo Go — no
+// dev build.
+//
+// Two auth modes share this store (MOB-2):
+//  - 'clerk': Clerk owns the session token in ITS OWN Keychain cache
+//    (src/clerkCache.ts); we persist only the mode + apiUrl + selected org here.
+//    `token` is absent in this mode — getToken() comes from Clerk, auto-refreshing.
+//  - 'paste': the MOB-1 fallback — we persist the pasted bearer token here too.
 
 import * as SecureStore from 'expo-secure-store'
 
 const K = {
+  authMode: 'mc.authMode',
   token: 'mc.token',
   apiUrl: 'mc.apiUrl',
   orgId: 'mc.orgId',
   orgName: 'mc.orgName',
 } as const
 
+export type AuthMode = 'clerk' | 'paste'
+
 export type Session = {
-  token: string
+  authMode: AuthMode
+  token: string | null // present only in 'paste' mode
   apiUrl: string
   orgId: string | null
   orgName: string | null
@@ -37,21 +48,29 @@ async function set(key: string, value: string | null): Promise<void> {
 }
 
 export async function loadSession(): Promise<Session | null> {
-  const token = await get(K.token)
-  if (!token) return null
-  return {
-    token,
-    apiUrl: (await get(K.apiUrl)) ?? '',
-    orgId: await get(K.orgId),
-    orgName: await get(K.orgName),
-  }
+  const [mode, token, apiUrl, orgId, orgName] = await Promise.all([
+    get(K.authMode),
+    get(K.token),
+    get(K.apiUrl),
+    get(K.orgId),
+    get(K.orgName),
+  ])
+  // Back-compat: a MOB-1 session has a token but no authMode → it's a paste session.
+  const authMode: AuthMode | null = mode === 'clerk' || mode === 'paste' ? mode : token ? 'paste' : null
+  if (!authMode) return null
+  // A paste session with no token is meaningless — treat as no session.
+  if (authMode === 'paste' && !token) return null
+  return { authMode, token: authMode === 'paste' ? token : null, apiUrl: apiUrl ?? '', orgId, orgName }
 }
 
 export async function saveSession(s: Session): Promise<void> {
-  await set(K.token, s.token)
-  await set(K.apiUrl, s.apiUrl)
-  await set(K.orgId, s.orgId)
-  await set(K.orgName, s.orgName)
+  await Promise.all([
+    set(K.authMode, s.authMode),
+    set(K.token, s.authMode === 'paste' ? s.token : null),
+    set(K.apiUrl, s.apiUrl),
+    set(K.orgId, s.orgId),
+    set(K.orgName, s.orgName),
+  ])
 }
 
 export async function clearSession(): Promise<void> {
