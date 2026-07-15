@@ -1,0 +1,291 @@
+# DESIGN — Epic H5 / MOBILE: an Expo iPhone app that remotely controls Mission Control
+
+> **Status:** Full plan **+ phase-1 app BUILT & bootable in Expo Go** (`apps/mobile/`, this wave) · **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Companions:** `docs/DESIGN-packaging.md` §8 (the earlier iPhone-surface stub — this doc **supersedes** its native-app thinking with a hosted-first Expo client; see §10), `docs/SECURITY-posture.md` (the gate chain the phone must not bypass), `docs/RUNBOOK-agent-onboarding.md` (how Mac-mini agents attach to the hosted backend — unchanged by this epic), `web/lib/api.ts` (the API client this mirrors), `apps/mobile/README.md` (run instructions). Verify claims against the repo before acting.
+
+---
+
+## 0. TL;DR
+
+- **The phone is a THIN REMOTE CLIENT to the hosted backend** (`https://7ei-backend.fly.dev`), calling the **same REST API the web app uses**. It is **not** a client of the operator's Mac mini. The Mac-mini/desktop agents keep reporting to the hosted backend over the agent-facing API exactly as today — **this epic touches none of that.** The value is *control at a distance*: approve an action, talk to Arturita, check the roster, from anywhere.
+- **Auth: recommend `@clerk/clerk-expo`** authenticating to the **same Clerk org** the web app uses — the phone becomes a first-class Clerk client, tokens auto-refresh, and the backend's existing `clerkAuth` + membership gates apply unchanged. A device-pairing token is evaluated as a runner-up and **not recommended** (§2.4).
+- **CORS is a non-issue for the native app.** React Native `fetch` sends **no `Origin` header**, so the backend's `ALLOWED_ORIGINS` allow-list never gates the phone — it reaches the hosted API as-is. (Expo *web* preview at `localhost:8081` is already on the allow-list too.) No backend CORS change needed.
+- **P0 feature surface (control remotely):** **Command Center** (text chat to Arturita) · **Inbox/Approvals** (approve/reject/request-changes — the killer remote feature) · **Agents** list · **Tasks**. **P1:** Memory, Costs, **push notifications** (approval-needed / agent-needs-attention — the true at-a-distance payoff). **Fast-follow:** voice (Expo AV record → hosted converse/Whisper).
+- **Push needs almost nothing new backend-side.** A device-token **register endpoint already exists** (`notificationRoutes`, `push-notifications` feature) and the backend already declares push as a feature; wiring Expo push is a small, additive, **flagged** story (§4), **not built this wave**.
+- **Expo Go vs dev-build:** everything in P0/P1 **except background audio and rich native push** runs in **Expo Go** (managed, no native build). Voice-with-background-audio and production APNs push move to an **EAS dev build** (§5). The phase-1 app is deliberately **Expo-Go-only**.
+- **Phase-1 shipped this wave:** a runnable `apps/mobile` Expo app (SDK 57, TypeScript) that boots in **Expo Go** and proves remote control against the hosted backend — Command Center chat, Inbox approve/reject, Agents list, health/status — with **token-paste auth** as the guaranteed-bootable fallback while **Clerk-Expo is staged as MOB-2** (§11).
+
+---
+
+## 1. Architecture
+
+### 1.1 The shape
+
+```
+        ┌──────────────────────────┐
+        │   iPhone — Expo app      │   apps/mobile  (Expo Go now → EAS dev build later)
+        │   (thin remote control)  │
+        │  • Command Center chat   │
+        │  • Inbox / Approvals     │
+        │  • Agents / Tasks        │
+        │  • (P1) push, voice      │
+        └────────────┬─────────────┘
+                     │  HTTPS + Clerk bearer JWT
+                     │  (no Origin header → CORS N/A)
+                     ▼
+        ┌──────────────────────────────────────────────┐
+        │   HOSTED BACKEND — 7ei-backend.fly.dev (fra)  │   ← same API the web app uses
+        │   Fastify · Clerk auth · Drizzle · Turso      │
+        │   /api/orgs/:orgId/…  (org-scoped, gated)     │
+        └───────▲───────────────────────────▲───────────┘
+                │ agent-facing API           │ browser API
+                │ (claim/result/heartbeat)   │ (Clerk JWT)
+      ┌─────────┴──────────┐        ┌────────┴─────────┐
+      │  Mac mini / desktop │        │  Web dashboard   │
+      │  adapters (agents)  │        │  app.7ei.ai      │
+      │  — UNCHANGED —      │        │  (Vercel, Clerk) │
+      └─────────────────────┘        └──────────────────┘
+```
+
+**The one load-bearing idea:** the phone and the web app are **peers** — two browser-class clients of the same hosted API. The phone needs **no** direct path to the Mac mini, no tunnel, no local network to the agents. The agents are already decoupled from any UI: they talk to the hosted backend, and *any* authenticated client (web, phone) sees their state and can act on it.
+
+### 1.2 Why hosted-first (not a packaged/loopback client)
+
+`DESIGN-packaging.md` §8 framed the iPhone surface around a **packaged, loopback** instance (Telegram long-poll, then a LAN/Tailscale PWA), because *that* epic is about a self-hosted `.dmg`. **This epic is different and simpler:** the operator's real deployment is the **hosted** backend, agents already report to it, so the phone should talk to the hosted API directly. Hosted-first means:
+
+- **No reachability problem.** The hosted backend has a public HTTPS endpoint; the phone reaches it from any network. (A loopback packaged instance is unreachable from a phone off-LAN without a tunnel — the §8 wrinkle. Hosted sidesteps it entirely.)
+- **Reuse the web auth + API verbatim.** Clerk org, org-scoped routes, the whole endpoint surface.
+- **The Mac mini stays out of the trust path.** Nothing on the phone touches the operator's machine or its OS grants.
+
+The packaged-PWA path (§8) remains valid **for the packaged product**; a later story can point this same Expo app at a packaged instance over a tunnel (§7). Hosted-first is the recommended and built default.
+
+---
+
+## 2. Auth on mobile
+
+### 2.1 Recommended: `@clerk/clerk-expo` against the same Clerk instance
+
+The web app is a Clerk app (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` gates `<ClerkProvider>` in `web/app/layout.tsx`; `clerkMiddleware` protects `/dashboard` + `/api` in `web/middleware.ts`). The backend validates the Clerk JWT on the secured scope (`clerkAuth` → `req.auth.userId`) and then runs `requireOrgMembership`/`requireOrgRole`.
+
+`@clerk/clerk-expo` makes the phone a **native Clerk client of the same instance**:
+
+```tsx
+import { ClerkProvider, useAuth } from '@clerk/clerk-expo'
+import * as SecureStore from 'expo-secure-store'
+
+const tokenCache = {
+  getToken: (k: string) => SecureStore.getItemAsync(k),
+  saveToken: (k: string, v: string) => SecureStore.setItemAsync(k, v),
+}
+
+<ClerkProvider publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!} tokenCache={tokenCache}>
+  …
+</ClerkProvider>
+
+// in a screen:
+const { getToken } = useAuth()
+const jwt = await getToken()          // auto-refreshing session JWT
+api(`/api/orgs/${orgId}/…`, { token: jwt })
+```
+
+**Why this is right:**
+- **Same identity, same org, same gates.** The phone's user *is* the operator's Clerk user; every org-scoped route resolves membership against the same `org_members` rows. Zero backend change.
+- **Auto-refreshing tokens.** `getToken()` mints a fresh short-lived JWT per call — no expiry pain (the pain the phase-1 paste fallback has).
+- **Secure token cache.** Clerk's `tokenCache` persists the session in the **iOS Keychain** via `expo-secure-store` — not in JS-readable storage.
+- **Runs in Expo Go** for email/password + email-code sign-in; Google/OAuth uses `expo-web-browser` + `expo-auth-session` (also in Expo Go).
+
+**The one operator input:** `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` — the **same publishable key** the web app uses (`pk_test_…` on the current dev instance; `pk_live_…` once the production Clerk instance lands, `GO-LIVE.md` §1). Publishable keys are non-secret (they ship in the web bundle already), so putting one in the Expo bundle is fine.
+
+### 2.2 Token storage & the bearer flow
+
+- Clerk holds the session in its `tokenCache` (Keychain). The app calls `getToken()` right before each API call and passes it as `Authorization: Bearer <jwt>` — mirroring the web pattern (panels receive `getToken` and pass the token per call; `web/lib/api.ts`).
+- The phase-1 app already stores its bearer + API URL + selected org in `expo-secure-store` (`apps/mobile/src/store.ts`), so the Clerk swap only changes *where the token comes from*, not how screens consume it (they depend on `getToken()` + `orgId` only).
+
+### 2.3 CORS considerations
+
+- **Native app:** `fetch` from React Native sends **no `Origin`** header → the `@fastify/cors` policy (`backend/src/middleware/cors.ts`, `DEFAULT_ORIGINS`) doesn't apply. The phone can call every verb (GET/POST/…) with no preflight. **No change needed.**
+- **Expo web preview** (`expo start --web` on `localhost:8081`): already in `DEFAULT_ORIGINS`. So even the browser preview of this app is covered.
+- If a future story serves the app from a new web origin, add it to `ALLOWED_ORIGINS` (Fly secret) — a config change, not code.
+
+### 2.4 Runner-up (not recommended): device-pairing token
+
+An alternative is a **first-run pairing code**: the web dashboard mints a long-lived device token (a hashed agent-style token, like the adapter tokens in `agent-api.ts`), the phone stores it, and a new `deviceAuth` hook validates it. **Evaluated and rejected for v1** because:
+- It's a **second auth system** to build, gate, rotate, and audit (the backend already has three: Clerk, agent-token, loopback — adding a fourth is cost without benefit here).
+- It **loses org/role fidelity** — you'd re-derive membership from the token instead of reusing Clerk's.
+- Clerk-Expo already solves "sign in on a phone" with refresh + Keychain + the same identity.
+
+Keep pairing tokens in reserve **only** for a later "point the app at a *packaged* loopback instance" story (§7), where there is no Clerk — that's exactly the H6 loopback-session model, and the phone would present the loopback session secret over a tunnel. Not v1.
+
+---
+
+## 3. Feature surface (prioritized for remote control) → endpoints
+
+Every endpoint below is **org-scoped and Clerk-gated** unless noted (`/api/health` is public; `/api/approvals/:id/decide` derives the org from the approval row). Paths are literal — the backend hard-codes the full `/api/...` string per route (no Fastify prefix). Timestamps serialize as **epoch-ms integers**.
+
+### P0 — the "control remotely" core (all built or wired in phase 1)
+
+| Feature | What the operator does | Endpoint(s) |
+|---|---|---|
+| **Command Center** (chat to Arturita) | Ask a question / give an instruction; see the reply + a **"via" chip** (which provider/model answered, or that it was **delegated** to a task). | `POST /api/orgs/:orgId/arturita/converse` — body `{ message, history?, explicitDelegate?, deferAnswer:false }` → `{ mode:"answer", reply:{text,provider,model} }` **or** `{ mode:"delegate", taskId, routing:{workMode,destructive} }`. Companion probe: `GET …/arturita/llm-status`. |
+| **Inbox / Approvals** (killer remote feature) | See pending dangerous-action approvals; **approve / reject / request-changes**. | List: `GET /api/orgs/:orgId/approvals?status=pending` → `{ approvals:[{id,type,summary,payload,status,requestedByAgentId,createdAt}] }`. Decide (tri-state): `POST /api/approvals/:id/decide` — body `{ decision:"approved"|"rejected"|"revision_requested", note? }` → `{ approval }`. |
+| **Agents** (roster) | Glance at who's running, status, heartbeat, trust. | `GET /api/orgs/:orgId/agents` → `{ agents:[…] }` (name, role, runtime, llmModel, status, heartbeatStatus, trustMode, avatarEmoji). Richer roster: `GET …/cockpit`. Detail: `GET /api/agents/:agentId`. |
+| **Tasks** | Track what work is in flight / blocked. | `GET /api/orgs/:orgId/tasks?status=&agentId=` → `{ tasks:[…] }` (title, status, kanbanColumn, inboxState, workMode, costUsd, createdAt). Detail: `GET /api/tasks/:taskId`. |
+| **Org resolution** (post-sign-in) | Auto-pick the org (or choose if >1). | `GET /api/orgs` → `{ orgs:[…] }` (owned). Membership incl. invited: `GET /api/users/:userId/orgs` → adds `memberRole`. |
+
+**Approval step-up caveat (important, honest):** approving a **dangerous** type (`file_destructive`, `wallet_tx`, `email_send`, `machine_exec`) requires a fresh **Arturita command-session token** (`x-arturita-session` header or `sessionToken` body). A phone that hasn't minted one gets **403 "step-up required"** on *approve*. **Reject and request-changes never need step-up** — so the remote **stop/hold** action is always reliable, and remote *approve* of dangerous actions is a follow-up (MOB-4) that mints the step-up session on device. Non-dangerous approvals (hire, spend, external_action, agent_join_request, low_trust_review) approve directly.
+
+### P1 — the at-a-distance depth
+
+| Feature | Endpoint(s) | Notes |
+|---|---|---|
+| **Push notifications** | register: existing `notificationRoutes` device-token endpoint; send: backend push service (`push.ts`) | §4 — the real reason to have the app on your phone. Small additive backend story to emit Expo push on approval-needed / agent-needs-attention. |
+| **Memory** | `GET /api/agents/:agentId/memory` (memoryRoutes) | Read agent long-term memory. |
+| **Costs** | `GET /api/orgs/:orgId/costs`, `…/usage`, `…/limits` | Spend + budget at a glance. |
+| **Task actions** | `POST /api/orgs/:orgId/tasks`, task update routes | Nudge/create a task from the phone (write — gate carefully). |
+
+### Fast-follow — voice (§6)
+Mic capture (Expo AV) → `POST` audio to the hosted converse/Whisper leg → spoken reply (TTS). Text chat ships first; voice layers on.
+
+---
+
+## 4. Push notifications (Expo push)
+
+**Why it's the payoff:** the whole point of a phone is to be *told* when the office needs you — an approval is pending, an agent went stale/blocked, a task needs attention — without opening the app.
+
+**How Expo push works (managed):** the app calls `Notifications.getExpoPushTokenAsync()` → an **Expo push token** (`ExponentPushToken[…]`), registers it with the backend, and the backend POSTs to Expo's push service (`https://exp.host/--/api/v2/push/send`), which fans out to APNs/FCM. **No raw APNs certs needed for Expo Go / Expo-managed** — Expo brokers it. (A production standalone build via EAS uses your APNs key, configured once.)
+
+**Backend-side (small, additive, flagged — NOT built this wave):**
+- **Register:** a device-token endpoint **already exists** (`notificationRoutes` registers "push register"; `push-notifications` is a declared `/api/health` feature; `push.ts` service present). The story is to (a) confirm/extend it to accept an **Expo** push token shape and platform, storing it per user/org, and (b) add a tiny **Expo send** path in `push.ts` alongside whatever web-push it already does.
+- **Triggers:** emit a push when an `approval_requests` row is created (approval-needed) and when an agent heartbeat goes `stale` / a task enters `needs_attention`/`blocked`. These are existing state transitions — the push is a fire-and-forget side effect (`.catch()`), never in the request's critical path (matches the backend's Pinecone rule).
+- **Scope discipline:** this is one additive story (**MOB-3**), **stage→audit** (it's a remote-notification surface + stores device tokens). Because a register endpoint already exists, no new *public* surface is likely needed — but any change to it is audited. **Not built this wave** per the "push only if trivial + flagged" instruction; flagged here as the recommended next backend story.
+
+**Client-side (Expo Go caveat):** `expo-notifications` **can register + receive** push in Expo Go for a quick test, but Expo has signalled that **remote push in Expo Go is limited/deprecated** for production — real push wants an **EAS dev/standalone build** (§5). So: prototype the token flow in Expo Go, ship production push on the dev build.
+
+---
+
+## 5. Expo Go vs EAS dev build — the testing path
+
+**Runs in Expo Go (managed, zero native build) — the phase-1 target:**
+- The entire P0 surface: HTTPS API calls, Clerk-Expo sign-in (email/password/code, and OAuth via `expo-web-browser`), `expo-secure-store`, all the screens.
+- Basic `expo-notifications` token registration for a prototype.
+
+**Needs an EAS dev build (`eas build --profile development`) — later phases:**
+- **Background audio / long voice capture** (`expo-av`/`expo-audio` recording works in Expo Go for foreground clips, but robust background/interruption handling and some codecs want a dev build) — **voice, MOB-5**.
+- **Production remote push** (custom APNs config, notification categories/actions like "Approve" from the lock screen) — **push, MOB-3 production**.
+- Any future **native module** (biometric unlock, share extension, widgets).
+
+**Rule for this epic:** phase 1 and the P0 stories stay **Expo-Go-only** so the operator's test loop is *scan-a-QR* with no build account. Voice and production push are explicitly the **dev-build phase** — the operator will need an **Expo/EAS account** (free tier is enough to start) for those (open question H5Q2).
+
+---
+
+## 6. Voice on mobile
+
+Mirrors the Arturita voice loop the web app already has, but with the phone's mic:
+
+1. **Record** — `expo-audio`/`expo-av` captures a clip (M4A/AAC). Request mic permission (`NSMicrophoneUsageDescription` — set once; prompt on first record). Foreground push-to-talk works in Expo Go; hands-free/background wants the dev build (§5).
+2. **Transcribe + converse** — POST the audio to the hosted **Whisper/converse** leg (the same STT the web app + `adapters/arturita-stt` use; see `arturita-voice.ts` / the converse pipeline). The phone doesn't run Whisper locally — it uses the hosted STT, consistent with "thin remote client".
+3. **Reply + TTS** — render the text reply and, optionally, play spoken audio (`expo-audio` playback of a TTS stream, or the existing TTS pipeline's output). Respect the honest-degradation contract: if no cloud LLM/STT is reachable, fall back to text (the converse endpoint already returns `degraded:true`).
+
+Permissions: **Microphone only**, prompted on first use, with a plain "voice needs the mic" explanation — the same least-privilege posture as the desktop TCC wizard (`DESIGN-packaging.md` §4). Voice is **MOB-5** (dev-build phase).
+
+---
+
+## 7. Connectivity edge cases
+
+| Situation | Behaviour |
+|---|---|
+| **Phone off the operator's network** (cellular, other Wi-Fi) | **Works** — the hosted backend is public HTTPS. This is the whole advantage of hosted-first. |
+| **Hosted backend down / unreachable** | The client distinguishes *dead backend* from *refused write* (mirrors `web/lib/api.ts` `transportError`). Health screen shows OFFLINE; screens show a plain error + pull-to-retry. No crash. |
+| **Token expired (paste mode)** | 401 → clear "re-connect with a fresh token" message. Clerk-Expo (MOB-2) removes this by refreshing. |
+| **Expo Go dev server unreachable** (phone can't see the Metro QR) | Use `expo start --tunnel` (ngrok-class tunnel) — documented in the README. This is only for *loading the dev bundle*, not for reaching the backend. |
+| **Optional later: drive a *packaged* / local instance** | A local/packaged Mission Control is loopback-only; a phone reaches it only over an operator-controlled **tunnel** (Tailscale/LAN-bind, the audited posture from `DESIGN-packaging.md` §8/H-Q8) and would auth with the **loopback session** (not Clerk). **Recommend hosted-first**; this local path is a deliberate, later, audited option — not v1. |
+
+**Offline/caching:** v1 is online-only (a remote control implies connectivity). A later story can cache the last roster/inbox for read-only glances offline.
+
+---
+
+## 8. Phased story plan — Epic H5 / MOB
+
+One PR per story, squash-merged `--admin`, hosted invariant green each merge (`backend`: tests + 11/11 evals; `web build`). Stories touching **auth, push, or credentials stage→audit** (a session that didn't write them audits — the `SECURITY-posture.md` §1 protocol). `apps/mobile` is **additive** — it must never enter the `web`/`backend`/`desktop` build or test paths.
+
+| Story | Title | Scope | Acceptance criteria | Audit? | Deps |
+|---|---|---|---|---|---|
+| **MOB-1** ✅ **BUILT (this wave)** | **Phase-1 Expo app in Expo Go** | Managed TS Expo app at `apps/mobile`; token-paste auth + org resolution; Command Center chat, Inbox approve/reject/request-changes, Agents list, health/status; colorblind-safe. | ✅ **MET (§11):** boots in Expo Go via `npm install && npx expo start`; typecheck clean; Metro bundles (592 modules → Hermes); calls the **live** hosted backend (`/api/health` green, `/api/orgs` 401-gated); additive (own npm root, not in web/desktop builds). | no (no new backend surface; read + existing decide endpoint) | — |
+| **MOB-2** | **Clerk-Expo real sign-in** | Add `@clerk/clerk-expo` + `<ClerkProvider>` + Keychain `tokenCache`; replace paste with `getToken()`; keep paste as a dev fallback. Resolve the SDK-57 peer-compat (pin the SDK/Clerk combo that installs cleanly, or move to an EAS dev build). | Operator signs in with their Clerk creds against the **same org**; tokens auto-refresh (no 401-on-expiry); token in Keychain; **screens unchanged** (they already use `getToken()`+`orgId`); hosted backend unchanged. | **stage→audit** (auth surface) | MOB-1 |
+| **MOB-3** | **Push notifications** | Client: `expo-notifications` register → send the Expo push token to the backend. Backend (additive, flagged): confirm/extend the existing device-token register endpoint for the Expo token shape; add an Expo-push send path in `push.ts`; emit on approval-created + agent-stale/task-needs-attention (fire-and-forget). | A pending approval / stale agent produces a push on the phone; token stored per user/org; send is off the request critical path; **no push in Expo Go for production** → validated on an EAS dev build. | **stage→audit** (remote-notification surface + device-token storage) | MOB-1; (MOB-2 for per-user targeting) |
+| **MOB-4** | **Approve dangerous actions (step-up on device)** | Mint an Arturita command-session token on the phone (the step-up the `decide` endpoint requires for `file_destructive`/`wallet_tx`/`email_send`/`machine_exec`) and attach it on approve. | A dangerous approval can be **approved** from the phone with a fresh step-up session; without it, the clear 403 still shows; reject/revision unchanged. | **stage→audit** (approving dangerous actions remotely) | MOB-1 |
+| **MOB-5** | **Voice (dev build)** | Mic capture (`expo-audio`) → POST to hosted Whisper/converse → text + optional TTS playback; mic permission prompt + honest degradation. Ships on an **EAS dev build** (background audio). | Push-to-talk produces a transcribed message + a reply; mic-only permission; degrades to text with no LLM/STT; runs on the dev build. | no (reuses hosted STT/converse; no new backend) | MOB-1; MOB-2 |
+| **MOB-6** | **Tasks + Memory + Costs depth** | Task detail/actions, agent memory read, costs/budget glance. | Read surfaces render live; any write (task nudge/create) is gated + confirmed. | write-gates reviewed | MOB-1 |
+| **MOB-7** *(optional, later)* | **Point at a packaged/local instance over a tunnel** | Loopback-session auth (not Clerk) to a packaged instance via an operator tunnel; the audited LAN-bind/Tailscale posture. | Reaches a packaged instance over a tunnel with the loopback session; hosted-first stays the default. | **stage→audit** (auth + reachability posture) | H5(packaging); MOB-1 |
+
+**Sequencing:** MOB-1 (done) → MOB-2 (real auth) → MOB-3 (push) / MOB-4 (dangerous approve) in parallel → MOB-5 (voice, dev build) → MOB-6 (depth) → MOB-7 (packaged, optional).
+
+---
+
+## 9. Open questions / decisions the operator must make
+
+| # | Decision | Blocks | Recommendation |
+|---|---|---|---|
+| **H5Q1** | **Auth model — Clerk-Expo vs device-pairing token.** | MOB-2 | **Clerk-Expo** (same org, refresh, Keychain, zero backend change). Pairing tokens only for the later packaged-instance path (MOB-7). |
+| **H5Q2** | **EAS/Expo account** — needed for dev builds (voice, production push). Free tier starts. | MOB-3 prod, MOB-5 | Create a free Expo account when voice/prod-push start; P0 needs none (Expo Go only). |
+| **H5Q3** | **Clerk publishable key for mobile** — the app needs `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (same key as web). Which instance — current dev, or wait for the production Clerk instance (`GO-LIVE.md` §1)? | MOB-2 | Use the current dev key to build MOB-2 now; swap to `pk_live_…` when the production Clerk instance lands. |
+| **H5Q4** | **Which features first after P0** — push vs dangerous-approve vs voice? | ordering | **Push first** (the at-a-distance payoff), then dangerous-approve, then voice. |
+| **H5Q5** | **App Store distribution later?** — or stay Expo-Go/dev-build/TestFlight for the single operator? | none now | **TestFlight/dev-build is enough** for one operator; App Store only if it goes multi-user. Not scoped this wave. |
+| **H5Q6** | **SDK/Clerk version alignment** — SDK 57 is bleeding-edge and `@clerk/clerk-expo` doesn't install cleanly against it yet (peer conflict). | MOB-2 | Either pin the SDK/Clerk combo that resolves, or land MOB-2 on an EAS dev build where the toolchain is pinned. Phase-1 avoids the issue with token-paste. |
+
+---
+
+## 10. Relationship to `DESIGN-packaging.md` §8 (reconciliation)
+
+`DESIGN-packaging.md` §8 (H5) proposed the iPhone surface as **v1 Telegram long-poll → v2 PWA → v3 native**, *within the packaged/loopback product*. This document **supersedes the "native app" question for the hosted product** and **reframes** it:
+
+- For the **hosted** deployment (the operator's real, live backend), the right remote surface is a **hosted-first Expo native app** — reachable anywhere, reusing Clerk + the web API, with the Mac-mini agents untouched. That's this epic (H5/MOB), and phase 1 is built.
+- The §8 **packaged Telegram long-poll** and **packaged PWA** remain the correct answers **for the packaged `.dmg`**, where loopback reachability is the constraint. They are not in conflict — they serve a different deployment. MOB-7 is the optional bridge (point the Expo app at a packaged instance over a tunnel).
+- Net: **hosted → native Expo (H5/MOB, this doc); packaged → Telegram/PWA (packaging §8).** The PLAN §0 H5 row is refined to name both tracks.
+
+---
+
+## 11. Phase-1 (MOB-1) — as built (this wave)
+
+A runnable Expo app at **`apps/mobile/`** (Expo SDK 57, TypeScript, managed) that **boots in Expo Go** and proves remote control against the **live hosted backend**.
+
+**What it does**
+- **Command Center** — text chat to Arturita (`POST …/arturita/converse`), rendering `reply.text` + a **"via" chip** (`provider · model` for an answer, `delegated · workMode` for a delegation, `degraded` when no LLM).
+- **Inbox / Approvals** — lists `GET …/approvals?status=pending`; **approve / reject / request-changes** via `POST /api/approvals/:id/decide`. Dangerous types are labelled and warn that *approve* may need step-up (MOB-4); **reject/revision always work**.
+- **Agents** — `GET …/agents` roster with status + heartbeat (label+glyph, colorblind-safe).
+- **Status** — live `/api/health` (db, scheduler, version, LLM providers) + the session's org; disconnect.
+
+**Auth (phase-1):** **token-paste** — the operator pastes a Clerk session JWT + API URL; the app validates by resolving `GET /api/orgs`, stores the bearer in the **iOS Keychain** (`expo-secure-store`), and scopes every call to the chosen org. **Clerk-Expo is designed and staged as MOB-2** — the code seam (`src/auth.tsx`) isolates token acquisition, so screens (which use only `getToken()` + `orgId`) don't change when Clerk lands. Paste is the **guaranteed-bootable fallback** the task called for; it's deliberately used because `@clerk/clerk-expo` does not install cleanly against the current Expo Go SDK (H5Q6).
+
+**Structure**
+```
+apps/mobile/
+  App.tsx                 # tab shell + auth gate (hand-rolled tabs — no nav lib, tiny dep surface)
+  index.ts                # registerRootComponent
+  app.json                # Expo config (name, scheme, bundleId, icons)
+  src/
+    config.ts             # API base URL (EXPO_PUBLIC_API_URL → hosted default) + Clerk key seam
+    api.ts                # fetch client (mirrors web/lib/api.ts) + typed endpoint helpers
+    auth.tsx              # AuthProvider: token-paste + org resolution (Clerk seam for MOB-2)
+    store.ts              # expo-secure-store session persistence
+    theme.ts, ui.tsx      # colorblind-safe (Okabe–Ito) tokens + primitives
+    screens/              # Connect, Health, CommandCenter, Inbox, Agents
+  README.md               # exact run instructions
+```
+
+**Verified**
+- `npm install` clean (468 pkgs, no peer conflicts — no Clerk dep in phase 1).
+- `tsc --noEmit` clean.
+- `expo export --platform ios` bundles (592 modules → 1.5 MB Hermes bytecode) — **loads in Expo Go**.
+- Live hosted backend: `/api/health` → `{status:"ok", db:"connected"}`; `/api/orgs` → 401 without token (gate confirmed). Client path shapes match.
+- **Additive:** own npm root (own `package.json`/`node_modules`); repo root has no `workspaces` field, so `web`/`backend`/`apps/desktop` installs/builds never touch it. **No backend change** (push register already exists; push is MOB-3).
+
+**Run:** `cd apps/mobile && npm install && npx expo start` → install Expo Go from the App Store → scan the QR (same Wi-Fi, or `npx expo start --tunnel` on any network). Connect with a pasted Clerk token (README shows how). Env: `EXPO_PUBLIC_API_URL` (defaults to hosted), `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (only once MOB-2 lands).
+
+---
+
+## 12. Verdict
+
+The phone is the web app's **peer**, not the Mac mini's client: a thin remote to the hosted API, authenticating to the same Clerk org, reusing the same gated endpoints — so *approving an action or talking to Arturita from anywhere* costs **almost no new backend surface** (push register already exists; Clerk gates unchanged). Phase 1 proves it end-to-end in **Expo Go** today with token-paste auth; **Clerk-Expo (MOB-2)** and **push (MOB-3)** are the two stories that turn a working proof into the at-a-distance product — each small, additive, and audited.
+
+**One line:** *an Expo iPhone app that signs into the same Clerk org and drives the hosted Mission Control API — Command Center, remote approvals, agents — leaving the Mac-mini agents and every backend gate exactly as they are.*

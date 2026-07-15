@@ -1,0 +1,26 @@
+{
+  "name": "@7ei/mission-control-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "description": "7Ei Mission Control — iPhone remote (Expo). Thin remote client to the hosted backend.",
+  "scripts": {
+    "start": "expo start",
+    "start:tunnel": "expo start --tunnel",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "export": "expo export --platform ios --output-dir dist"
+  },
+  "dependencies": {
+    "expo": "~57.0.6",
+    "expo-secure-store": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  }
+}

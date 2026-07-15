@@ -1,0 +1,25 @@
+# Expo / Metro
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Dependencies
+node_modules/
+
+# Native (dev builds — not used in Expo Go phase 1)
+/ios
+/android
+
+# Env — never commit
+.env
+.env*.local
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
