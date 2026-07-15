@@ -357,6 +357,40 @@ test('[MCA-R4] GRANDFATHER: a legacy org OWNER with no org_members row is not lo
   assert.equal((await asUser('GET', `/api/orgs/${LEGACY_ORG}`, OUTSIDER)).statusCode, 403, 'a non-owner non-member is still refused')
 })
 
+// ── 2c. MTI-03: PATCH /api/orgs/:orgId strips identity/ownership columns ──────────
+//
+// The org-edit route (orgs.ts) is membership-gated but deliberately NOT owner-gated:
+// a plain member may PATCH their own org (name, mission, …). But `ownerId` is now
+// role-determinant — enforceOrgRole grandfathers `organisations.ownerId` as an
+// implicit owner — so if the unvalidated body could rewrite it, a member could set
+// themselves as owner: a member→owner privilege escalation. The handler strips
+// `ownerId` + `id` from the patch (orgs.ts:149-153). This drives the REAL route
+// through the REAL membership gate and proves a member's self-escalation attempt
+// leaves ownership untouched, while a legitimate field still applies (the strip is
+// SELECTIVE, not a blanket no-op).
+
+test('[MCA-R4] MTI-03: a MEMBER cannot self-escalate ownership via PATCH /api/orgs/:orgId (ownerId + id stripped)', async () => {
+  const before = (await db.select().from(schema.organisations)).find((o: any) => o.id === ORG)
+  assert.equal(before.ownerId, OWNER, 'precondition: OWNER owns ORG')
+
+  // The member passes the membership gate (they ARE a member) and PATCH is not
+  // owner-gated — so the handler runs. The malicious body tries to seize ownership
+  // and rewrite the primary key, alongside a legitimate `mission` edit.
+  const res = await securedApp.inject({
+    method: 'PATCH',
+    url: `/api/orgs/${ORG}`,
+    headers: { authorization: `Bearer ${MEMBER}`, 'content-type': 'application/json' },
+    payload: { ownerId: MEMBER, id: 'evil-id', mission: 'set-by-member' },
+  })
+  assert.notEqual(res.statusCode, 401, 'a member authenticates')
+  assert.notEqual(res.statusCode, 403, `a member may edit their own org — got ${res.statusCode} ${res.body?.slice(0, 120)}`)
+
+  const after = (await db.select().from(schema.organisations)).find((o: any) => o.id === ORG)
+  assert.equal(after.ownerId, OWNER, 'ownerId is STRIPPED — a member cannot seize ownership via PATCH')
+  assert.equal(after.id, ORG, 'the primary key id is STRIPPED — it cannot be rewritten')
+  assert.equal(after.mission, 'set-by-member', 'a legitimate field still applies — the strip is selective, not a blanket no-op')
+})
+
 // ── 3. the record-derived tail: org comes from the row, not the path ─────────────
 
 test('[MCA-R4] record-derived /api/agents/:agentId — non-member 403, member 200, missing row 403 (fail closed)', async () => {
