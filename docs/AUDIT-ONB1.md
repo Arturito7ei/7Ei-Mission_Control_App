@@ -186,8 +186,21 @@ prefixes this system actually mints (`mca_`, `mci_inv_`, `art_`) plus the common
 `ghp_`, `xox[baprs]-`). Narrow prefixes, so the false-positive risk is negligible, and it closes the gap
 between what the doc promises and what the code checks.
 
-#### M5 — the two sources of truth already disagree on a safety default (`allowShell`)
+#### M5 — the two sources of truth already disagree on a safety default (`allowShell`)  ✅ **RESOLVED (2026-07-15)**
 `web/lib/adapterProfile.ts:40` vs `backend/src/services/adapter-registry.ts:104`
+
+> **DECISION (2026-07-15) — operator took the product call: new agents shell-OFF, existing grandfathered.**
+> The wizard no longer emits `MC_ALLOW_SHELL=1`. `web/lib/adapterProfile.ts` now appends an explicit
+> `MC_ALLOW_SHELL=0` for shell-capable runtimes (openclaw, custom) — matching the registry's `allowShell: false`
+> — with an operator opt-in (`runBlock(..., { allowShell: true })`, surfaced as an advanced off-by-default
+> checkbox in the Add-Agent wizard + Hire dialog). **Enforcement is client-side only** (`mc_adapter.py`'s local
+> `MC_ALLOW_SHELL`; no server gate reads the registry `allowShell`), so **no running agent is affected** — the
+> live OpenClaw ops agent's on-host `mc.env` is untouched and it keeps its shell. Registry ↔ wizard now agree,
+> test-locked on both sides (`web/lib/adapterProfile.test.ts`, `backend/src/tests/adapter-registry.test.ts:65`).
+> **Remaining arm, flagged, deliberately not flipped:** the mac-mini CLI installer `adapters/mac-mini/setup.sh`
+> still defaults `ALLOW_SHELL="1"` (its default preset is the shell executor + it is the live ops agent's own
+> installer, GO-LIVE §4). Left stable to avoid changing the live-agent re-install path — operator decision (see
+> `GO-LIVE.md` §4).
 
 This is the concrete harm behind flagged item (c), and it is not hypothetical:
 

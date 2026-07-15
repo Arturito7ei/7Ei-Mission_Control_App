@@ -3,7 +3,7 @@
 // External-runtime hires return a one-time token + host run block.
 import { useState } from 'react'
 import { api, API } from '@/lib/api'
-import { adapterProfile, runBlock } from '@/lib/adapterProfile'
+import { adapterProfile, runBlock, honorsShellFlag } from '@/lib/adapterProfile'
 import { tk, text, space } from '../tokens'
 import { Button, TextArea, TextInput } from '../ui'
 import { FormLabel, Modal, ModalTitle, RUNTIME_BADGE, sx, type Getter } from './shared'
@@ -15,6 +15,8 @@ export default function HireDialog({ orgId, getToken, onClose, onDone }: { orgId
   const [err, setErr] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Shell execution is OFF by default for new agents; the operator opts in here.
+  const [allowShell, setAllowShell] = useState(false)
 
   const propose = async () => {
     if (!prompt.trim()) return
@@ -39,12 +41,18 @@ export default function HireDialog({ orgId, getToken, onClose, onDone }: { orgId
     <Modal onClose={onClose}>
       {token ? (() => {
         const rt = proposal?.runtime || 'openclaw'
-        const block = runBlock(rt, API, token)
+        const block = runBlock(rt, API, token, { allowShell })
         const note = adapterProfile(rt).note
         return (
           <>
             <ModalTitle>✓ {proposal?.name} imported</ModalTitle>
             <p style={sx.hint}>One-time token (shown once). Copy the block, drop it on the {rt} host, and the agent is live. {note}</p>
+            {honorsShellFlag(rt) && (
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: space.sm, fontSize: text.xs.fontSize, color: tk.textDim, cursor: 'pointer', marginTop: space.md }}>
+                <input type="checkbox" checked={allowShell} onChange={e => setAllowShell(e.target.checked)} style={{ marginTop: 2 }} />
+                <span>Allow shell execution on the host (<code style={sx.code}>MC_ALLOW_SHELL=1</code>) — advanced. Off by default; only enable for an agent you intend to run host commands.</span>
+              </label>
+            )}
             <Button style={{ color: tk.accent, alignSelf: 'flex-start', marginTop: space.md }} onClick={() => { navigator.clipboard?.writeText(block); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? '✓ Copied' : '📋 Copy env + run command'}</Button>
             <pre style={sx.pre}>{block}</pre>
             <Button variant="primary" style={{ marginTop: space.md }} onClick={onDone}>Done</Button>

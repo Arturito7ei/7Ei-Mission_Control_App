@@ -4,7 +4,7 @@
 // token + mc.env block exactly once.
 import { useState } from 'react'
 import { api, API } from '@/lib/api'
-import { adapterProfile, runBlock } from '@/lib/adapterProfile'
+import { adapterProfile, runBlock, honorsShellFlag } from '@/lib/adapterProfile'
 import { tk, text, space } from '../tokens'
 import { Button, TextArea, TextInput } from '../ui'
 import { FormLabel, Modal, ModalTitle, RUNTIME_BADGE, sx, type Getter } from './shared'
@@ -23,6 +23,8 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
   const [err, setErr] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Shell execution is OFF by default for new agents; the operator opts in here.
+  const [allowShell, setAllowShell] = useState(false)
 
   const pickRuntime = (r: typeof RUNTIMES[number]) =>
     setF({ ...f, runtime: r.id, llmProvider: r.defProvider, llmModel: r.defModel, avatarEmoji: r.emoji })
@@ -41,8 +43,9 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
 
   // CC4 — the run block now matches the picked runtime's real adapter (claude_code
   // no longer falls through to the OpenClaw command).
-  const envSnippet = token ? runBlock(f.runtime, API, token) : ''
+  const envSnippet = token ? runBlock(f.runtime, API, token, { allowShell }) : ''
   const runtimeNote = adapterProfile(f.runtime).note
+  const shellCapable = honorsShellFlag(f.runtime)
 
   return (
     <Modal onClose={onClose}>
@@ -51,6 +54,12 @@ export default function AddAgentWizard({ orgId, getToken, onClose, onDone }: { o
           <ModalTitle>✓ {f.name} onboarded</ModalTitle>
           <p style={sx.hint}>Copy this agent token now — it is shown only once. Paste it into the runtime's <code style={sx.code}>mc.env</code>. {runtimeNote}</p>
           <div style={sx.tokenBox}>{token}</div>
+          {shellCapable && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: space.sm, fontSize: text.xs.fontSize, color: tk.textDim, cursor: 'pointer' }}>
+              <input type="checkbox" checked={allowShell} onChange={e => setAllowShell(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Allow shell execution on the host (<code style={sx.code}>MC_ALLOW_SHELL=1</code>) — advanced. Off by default; only enable for an agent you intend to run host commands.</span>
+            </label>
+          )}
           <Button style={{ color: tk.accent, alignSelf: 'flex-start' }} onClick={() => { navigator.clipboard?.writeText(envSnippet); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>
             {copied ? '✓ Copied env' : '📋 Copy mc.env block'}
           </Button>
