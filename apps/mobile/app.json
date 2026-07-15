@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "7Ei Mission Control",
+    "slug": "7ei-mission-control-mobile",
+    "scheme": "sevenei-mc",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1220"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.7ei.missioncontrol.mobile"
+    },
+    "android": {
+      "package": "ai.7ei.missioncontrol.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1220",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "//": "EXPO_PUBLIC_API_URL / EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY are read from env at runtime via process.env; see README."
+    }
+  }
+}
