@@ -23,6 +23,7 @@ import {
   countLessonEntries, isOrchestratorRole, buildConsolidationReport,
 } from './consolidation'
 import { isExternalAgent } from './agent-runtime'
+import { auditRetentionDue, auditRetentionDays, pruneAuditLogs } from './audit-retention'
 import type { MemoryEntry } from './memory'
 
 const TICK_INTERVAL_MS = 60_000  // check every minute
@@ -64,6 +65,9 @@ async function runDueTasks() {
     maybeRunNightlyKvExport(now).catch(err => console.error('KV export error:', err))
     // MCA-76: weekly memory consolidation (Sundays at/after 04:00 UTC, once per day).
     maybeRunWeeklyConsolidation(now).catch(err => console.error('Weekly consolidation error:', err))
+    // Epic ONB / audit H-1: prune audit_logs older than the retention window
+    // (default 90d) once per UTC day. Bounds the now-live trail's storage growth.
+    maybeRunAuditRetention(now).catch(err => console.error('Audit retention error:', err))
   } catch (err) {
     console.error('Scheduler tick error:', err)
   }
@@ -176,6 +180,20 @@ async function consolidateOrgMemory(org: { id: string; name: string | null }, no
     status: external ? 'assigned' : 'pending', priority: 'medium',
     kanbanColumn: external ? 'in_progress' : 'todo', createdAt: new Date(),
   } as any)
+}
+
+// Epic ONB / audit H-1: audit-log retention. Runs on the first scheduler tick at or
+// after AUDIT_RETENTION_HOUR_UTC each day, at most once per UTC day (same shape as the
+// KV export / consolidation sweeps). The retention window is resolved from the env
+// HERE, at the orchestration boundary, and passed into the pure prune executor.
+let lastAuditRetentionDay: string | null = null
+
+export async function maybeRunAuditRetention(now: Date): Promise<void> {
+  if (!auditRetentionDue(now, lastAuditRetentionDay)) return
+  lastAuditRetentionDay = now.toISOString().slice(0, 10)
+  const retentionDays = auditRetentionDays(process.env)
+  const pruned = await pruneAuditLogs({ now, retentionDays })
+  if (pruned > 0) console.log(`🧹 Audit retention: pruned ${pruned} audit_logs rows older than ${retentionDays}d`)
 }
 
 // MCA-PC C3: fire a routine from any trigger (cron, webhook, or API). Creates a
