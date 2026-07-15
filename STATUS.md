@@ -1,8 +1,23 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-15 (Epic ONB — **ONB4 the one-time key claim: the onboarding core (ONB1–ONB4) is complete**; prior: ONB3 audit H-1 closed; prior: ONB3 the join request + the board-approval gate; prior: the re-audit of the pre-ONB3 hardening; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (Epic ONB — **ONB6 the create-invite UI + copy-able onboarding prompt + CLI: onboarding is usable end-to-end**; prior: ONB4 the one-time key claim [core ONB1–ONB4 complete]; prior: ONB3 audit H-1 closed; prior: ONB3 the join + board-approval gate; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-15) — Epic ONB / ONB4: the ONE-TIME KEY CLAIM — the credential lands, once, after approval. The onboarding core (ONB1–ONB4) is complete:**
+**Latest (2026-07-15) — Epic ONB / ONB6: the CREATE-INVITE experience — onboarding is now usable end-to-end. One paste onboards an agent. Stopped for the independent ONB6 audit.**
+
+The operator-facing half of the epic. No backend change — the ONB1–ONB4 contract was already complete; ONB6 surfaces it.
+
+- **Create-invite dialog (Cockpit → "✉ Invite an agent").** Owner-gated. Pick the allowed runtime(s), single-use (default) vs bounded multi-use, a TTL; on create the dialog shows **exactly once** the invite token + the **copy-able onboarding prompt** (`buildOnboardingPrompt`, ~40 lines) with copy buttons + the doc URL, and says plainly they are shown once and unrecoverable. When hosted-join is closed it says so honestly.
+- **The raw claimed agent key is NEVER shown.** The dialog reveals the invite token and the prompt — never a claimed agent token (there is no code path to one). `operatorCanSeeClaimedKey` stays `false`; the claimed key is minted only when the joining agent claims it and only the claimer ever sees it.
+- **The adapter picker renders FROM the server registry** (`GET /api/adapters`), not client-side `adapterProfile.ts` — `pickableAdapters` = `invitable && available`, never `internal`. This closes the ONB1 audit's "second client-side source of truth" clause **for the invite flow**. (Residual: `adapterProfile.ts` still generates the *manual* Add-Agent/Hire `mc.env` run-block client-side — a different concern — so the manual path's 4-runtime list is not yet registry-driven; noted for the auditor + ONB7.)
+- **Invite list + revoke; join requests in the Inbox.** Active invites list with **colorblind-safe** status pills (icon+label+tone) + owner-gated **Revoke** (reuses the ONB1 routes). Pending **join requests surface in the shipped Inbox** as distinct `🤝 Agent wants to join` cards that now render their machine-generated self-declared/unverified warnings — decided through the ONB3-H1-hardened owner-gated `applyJoinDecision` (reuse, no forked UI).
+- **CLI.** `7ei-mc invite create` (Clerk-authed operator; prints the invite token + the pastable prompt; **never a claimed agent token**) and `7ei-mc onboard --invite <token>` — the **agent-side** client (join → poll the claim until a human approves → claim once → write a **chmod-600 `mc.env`** with only `MC_BASE_URL`/`MC_AGENT_TOKEN`/`MC_WORKDIR` + flags, **never an LLM key**; the token is written to the file and **never printed**). Legacy `onboard` unchanged.
+- **Not touched:** the audit/telemetry hooks (still a no-op), `allowShell`/`MC_ALLOW_SHELL`, the live adapter, the deployment posture. No backend change, no invariant weakened. **Stopped after ONB6 for the independent audit — ONB5/ONB7 not started.**
+
+**Invariant green: 1221 backend tests (unchanged — no backend edit) · 11/11 evals · web build clean + 186 web tests (+5 ONB6) · 15 CLI tests (+8 ONB6).**
+
+---
+
+**Prior (2026-07-15) — Epic ONB / ONB4: the ONE-TIME KEY CLAIM — the credential lands, once, after approval. The onboarding core (ONB1–ONB4) is complete:**
 
 The last piece of the inverted token lifecycle. An approved agent finally gets a credential — minted only after a human approves, claimed exactly once by the party that will use it, never through an operator's clipboard or a log.
 
