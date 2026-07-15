@@ -141,10 +141,74 @@ the secured scope enforces membership (this fix). The `auth-scoping` boot now mi
    the bare `:agentId`/`:taskId` routes (those handlers already load the record). The
    `/api/orgs/:orgId/*` bulk pays **no** extra read (path param).
 
+## Follow-up (2026-07-15) — HIGH-1 closed: the record routes are now gated too
+
+The first cut of this fix was **not** truly surface-wide (independent audit HIGH-1,
+`docs/AUDIT-MCA-membership-review.md`): `resolveRequestOrg` knew only three params
+(`:orgId`/`:agentId`/`:taskId`), so ~25 top-level record routes whose org lived in a
+differently-named param (`:projectId`, `:goalId`, `:itemId`, `:skillId`, and the generic
+`:id` for secrets/budgets/plugins/workspaces/attachments/watchdogs/scheduled/webhooks/
+policies/revisions) resolved `scoped:false` → the gate stood down → any logged-in user
+could read/delete another org's secret, confidential knowledge doc, project, policy,
+webhook, or agent revision. Now closed:
+
+- **URL-PREFIX → owning-table derivation** (`RECORD_ORG_ROUTES`, `middleware/rbac.ts`).
+  Because the generic `:id` is shared across ~10 tables, the resolver keys on the route
+  PREFIX (`req.routeOptions.url`), not the param name. One entry per owning table:
+
+  | Route prefix | id param | owning table |
+  |---|---|---|
+  | `/api/projects/` | `:projectId` | `projects` |
+  | `/api/goals/` | `:goalId` | `goals` |
+  | `/api/knowledge/` | `:itemId` | `knowledge_items` |
+  | `/api/skills/` | `:skillId` | `skills` (nullable org — see flag) |
+  | `/api/secrets/` | `:id` | `secrets` |
+  | `/api/budgets/` | `:id` | `budget_policies` |
+  | `/api/plugins/` | `:id` | `plugins` |
+  | `/api/workspaces/` | `:id` | `workspaces` |
+  | `/api/attachments/` | `:id` | `task_attachments` |
+  | `/api/watchdogs/` | `:id` | `task_watchdogs` |
+  | `/api/scheduled/` | `:id` | `scheduled_tasks` |
+  | `/api/webhooks/` | `:id` | `webhooks` |
+  | `/api/policies/` | `:id` | `execution_policies` |
+  | `/api/revisions/` | `:id` | `config_revisions` |
+
+  Each **fails closed**: a missing/foreign record → `orgId: null` → `enforceOrgRole` →
+  403, the same contract as the `:agentId`/`:taskId` tail. `:orgId`/`:agentId`/`:taskId`
+  precedence and behaviour are unchanged; the prefix tier only runs when the path carries
+  none of them. Backward compatible: without a `routeUrl` argument the prefix tier is
+  skipped, so existing callers are unaffected.
+
+- **FLAGGED edge — global vs per-org skills.** `skills.orgId` is nullable: a `null` row is
+  a **shared global-library** skill (not a tenant record). Gating it would 403 everyone out
+  of the shared library, so the resolver **stands down** (`scoped:false`) for a global skill
+  but **enforces membership** for a per-org custom skill (`orgId != null`); a *missing* skill
+  still fails closed. The global-library **collection** routes (`GET/POST /api/skills`,
+  `sync`, `obsidian-sync`) are org-agnostic and sit on the leak-guard's EXEMPT allowlist.
+  (The pre-existing fact that `GET /api/skills` lists all-org library skills is unchanged
+  and out of this fix's scope — a shared-library design choice, not a tenant leak.)
+
+- **Widened leak-guard (can't silently reopen).** `membership-scoping.test.ts` replaced the
+  `/api/orgs/:orgId/*` filter with an **allowlist-negation sweep over ALL secured routes**:
+  every secured route must resolve an org (gate covers it) OR be on a short, justified
+  EXEMPT allowlist (16 genuinely org-agnostic/self-authorizing routes — `GET /api/orgs`,
+  the global skill library, static catalogues, `approvals/:id/decide` which self-enforces,
+  push-token register, …). A new secured route that resolves `scoped:false` unlisted now
+  FAILS the test. A **self-test** proves the guard has teeth; a per-route **behavioural
+  sweep** drives a non-member at every non-exempt route → 403; targeted tests drive a
+  non-member at each real ORG record → 403 and a member → non-403. The boot now also
+  registers **`webhookRoutes`**, which was **missing** from the original boot — the exact
+  blind spot that let the webhook routes escape the first sweep.
+
+- **L-1 wording corrected.** With the above, membership is now enforced across the full
+  secured surface — the `/api/orgs/:orgId/*` bulk, the `:agentId`/`:taskId` tail, AND the
+  top-level record routes. The "surface-wide / a new org route can't be added ungated"
+  guarantee now holds (and the leak-guard enforces it mechanically).
+
 ## Verify
 
 ```
-cd backend && npm test        # 1253 pass, 0 fail
+cd backend && npm test        # 1263 pass, 0 fail
               npm run evals    # 11/11
               npm run typecheck # clean
 ```

@@ -59,6 +59,69 @@ test('[MCA-R4] resolveRequestOrg: :orgId takes precedence over :agentId (path or
   assert.deepEqual(r, { scoped: true, orgId: 'org-path' })
 })
 
+// ─── resolveRequestOrg: the top-level record routes (AUDIT-MCA HIGH-1) ───────────
+
+// A fake db exposing exactly the relational query keys under test. `resolveRequestOrg`
+// only touches the ONE table its route prefix maps to, so a single seeded key suffices.
+function fakeTableDb(tables: Record<string, any | undefined>) {
+  const query: any = {}
+  for (const [k, row] of Object.entries(tables)) query[k] = { findFirst: async () => row }
+  return { query } as any
+}
+
+test('[MCA-R4] resolveRequestOrg: derives org from a record via URL PREFIX (generic :id disambiguated by route)', async () => {
+  // `/api/secrets/:id` and `/api/webhooks/:id` share the generic `:id` — the PREFIX,
+  // not the param name, selects the owning table.
+  assert.deepEqual(
+    await resolveRequestOrg({ id: 'sec-1' }, fakeTableDb({ secrets: { id: 'sec-1', orgId: 'org-s' } }), '/api/secrets/:id'),
+    { scoped: true, orgId: 'org-s' },
+  )
+  assert.deepEqual(
+    await resolveRequestOrg({ id: 'wh-1' }, fakeTableDb({ webhooks: { id: 'wh-1', orgId: 'org-w' } }), '/api/webhooks/:id/test'),
+    { scoped: true, orgId: 'org-w' },
+  )
+  // record-specific param name (`:projectId`) — same prefix mechanism
+  assert.deepEqual(
+    await resolveRequestOrg({ projectId: 'p1' }, fakeTableDb({ projects: { id: 'p1', orgId: 'org-p' } }), '/api/projects/:projectId/board'),
+    { scoped: true, orgId: 'org-p' },
+  )
+})
+
+test('[MCA-R4] resolveRequestOrg: a MISSING record on a mapped prefix fails closed (scoped:true, orgId:null → 403)', async () => {
+  assert.deepEqual(
+    await resolveRequestOrg({ id: 'ghost' }, fakeTableDb({ secrets: undefined }), '/api/secrets/:id'),
+    { scoped: true, orgId: null },
+  )
+})
+
+test('[MCA-R4] resolveRequestOrg: a SHARED GLOBAL skill (orgId null) stands down (scoped:false); a missing one fails closed', async () => {
+  // The FLAGGED skills edge: a real row with a null orgId is the global library →
+  // scoped:false (gate stands down). Distinguished from a MISSING row (fail closed).
+  assert.deepEqual(
+    await resolveRequestOrg({ skillId: 'g1' }, fakeTableDb({ skills: { id: 'g1', orgId: null } }), '/api/skills/:skillId'),
+    { scoped: false },
+  )
+  assert.deepEqual(
+    await resolveRequestOrg({ skillId: 'o1' }, fakeTableDb({ skills: { id: 'o1', orgId: 'org-x' } }), '/api/skills/:skillId'),
+    { scoped: true, orgId: 'org-x' },
+  )
+  assert.deepEqual(
+    await resolveRequestOrg({ skillId: 'ghost' }, fakeTableDb({ skills: undefined }), '/api/skills/:skillId'),
+    { scoped: true, orgId: null },
+  )
+})
+
+test('[MCA-R4] resolveRequestOrg: a mapped prefix WITHOUT its id param (collection/utility sub-route) → scoped:false', async () => {
+  // `/api/scheduled/presets` shares the `/api/scheduled/` prefix but carries no id.
+  assert.deepEqual(await resolveRequestOrg({}, fakeTableDb({}), '/api/scheduled/presets'), { scoped: false })
+})
+
+test('[MCA-R4] resolveRequestOrg: no routeUrl → prefix derivation is skipped (backward compatible)', async () => {
+  // Existing 2-arg callers (and non-record routes) are unaffected: without a routeUrl
+  // there is no prefix match, so a bare id param is NOT a record route.
+  assert.deepEqual(await resolveRequestOrg({ id: 'x' }, fakeTableDb({})), { scoped: false })
+})
+
 // ─── requireOrgMembership (the preHandler) ───────────────────────────────────
 
 /** A fake reply that records the first code()/send() it receives. */
