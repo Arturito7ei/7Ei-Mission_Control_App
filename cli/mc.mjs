@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 7ei-mc — thin operator CLI over the agent API. Zero dependencies (Node 18+ global fetch).
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, rmSync } from 'node:fs'
 import { buildRequest, HELP } from './lib.mjs'
 import { parseOnboard, orgRequest, agentRequest, ONBOARD_HELP } from './onboard.mjs'
 import {
@@ -201,6 +201,11 @@ async function runAgentOnboard(rest) {
   }
 
   // 3) Write the token to a chmod-600 mc.env. NEVER print it.
+  // Remove any pre-existing file FIRST: writeFileSync's `mode` is honoured only when
+  // the file is created, so overwriting a mc.env another run (or tool) left behind
+  // world-readable would write the fresh agent token while keeping those loose perms.
+  // Deleting first makes the 0o600 apply atomically at creation, with no exposure window.
+  rmSync(cfg.out, { force: true })
   writeFileSync(cfg.out, mcEnvLines(cfg, base, token), { mode: 0o600 })
   console.log(`✓ onboarded — wrote ${cfg.out} (chmod 600). The agent token is in the file and was never printed.`)
   console.log(`  Source it and start your adapter: set -a; source ${cfg.out}; set +a`)
