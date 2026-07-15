@@ -323,6 +323,36 @@ test('[ONB3] every join-request decision route is Clerk-secured and org-scoped',
   }
 })
 
+// AUDIT-ONB3 H-1 — the FOURTH door into the board-approval gate.
+//
+// `POST /api/approvals/:id/decide` is the route the shipped Inbox/Governance card
+// calls, and it funnels an `agent_join_request` decision into `applyJoinDecision` —
+// so deciding it CREATES (or refuses) the agent, exactly like the dedicated owner
+// routes above. But it looks the approval up BY ID and carries no `:orgId` path param,
+// so two guards are blind to it: `requireOrgRole` no-ops without an `:orgId` (R-4), and
+// the MCA-85 leak net above only inspects `/:orgId|:agentId/` routes. It must never be
+// public, and — the part a route table cannot see — it must enforce membership + the
+// type-mapped role (owner for agent-minting) against the org DERIVED FROM THE ROW.
+//
+// This asserts the visible half (Clerk-secured, single door). The invisible half — a
+// non-member is 403, a member is 403 on agent_join_request/agent_create but allowed on
+// a lower-stakes card, an owner is allowed on all — is a DRIVEN request against the
+// real gate and real DB in `onb3-approval-gate.test.ts` (a route-table assertion cannot
+// reach it, which is precisely how H-1 hid).
+test('[ONB3-H1] POST /api/approvals/:id/decide is Clerk-secured (membership + type-role enforced in onb3-approval-gate.test.ts)', async () => {
+  resetOpenApi()
+  const app = await bootLikeIndex()
+  await app.close()
+
+  const routes = collectedRoutes()
+  const decideRoutes = routes.filter(r => r.url === '/api/approvals/:id/decide')
+  assert.deepEqual(
+    decideRoutes.map(r => `${r.method} ${r.url} [${r.auth}]`),
+    ['POST /api/approvals/:id/decide [clerk]'],
+    'the generic approvals decide route must exist exactly once and be Clerk-secured — it is a door into the agent-minting gate, and it has no :orgId for requireOrgRole/the leak net to catch, so it must never be public',
+  )
+})
+
 test('[MCA-85] secured scope enforces 401; public webhook receiver is not gated', async () => {
   const app = Fastify({ logger: false })
   // Real Clerk hook, but with a verifier that always rejects — stands in for an

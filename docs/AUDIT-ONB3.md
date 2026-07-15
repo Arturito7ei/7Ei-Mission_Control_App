@@ -6,6 +6,20 @@ rather than reasoned about.*
 
 **VERDICT: NEEDS-FIXES-BEFORE-ONB4.**
 
+> **UPDATE 2026-07-15 — H-1 CLOSED (follow-up PR, builder, not this auditor).** The one blocking
+> finding below is fixed on `main`. The generic `POST /api/approvals/:id/decide` route now derives the
+> org **from the approval row** and enforces a role **mapped from the approval type** — OWNER for the
+> agent-minting types (`agent_join_request`, `agent_create`, and a `low_trust_review` wrapping one),
+> MEMBER for everything else, and **membership is now always required** (a caller with no `org_members`
+> row for the approval's org is 403, for every type). The mapping is a tested pure helper
+> (`services/approval-authz.ts`) and both doors — the dedicated owner routes and this generic one — now
+> run through **one** enforcement path (`enforceOrgRole` in `middleware/rbac.ts`). Proof is a **driven**
+> test (`tests/onb3-approval-gate.test.ts`, 9 cases: non-member→403, member→403 on the minting types but
+> allowed on a lower-stakes card, owner→allowed on all, for both the join card and a generic card) — each
+> security case fails against the pre-fix `main`. The leak guard now names the route explicitly
+> (`auth-scoping.test.ts` `[ONB3-H1]`). **ONB4 may now merge.** See the addendum at the foot of the H-1
+> section and "What must change before ONB4" #1. Everything else in this audit stands unchanged.
+
 The story ONB3 tells about itself is, with one exception, **true**: the public join endpoint mints
 no credential, the single-use consume is a real compare-and-set, the approved agent is contained
 with `api_token_hash = NULL`, and the posture constants are honest in both directions. I could not
@@ -25,7 +39,7 @@ and before `MC_ENABLE_REMOTE_ONBOARDING` is ever set.
 | Severity | Count | Status |
 |---|---|---|
 | Blocker | 0 | — |
-| High | 1 (H-1, the approval gate is not owner-gated on the Inbox door) | **open — builder/operator call** |
+| High | 1 (H-1, the approval gate is not owner-gated on the Inbox door) | **CLOSED 2026-07-15** (follow-up PR — see addendum) |
 | Medium | 3 (M-1 integrity, M-2 rate-limit bypass, M-3 secret scope) | **all three fixed here** |
 | Low | 4 | 0 fixed, 4 recorded |
 | Nit / informational | 2 | recorded |
@@ -101,6 +115,41 @@ non-owner an `agent_join_request` decision** — a route-table assertion cannot 
 to be a driven request. (The broader problem — the whole `/api/orgs/:orgId/*` surface is
 Clerk-authenticated but not membership-checked — is **pre-existing and out of ONB3's scope**, but it is
 what makes H-1 cross-tenant rather than merely intra-org. It deserves its own PR.)
+
+### H-1 — FIX ADDENDUM (2026-07-15, follow-up PR — builder, not this auditor)
+
+The operator's ruling on "may a non-owner member approve a join?" was **no** for agent-minting, **yes**
+(with membership) for everyday cards. That policy is now implemented, and it is **data-driven from the
+approval type** so it cannot drift open:
+
+- **`services/approval-authz.ts`** (new, pure, tested) — `requiredRoleForApproval({ type, actionType })`:
+  `owner` for `AGENT_MINTING_APPROVAL_TYPES` (`agent_join_request`, `agent_create`) and for a
+  `low_trust_review` case whose wrapped `actionType` is agent-minting; `member` for any other well-formed
+  type (approval types are open-ended — an agent's plan emits `[APPROVAL: <type>]` with an arbitrary
+  string, so defaulting everyday cards to owner would over-restrict); **`owner` (fail closed)** for an
+  absent / empty / non-string type. A new minting card type is one array entry away from being gated.
+- **`middleware/rbac.ts`** — new `enforceOrgRole({ userId, orgId, minRole })` is the single membership +
+  role check. Unlike the `requireOrgRole` preHandler, it **never skips on a missing org** (a data-derived
+  caller must fail closed, not inherit R-4). `requireOrgRole` now delegates to it, so the dedicated owner
+  routes and the generic decide route share **one** enforcement path.
+- **`routes/tasks.ts`** (the decide route) — resolves the approval, derives `orgId` + `type` (+
+  `payload.actionType`) **from the row**, computes the mapped role, and calls `enforceOrgRole` **before any
+  decision logic runs**. Non-member → 403 (every type); member → 403 on the minting types, allowed on the
+  rest; owner → allowed on all.
+
+**Proven, driven** (`tests/onb3-approval-gate.test.ts`): the exact exploit — outsider decides through the
+card and mints an agent — now returns 403 with **zero agents created**, and each security case fails
+against the pre-fix `main`. **`auth-scoping.test.ts` `[ONB3-H1]`** adds the route to the leak-guard net by
+name (a route-table assertion can't see the membership check, so the driven file owns that half — as this
+audit said it must). Invariant after the fix: **1209 backend tests (+10) · 11/11 evals · typecheck clean.**
+
+**Residual for THIS auditor to re-verify:** (1) the type→role map covers the agent-minting set the operator
+intended, and the member-default does not silently under-gate a money-moving type the operator would want at
+owner (today `wallet_tx` etc. sit at member + their existing A2 step-up; flag if that is wrong); (2) the
+`low_trust_review`→`actionType` escalation reads the right payload field. The **pre-existing** cross-tenant
+gap (the whole `/api/orgs/:orgId/*` surface is Clerk-authed but not membership-checked, and
+`GET …/approvals` enumerates ids) is **still open and still out of scope** — it is what made H-1
+cross-tenant, and it deserves its own PR.
 
 ---
 
@@ -326,7 +375,8 @@ UI. LOW; ONB6. See L-2.
 1. **H-1 — owner-gate the `POST /api/approvals/:id/decide` door for `agent_join_request` cards**, with a
    driven (not route-table) test. ONB4 turns an approval into a claimable credential; today's "any
    authenticated user can approve" becomes "any authenticated user can cause a credential to exist".
-   This is the one that blocks.
+   This is the one that blocks. **✅ DONE 2026-07-15 (follow-up PR) — see the H-1 fix addendum. ONB4 is
+   now unblocked.**
 2. **M-1 — make `applyJoinDecision` (and the ONB4 claim) genuinely transactional**, moving the test
    harness off `:memory:` first. The compensation shipped here is a floor, not a ceiling.
 3. **ONB4's claim must fail closed on a missing agent row** — never mint against `status = 'approved'`
@@ -337,7 +387,9 @@ UI. LOW; ONB6. See L-2.
 **Is ONB4 clear to start?** Yes, in parallel — nothing in ONB4's design depends on H-1 being open or
 closed. But **ONB4 must not merge before H-1 is fixed**, because ONB4 is precisely what converts H-1
 from "an unapproved agent that can authenticate to nothing" into "an unapproved agent that can claim a
-key". Fix H-1 in its own small PR first; it is ~10 lines and one test.
+key". Fix H-1 in its own small PR first; it is ~10 lines and one test. **✅ H-1 is now fixed on `main`
+(2026-07-15 follow-up PR — larger than the ~10-line sketch: a tested type→role helper, a shared
+enforcement path, and a driven suite). ONB4 may merge.**
 
 ---
 

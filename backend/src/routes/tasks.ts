@@ -28,6 +28,11 @@ import { JOIN_APPROVAL_TYPE, joinRequestView, parseJoinDecision } from '../servi
 import { applyJoinDecision } from '../services/join-approvals'
 import { isDangerousType, prepareApprovalRecord } from '../services/dangerous-approvals'
 import { evaluateLowTrustAction, buildReviewCaseRow, REVIEW_CASE_TYPE } from '../services/review'
+// AUDIT-ONB3 H-1 — the generic decide route has no `:orgId` in its path, so
+// `requireOrgRole` no-ops on it (the R-4 trap). We derive the org from the approval
+// row and enforce the type-mapped role through the SAME check the owner routes use.
+import { requiredRoleForApproval } from '../services/approval-authz'
+import { enforceOrgRole } from '../middleware/rbac'
 import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
@@ -443,6 +448,24 @@ export async function taskRoutes(app: FastifyInstance) {
     const { decision, note } = (req.body ?? {}) as any
     const approval = await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) })
     if (!approval) return reply.code(404).send({ error: 'approval not found' })
+
+    // AUDIT-ONB3 H-1 — the board-approval gate, on the door the Inbox card uses.
+    // This route has no `:orgId` path param, so `requireOrgRole` cannot see it (R-4);
+    // instead we derive the org FROM THE ROW and enforce the role the approval TYPE
+    // demands — OWNER for agent-minting (`agent_join_request`/`agent_create`, or a
+    // `low_trust_review` wrapping one), MEMBER for everything else, before ANY
+    // decision logic runs. Membership is now always required: an authenticated caller
+    // with no `org_members` row for the approval's org is refused, for every type.
+    const minRole = requiredRoleForApproval({
+      type: approval.type,
+      actionType: (approval.payload as any)?.actionType,
+    })
+    const gate = await enforceOrgRole({
+      userId: (req as any).auth?.userId,
+      orgId: approval.orgId,
+      minRole,
+    })
+    if (!gate.ok) return reply.code(gate.code).send({ error: gate.error })
 
     // Step-up is required for a direct dangerous type OR for a low-trust review
     // case wrapping a dangerous action (payload.requiresStepUp) — the review gate
