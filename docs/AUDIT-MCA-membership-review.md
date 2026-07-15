@@ -2,7 +2,25 @@
 
 _Auditor: independent review agent (did NOT build the change) · 2026-07-15 · reviewing commit `145a6dc` on `main`._
 
-## Verdict: **NEEDS-FIXES**
+> **UPDATE 2026-07-15 — HIGH-1 CLOSED (follow-up fix, build agent).** The ~25 top-level
+> record routes are now membership-gated. `resolveRequestOrg` gained a **URL-PREFIX →
+> owning-table** map (`RECORD_ORG_ROUTES`, `middleware/rbac.ts`) that derives the org for
+> every record route from its record — `:projectId→projects`, `:goalId→goals`,
+> `:itemId→knowledge_items`, `:skillId→skills`, and the generic `:id` disambiguated by
+> route prefix (`/api/secrets/:id→secrets`, `/api/webhooks/:id→webhooks`, …14 prefixes)
+> — failing closed (missing/foreign record → 403) exactly like the `:agentId`/`:taskId`
+> tail. The leak-guard was widened from an `/api/orgs/:orgId/*` filter to an
+> **allowlist-negation sweep over ALL secured routes** (`membership-scoping.test.ts`): a
+> secured route that resolves `scoped:false` without being on a short justified EXEMPT
+> allowlist now FAILS the test (self-test proves the guard has teeth; red-proof: disabling
+> the fix reds the sweep + the per-route non-member 403 proof). The behavioural sweep now
+> also boots `webhookRoutes` (it was **missing** from the original boot — the blind spot
+> that let the webhook routes escape). One edge FLAGGED and handled: a shared **global**
+> skill (`orgId = null`) stands down (readable), a per-org custom skill is gated, a missing
+> skill fails closed. See the "surface-wide" wording note (L-1) — now accurate. Awaiting
+> independent re-audit of this follow-up.
+
+## Verdict: **NEEDS-FIXES** — HIGH-1 now addressed (see UPDATE above); re-audit pending
 
 The change is well-built for the surface it covers — the `/api/orgs/:orgId/*` bulk and the
 `:agentId`/`:taskId` record tail are now consistently membership-gated, the grandfather path is
@@ -35,7 +53,7 @@ PATCH  /api/webhooks/:id           -> !=403 (reached handler)
 
 ---
 
-## HIGH-1 — ~25 org-scoped top-level record routes are still cross-tenant open (scope gate stands down, no in-handler check)
+## HIGH-1 — ~25 org-scoped top-level record routes are still cross-tenant open (scope gate stands down, no in-handler check) — ✅ **CLOSED** (follow-up fix; see UPDATE at top)
 
 **Root cause** — `resolveRequestOrg` (`backend/src/middleware/rbac.ts:98‑113`) only knows three
 params:

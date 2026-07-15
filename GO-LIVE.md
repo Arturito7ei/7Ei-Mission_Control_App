@@ -343,12 +343,16 @@ the same way if/when you want request spans populated.
 
 ---
 
-## 8. Multi-tenant membership — ENFORCED surface-wide (the R-4 fix) ✅ DONE · NO operator action
+## 8. Multi-tenant membership — ENFORCED surface-wide (R-4 + HIGH-1 record routes) ✅ DONE · NO operator action
 
 > **No console action required.** Org membership is now enforced on every Clerk-authed
-> `/api/orgs/:orgId/*` route (and the `:agentId`/`:taskId` record-derived tail) by one
-> scope-level gate (`requireOrgMembership`, `backend/src/middleware/rbac.ts`). Before
-> this, any logged-in user could act on any org by swapping `:orgId`.
+> `/api/orgs/:orgId/*` route, the `:agentId`/`:taskId` record-derived tail, **and the ~25
+> top-level record routes** (`/api/secrets/:id`, `/api/knowledge/:itemId`,
+> `/api/projects/:projectId`, `/api/webhooks/:id`, … — HIGH-1 close, 2026-07-15) by one
+> scope-level gate (`requireOrgMembership`, `backend/src/middleware/rbac.ts`). The gate is
+> now truly **surface-wide and fail-closed** — a missing/foreign record → 403 — and a
+> leak-guard (`membership-scoping.test.ts`) fails CI if any new secured route ships ungated.
+> Before this, any logged-in user could act on any org by swapping `:orgId` or an id.
 >
 > **Your own access is grandfathered automatically.** `enforceOrgRole` honours an org's
 > `ownerId` as an implicit owner, so you keep full access to your org(s) with **no

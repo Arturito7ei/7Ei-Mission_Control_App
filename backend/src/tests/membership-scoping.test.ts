@@ -43,6 +43,7 @@ let securedApp: FastifyInstance
 let agentApp: FastifyInstance
 let collectedRoutes: () => Array<{ auth: string; method: string; url: string }>
 let hashToken: (t: string) => string
+let resolveRequestOrg: (params: any, database?: any, routeUrl?: string) => Promise<{ scoped: false } | { scoped: true; orgId: string | null }>
 
 const ORG = 'org-1'
 const OWNER = 'user-owner'       // org_members role = owner
@@ -68,6 +69,7 @@ before(async () => {
   ;({ hashToken } = await import('../middleware/agent-token'))
   const { createClerkAuth } = await import('../middleware/clerk-auth')
   const { requireOrgMembership } = await import('../middleware/rbac')
+  ;({ resolveRequestOrg } = await import('../middleware/rbac'))
   const { registerJsonBodyParser } = await import('../middleware/body-parser')
 
   // ── Seed: one org, an owner + a member; an agent + a task that belong to it. ──
@@ -89,6 +91,27 @@ before(async () => {
   await db.insert(schema.tasks).values({
     id: TASK_ID, orgId: ORG, agentId: AGENT_ID, title: 'Ship it', status: 'pending', createdAt: new Date(),
   } as any)
+
+  // ── Seed one real record of ORG in every table the HIGH-1 record routes address,
+  //    so the targeted tests below prove a NON-MEMBER is refused on a record that
+  //    genuinely EXISTS (membership enforced), not merely on a missing-row 403.
+  await db.insert(schema.projects).values({ id: 'proj-1', orgId: ORG, name: 'P', createdAt: new Date() } as any)
+  await db.insert(schema.goals).values({ id: 'goal-1', orgId: ORG, title: 'G', createdAt: new Date() } as any)
+  await db.insert(schema.knowledgeItems).values({ id: 'know-1', orgId: ORG, name: 'K', type: 'document', content: 'CONFIDENTIAL', backend: 'upload', createdAt: new Date() } as any)
+  await db.insert(schema.secrets).values({ id: 'sec-1', orgId: ORG, scope: 'company', key: 'K', valueEncrypted: 'x', createdAt: new Date() } as any)
+  await db.insert(schema.budgetPolicies).values({ id: 'budg-1', orgId: ORG, scope: 'company', limitUsd: 100, createdAt: new Date() } as any)
+  await db.insert(schema.plugins).values({ id: 'plug-1', orgId: ORG, name: 'PL', version: '1.0.0', createdAt: new Date() } as any)
+  await db.insert(schema.workspaces).values({ id: 'ws-1', orgId: ORG, name: 'W', createdAt: new Date() } as any)
+  await db.insert(schema.taskAttachments).values({ id: 'att-1', orgId: ORG, taskId: TASK_ID, kind: 'link', name: 'f', createdAt: new Date() } as any)
+  await db.insert(schema.taskWatchdogs).values({ id: 'wd-1', orgId: ORG, taskId: TASK_ID, kind: 'runtime', threshold: '60', createdAt: new Date() } as any)
+  await db.insert(schema.scheduledTasks).values({ id: 'sch-1', orgId: ORG, agentId: AGENT_ID, title: 'R', input: 'R', cronExpression: '0 * * * *', enabled: true, triggerType: 'cron', createdAt: new Date() } as any)
+  await db.insert(schema.webhooks).values({ id: 'wh-1', orgId: ORG, name: 'WH', url: 'http://127.0.0.1:0/never', events: ['*'], enabled: 1, createdAt: new Date() } as any)
+  await db.insert(schema.executionPolicies).values({ id: 'pol-1', orgId: ORG, action: 'agent.hire', createdAt: new Date() } as any)
+  await db.insert(schema.configRevisions).values({ id: 'rev-1', orgId: ORG, entity: 'agent', entityId: AGENT_ID, createdAt: new Date() } as any)
+  // Two skills: a per-ORG custom skill (membership-enforced) and a shared GLOBAL
+  // library skill (orgId NULL — the gate must STAND DOWN, not lock everyone out).
+  await db.insert(schema.skills).values({ id: 'skill-org', orgId: ORG, name: 'OrgSkill', domain: 'integration', content: 'x', source: 'custom', createdAt: new Date() } as any)
+  await db.insert(schema.skills).values({ id: 'skill-global', orgId: null, name: 'GlobalSkill', domain: 'integration', content: 'x', source: 'github', createdAt: new Date() } as any)
 
   // ── The Clerk-secured scope, wired EXACTLY like src/index.ts: clerk hook, the
   //    onRoute tagger (so we can enumerate the surface), then the membership gate,
@@ -115,6 +138,7 @@ before(async () => {
   const { arturitaCustomModelRoutes } = await import('../routes/arturita-custom-model')
   const { customModelRoutes } = await import('../routes/custom-models')
   const { agentInviteRoutes } = await import('../routes/agent-invites')
+  const { webhookRoutes } = await import('../routes/webhooks')
   const { auditLogQueryRoutes } = await import('../middleware/audit-log')
   const { telemetryQueryRoutes } = await import('../services/telemetry')
 
@@ -152,6 +176,7 @@ before(async () => {
     await secured.register(arturitaCustomModelRoutes)
     await secured.register(customModelRoutes)
     await secured.register(agentInviteRoutes)
+    await secured.register(webhookRoutes)          // outbound webhook config — was MISSING from this boot (HIGH-1 blind spot)
     await secured.register(auditLogQueryRoutes)
     await secured.register(telemetryQueryRoutes)
   })
@@ -185,24 +210,94 @@ const asUser = (method: string, url: string, user: string | null) =>
     payload: method === 'GET' || method === 'HEAD' ? undefined : {},
   })
 
-// ── 1. the surface-wide sweep: every /api/orgs/:orgId/* route 403s a non-member ──
+// ── 1. the WIDENED leak-guard: an allowlist-negation sweep over EVERY secured route ──
+//
+// AUDIT-MCA HIGH-1 fix. The OLD sweep filtered to `/api/orgs/:orgId/*` — it proved
+// coverage only of the routes that were never the gap, and structurally excluded the
+// ~25 top-level record routes (`/api/secrets/:id`, `/api/knowledge/:itemId`, …) that
+// carried the org in a differently-named param and so slipped the gate. The NEW guard
+// inverts that: it enumerates EVERY secured route and requires each to EITHER resolve
+// an org (so the membership gate covers it) OR appear on a SHORT, JUSTIFIED exempt
+// allowlist of genuinely org-agnostic routes. A new secured route that resolves to
+// `scoped:false` without being allowlisted FAILS this test — the hole cannot reopen.
 
-test('[MCA-R4] every secured /api/orgs/:orgId/* route refuses an authenticated NON-MEMBER (403)', async () => {
-  const orgRoutes = collectedRoutes()
-    .filter(r => /^\/api\/orgs\/:orgId(\/|$)/.test(r.url))
-    // WebSocket upgrade routes can't be exercised with inject() as a plain request.
-    .filter(r => r.url !== '/api/orgs/:orgId/agents/:agentId/stream')
+// The exempt allowlist: secured routes that legitimately resolve to `scoped:false`.
+// Each is org-agnostic OR self-authorizing in-handler — never a cross-tenant record
+// addressed by id. Adding a route here is a deliberate, reviewed act.
+const EXEMPT = new Set<string>([
+  'GET /api/orgs',                    // lists ONLY the caller's own orgs (self-scoped)
+  'POST /api/orgs',                   // create a NEW org — no existing org to be a member of
+  'POST /api/orgs/import',            // imports a bundle into a NEW org owned by the caller
+  'GET /api/orgs/switch/list',        // lists orgs the caller OWNS (ownerId === caller)
+  'GET /api/users/:userId/orgs',      // self-only: callerId must equal :userId (in-handler)
+  'POST /api/approvals/:id/decide',   // derives org FROM the approval row + enforces type-role in-handler (ONB3 H-1)
+  'GET /api/agent-templates',         // static agent-preset catalogue (org-agnostic)
+  'GET /api/skills',                  // the shared GLOBAL skill library (org-agnostic; see L-skills flag)
+  'POST /api/skills',                 // create a library skill (global library write — pre-existing, flagged)
+  'POST /api/skills/sync',            // GitHub library sync (global)
+  'POST /api/skills/obsidian-sync',   // Obsidian library sync (global)
+  'GET /api/scheduled/presets',       // static cron presets
+  'GET /api/scheduled/preview',       // static cron math (no record)
+  'GET /api/webhooks/events',         // static webhook-event-name list
+  'POST /api/notifications/register',   // register a push token for a user id (device/user-scoped, not org)
+  'DELETE /api/notifications/register', // unregister a push token (device/user-scoped, not org)
+])
 
-  assert.ok(orgRoutes.length > 80, `expected the full org surface, got ${orgRoutes.length}`)
+/** Every `:param` in a route → a dummy value; `:orgId` → ORG so org routes point at
+ *  an org the outsider isn't in. Record ids stay dummy → the derivation fail-closes. */
+function synthParams(url: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const m of url.matchAll(/:([A-Za-z0-9_]+)/g)) out[m[1]] = m[1] === 'orgId' ? ORG : 'x'
+  return out
+}
 
+const securedSurface = () =>
+  collectedRoutes()
+    .filter(r => r.method !== 'HEAD' && r.method !== 'OPTIONS')
+    // WebSocket upgrade routes can't be exercised (or resolved) as plain requests.
+    .filter(r => !r.url.endsWith('/stream'))
+
+test('[MCA-R4] leak-guard: EVERY secured route resolves an org (gate covers it) OR is explicitly exempt', async () => {
+  const routes = securedSurface()
+  assert.ok(routes.length > 150, `expected the full secured surface, got ${routes.length}`)
+
+  const ungated: string[] = []
+  for (const r of routes) {
+    const resolved = await resolveRequestOrg(synthParams(r.url), db, r.url)
+    if (!resolved.scoped && !EXEMPT.has(`${r.method} ${r.url}`)) {
+      ungated.push(`${r.method} ${r.url}`)
+    }
+  }
+  assert.deepEqual(
+    ungated, [],
+    'these secured routes resolve to scoped:false and are NOT on the exempt allowlist — the ' +
+    'membership gate STANDS DOWN for them (a cross-tenant hole, HIGH-1 class). Either derive their ' +
+    'org in resolveRequestOrg (RECORD_ORG_ROUTES) or, if genuinely org-agnostic, add to EXEMPT with ' +
+    'justification:\n' + ungated.join('\n'),
+  )
+})
+
+test('[MCA-R4] leak-guard is REAL: an ungated secured route makes this guard FAIL (self-test)', async () => {
+  // Prove the guard has teeth: a synthetic secured route with no org param and no
+  // RECORD_ORG_ROUTES mapping resolves scoped:false; absent from EXEMPT it is flagged.
+  const rogue = { method: 'DELETE', url: '/api/rogue-widgets/:id' }
+  const resolved = await resolveRequestOrg(synthParams(rogue.url), db, rogue.url)
+  assert.equal(resolved.scoped, false, 'an unmapped record route must resolve scoped:false')
+  assert.ok(!EXEMPT.has(`${rogue.method} ${rogue.url}`), 'and would therefore be reported by the sweep above')
+})
+
+test('[MCA-R4] behavioural sweep: every NON-EXEMPT secured route 403s an authenticated NON-MEMBER', async () => {
   const leaks: string[] = []
-  for (const r of orgRoutes) {
+  for (const r of securedSurface()) {
+    if (EXEMPT.has(`${r.method} ${r.url}`)) continue
+    // Dummy record ids → the derivation fail-closes to a 403 before the handler runs,
+    // so this sweep never mutates a real record. Org routes point at ORG (outsider ∉).
     const res = await asUser(r.method, fillUrl(r.url), OUTSIDER)
     if (res.statusCode !== 403) leaks.push(`${r.method} ${r.url} → ${res.statusCode}`)
   }
   assert.deepEqual(
     leaks, [],
-    'these org-scoped routes did NOT 403 a non-member — the membership gate does not cover them:\n' + leaks.join('\n'),
+    'these secured routes did NOT 403 a non-member — the membership gate does not reject them:\n' + leaks.join('\n'),
   )
 })
 
@@ -282,6 +377,92 @@ test('[MCA-R4] record-derived /api/tasks/:taskId — non-member 403, member 200'
 test('[MCA-R4] /api/users/:userId/orgs is self-only — a caller cannot read another user’s memberships', async () => {
   assert.equal((await asUser('GET', `/api/users/${MEMBER}/orgs`, OUTSIDER)).statusCode, 403, 'cannot read another user’s orgs')
   assert.equal((await asUser('GET', `/api/users/${MEMBER}/orgs`, MEMBER)).statusCode, 200, 'a caller reads their OWN org list')
+})
+
+// ── 3b. the newly-covered TOP-LEVEL RECORD ROUTES (AUDIT-MCA HIGH-1) ─────────────
+//
+// These carry the org in a differently-named param (`:projectId`, `:goalId`,
+// `:itemId`, `:skillId`) or the generic `:id`, and used to slip the gate entirely:
+// an outsider could read/delete another org's secret, confidential knowledge doc,
+// project, execution policy, agent revision, webhook, … Now `resolveRequestOrg`
+// derives the org from the record via its URL PREFIX. Every id below is a REAL row
+// owned by ORG (not a missing-row 403) — this proves MEMBERSHIP is enforced.
+
+const RECORD_ROUTES: Array<[string, string]> = [
+  ['DELETE', '/api/secrets/sec-1'],
+  ['GET',    '/api/knowledge/know-1/content'],
+  ['DELETE', '/api/knowledge/know-1'],
+  ['DELETE', '/api/policies/pol-1'],
+  ['POST',   '/api/revisions/rev-1/rollback'],
+  ['POST',   '/api/webhooks/wh-1/test'],
+  ['PATCH',  '/api/webhooks/wh-1'],
+  ['DELETE', '/api/webhooks/wh-1'],
+  ['PATCH',  '/api/projects/proj-1'],
+  ['DELETE', '/api/projects/proj-1'],
+  ['GET',    '/api/projects/proj-1/board'],
+  ['PATCH',  '/api/goals/goal-1'],
+  ['DELETE', '/api/goals/goal-1'],
+  ['DELETE', '/api/budgets/budg-1'],
+  ['PATCH',  '/api/plugins/plug-1'],
+  ['DELETE', '/api/plugins/plug-1'],
+  ['PATCH',  '/api/workspaces/ws-1'],
+  ['DELETE', '/api/workspaces/ws-1'],
+  ['DELETE', '/api/attachments/att-1'],
+  ['PATCH',  '/api/watchdogs/wd-1'],
+  ['DELETE', '/api/watchdogs/wd-1'],
+  ['PATCH',  '/api/scheduled/sch-1'],
+  ['DELETE', '/api/scheduled/sch-1'],
+  ['GET',    '/api/skills/skill-org'],
+  ['PATCH',  '/api/skills/skill-org'],
+  ['DELETE', '/api/skills/skill-org'],
+]
+
+test('[MCA-R4] HIGH-1: a NON-MEMBER is refused (403) on EVERY top-level record route of a foreign org', async () => {
+  // The gate 403s in the preHandler, BEFORE any handler runs — so this loop drives
+  // real DELETE/PATCH/POST routes at ORG's records without mutating or firing them
+  // (no webhook fetch, no rollback, no delete). It is the exploit the audit proved,
+  // now closed at every door.
+  const leaks: string[] = []
+  for (const [method, url] of RECORD_ROUTES) {
+    const res = await asUser(method, url, OUTSIDER)
+    if (res.statusCode !== 403) leaks.push(`${method} ${url} → ${res.statusCode}`)
+  }
+  assert.deepEqual(leaks, [], 'a non-member reached these foreign-org record routes (cross-tenant leak):\n' + leaks.join('\n'))
+})
+
+test('[MCA-R4] HIGH-1: a MEMBER of the owning org is NOT blocked (non-403) on the same record routes', async () => {
+  // The operator must keep working. Reads + a non-destructive PATCH prove the gate
+  // lets a real member through; we avoid driving the member through the DELETEs so
+  // the seed survives for other assertions.
+  for (const [method, url] of [
+    ['GET',   '/api/knowledge/know-1/content'],
+    ['GET',   '/api/projects/proj-1/board'],
+    ['GET',   '/api/skills/skill-org'],
+    ['PATCH', '/api/projects/proj-1'],
+    ['PATCH', '/api/goals/goal-1'],
+    ['PATCH', '/api/plugins/plug-1'],
+    ['PATCH', '/api/watchdogs/wd-1'],
+    ['PATCH', '/api/scheduled/sch-1'],
+    ['PATCH', '/api/webhooks/wh-1'],
+  ] as const) {
+    const res = await asUser(method, url, MEMBER)
+    assert.notEqual(res.statusCode, 401, `${method} ${url} must not 401 a member`)
+    assert.notEqual(res.statusCode, 403, `${method} ${url} must not 403 a member — got ${res.statusCode} ${res.body?.slice(0, 120)}`)
+  }
+})
+
+test('[MCA-R4] skills: a SHARED GLOBAL library skill (orgId NULL) stands down; a per-ORG skill is membership-gated', async () => {
+  // FLAGGED edge case, failed OPEN-by-design only for the shared library: a skill with
+  // a null orgId is global — the gate must NOT 403 everyone out of it. But a per-org
+  // custom skill (orgId != null) is a tenant record and IS gated.
+  const globalByOutsider = await asUser('GET', '/api/skills/skill-global', OUTSIDER)
+  assert.notEqual(globalByOutsider.statusCode, 403, 'a shared global-library skill must remain readable (gate stands down)')
+
+  assert.equal((await asUser('GET', '/api/skills/skill-org', OUTSIDER)).statusCode, 403, 'a per-org custom skill is membership-gated')
+  assert.notEqual((await asUser('GET', '/api/skills/skill-org', MEMBER)).statusCode, 403, 'a member reads their org’s custom skill')
+
+  // A MISSING skill still fails closed (403), never a silent skip.
+  assert.equal((await asUser('GET', '/api/skills/does-not-exist', OUTSIDER)).statusCode, 403, 'missing skill fails closed')
 })
 
 // ── 4. the exempt boundary: agent-token API + public join are unaffected ─────────
