@@ -1,8 +1,21 @@
 # 7Ei Mission Control — Status
 
-_Last updated: 2026-07-14 (Epic ONB — **ONB3: the join request + the board-approval gate**; prior: the re-audit of the pre-ONB3 hardening: traces tenant-scoped, the adapter registry made the source of truth for redaction; prior: the hardening itself; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
+_Last updated: 2026-07-15 (Epic ONB — **ONB3 audit H-1 CLOSED: the board-approval gate is owner-gated on both doors**; prior: ONB3 the join request + the board-approval gate; prior: the re-audit of the pre-ONB3 hardening; prior: ONB2 the onboarding document; prior: ONB1 the onboarding spine) · auto-maintained by the build agent (bumped at each story/phase)._
 
-**Latest (2026-07-14) — Epic ONB / ONB3: the JOIN REQUEST + the BOARD-APPROVAL GATE — a human decides before any credential exists:**
+**Latest (2026-07-15) — Epic ONB / ONB3 audit H-1 CLOSED: the board-approval gate is now owner-gated on BOTH doors — the ONB4 blocker is cleared:**
+
+The independent ONB3 audit (`docs/AUDIT-ONB3.md`) proved one HIGH: the generic `POST /api/approvals/:id/decide` route — the door the shipped Inbox card actually calls — carried **no membership and no role check**. An authenticated user with **no `org_members` row** could approve a join and mint an agent (200), while the dedicated owner route refused the same caller (403). The route has no `:orgId` path param, so `requireOrgRole` no-ops on it (the R-4 trap) and the MCA-85 leak guard couldn't see it. This was the blocker that had to land **before ONB4** turns "approved" into "claimable credential".
+
+- **Membership is now always required, and the role is data-driven from the approval TYPE.** New pure helper `services/approval-authz.ts` — `requiredRoleForApproval()`: **owner** for the agent-minting types (`agent_join_request`, `agent_create`, and a `low_trust_review` wrapping one), **member** for every other well-formed type (approval types are open-ended — an agent's plan emits `[APPROVAL: <type>]` — so everyday cards keep their member reach and are not over-restricted), and **owner (fail closed)** for an absent/malformed type. A new minting card type is one array entry from being gated; it cannot drift open.
+- **One enforcement path, both doors.** New `enforceOrgRole()` in `middleware/rbac.ts` is the single membership + role check; `requireOrgRole` delegates to it. Unlike the preHandler it **never skips on a missing org** — the decide route derives `orgId` **from the approval row** (not the path) and enforces the mapped role **before any decision logic runs**. So the dedicated owner routes and the generic route share one check, and a future card type can't slip in ungated.
+- **Proven, driven, fails-against-main.** `tests/onb3-approval-gate.test.ts` (9 cases through the real route + real gate + real in-memory DB, three real identities): non-member → 403 on any decide (join card + generic card, **zero agents minted**), member → 403 on `agent_join_request`/`agent_create` but **allowed** on a lower-stakes card, owner → allowed on all. Each security case fails against the pre-fix `main`. `auth-scoping.test.ts` `[ONB3-H1]` adds the route to the leak-guard net by name.
+- **Not touched:** the audit/telemetry hooks (still a no-op — operator's cost call), `allowShell`/`MC_ALLOW_SHELL`, the live adapter. No invariant weakened, no posture constant flipped. The pre-existing cross-tenant gap (`/api/orgs/:orgId/*` is Clerk-authed but not membership-checked) is **still open, still its own PR**.
+
+**Invariant green: 1209 backend tests (+10) · 11/11 evals · typecheck clean. H-1 CLOSED → ONB4 may now merge.**
+
+---
+
+**Prior (2026-07-14) — Epic ONB / ONB3: the JOIN REQUEST + the BOARD-APPROVAL GATE — a human decides before any credential exists:**
 
 The story that inverts the token lifecycle. An external agent can now **describe itself** to Mission Control, and a human decides. **No token is minted at any point in ONB3** — that is ONB4, deliberately unbuilt.
 
