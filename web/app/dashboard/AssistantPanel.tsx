@@ -17,12 +17,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import { tk, text, space, ui } from './tokens'
 import { Button, Card, TextInput } from './ui'
-import AssistantOrb from './AssistantOrb'
+import Reactor from './Reactor'
 import AssistantPipelineConfig from './AssistantPipelineConfig'
 import {
   resolveVoiceState, toConverseRequest, toArturitaMessage,
   revealStepFor, routingBadge, type Message, type ConverseResponse,
 } from './assistant.logic'
+import { provenanceChip, reactorChips } from './reactor.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
 import { pickSpeechVoice, classifyTtsError, classifySttError, describeTalkError, NO_LLM_FIX_HINT } from '@/lib/talkDiagnostics'
@@ -32,11 +33,9 @@ import { resolveSttEngine, sttEngineLabel } from '@/lib/sttEngine'
 
 type Getter = () => Promise<string | null>
 
-// ── Placeholder logo ─────────────────────────────────────────────────────────
-// The ONLY reference to the Arturita logo asset. Drop the real artwork at this
-// path (web/public/arturita-logo.svg) — same filename — and it swaps in with no
-// code change. See the banner comment inside that SVG for asset guidance.
-const ARTURITA_LOGO_SRC = '/arturita-logo.svg'
+// The 7Ei honeycomb mark is now rendered INLINE at the reactor's glass core
+// (see Reactor.tsx) so it can carry the reactor's glow and scale crisply; the
+// static /arturita-logo.svg asset is no longer referenced by this panel.
 
 let msgSeq = 0
 const nextId = () => `m${Date.now()}-${++msgSeq}`
@@ -64,6 +63,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [delegate, setDelegate] = useState(false)      // explicit opt-in for the next turn
   const [voiceReplies, setVoiceReplies] = useState(true)
   const [wakeWord, setWakeWord] = useState(false)
+  // J7 — the reactor is the PRINCIPAL view; the transcript + pipeline config open
+  // behind this toggle (auto-opens on the first turn so replies are never hidden).
+  const [showConvo, setShowConvo] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   // Non-fatal, colorblind-safe status (icon+label) for a leg that degraded but
   // didn't dead-end — a TTS voice failure, or a local-Ollama→cloud fallback.
@@ -183,7 +185,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
     const message = bodyText.trim()
     if (!message || thinking) return
-    setErr(null); setNotice(null)
+    setErr(null); setNotice(null); setShowConvo(true)
     const userMsg: Message = { id: nextId(), role: 'user', text: message }
     setMessages(m => [...m, userMsg])
     setThinking(true)
@@ -367,11 +369,14 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
 
   const submitTyped = () => { const t = typed.trim(); if (!t || thinking) return; setTyped(''); send(t, delegate) }
 
+  const provenance = provenanceChip({ local: localLlm })
+  const reactorChipRow = reactorChips({ provenance, captureLabel: sttEngine === 'none' ? '' : sttEngineLabel(sttEngine), voiceReplies })
+
   return (
     <div style={{ ...ui.page, maxWidth: 920, gap: space.xl }}>
-      {/* ── Glass hero: orb + identity ─────────────────────────────────────── */}
+      {/* ── Glass hero: the reactor is the PRINCIPAL Command Center view ─────── */}
       <div className="mc-hero" style={{ padding: `${space.xxl}px ${space.xl}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: space.lg }}>
-        <AssistantOrb state={voiceState} logoSrc={ARTURITA_LOGO_SRC} />
+        <Reactor state={voiceState} chips={reactorChipRow} />
         <div style={{ textAlign: 'center' }}>
           {/* The surface is the Command Center (it matches the nav label); the
               assistant you talk to in it is still Arturita. */}
@@ -413,24 +418,38 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
         </p>
       </div>
 
-      {/* ── Conversation ───────────────────────────────────────────────────── */}
-      <div ref={scrollRef} style={{ display: 'flex', flexDirection: 'column', gap: space.md, maxHeight: 460, overflowY: 'auto', paddingRight: space.xs }}>
-        {messages.length === 0 && !thinking && (
-          <Card style={{ textAlign: 'center', color: tk.muted }}>
-            <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-              Ask me anything — “what’s the fleet doing?”, “summarise today”. I’ll answer here.<br />
-              Say <b>“build …”</b>, <b>“delegate …”</b>, or flip <b>Delegate to the office</b> and I’ll put it on the board (with approval for anything irreversible).
-            </div>
-          </Card>
-        )}
-        {messages.map(m => {
-          const shown = reveal?.id === m.id ? m.text.slice(0, reveal.shown) : m.text
-          return m.role === 'user'
-            ? <UserBubble key={m.id} text={m.text} />
-            : <ArturitaBubble key={m.id} msg={m} shown={shown} />
-        })}
-        {thinking && <ArturitaThinking />}
-      </div>
+      {/* ── Reveal the transcript + settings; the reactor stays the hero ─────── */}
+      <button
+        type="button"
+        onClick={() => setShowConvo(s => !s)}
+        aria-expanded={showConvo}
+        style={s.convoToggle}
+      >
+        {showConvo
+          ? '▴ Hide conversation & settings'
+          : `▾ Conversation & settings${messages.length ? ` · ${messages.length}` : ''}`}
+      </button>
+
+      {/* ── Conversation (behind the toggle; auto-opens on the first turn) ───── */}
+      {showConvo && (
+        <div ref={scrollRef} style={{ display: 'flex', flexDirection: 'column', gap: space.md, maxHeight: 460, overflowY: 'auto', paddingRight: space.xs }}>
+          {messages.length === 0 && !thinking && (
+            <Card style={{ textAlign: 'center', color: tk.muted }}>
+              <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+                Ask me anything — “what’s the fleet doing?”, “summarise today”. I’ll answer here.<br />
+                Say <b>“build …”</b>, <b>“delegate …”</b>, or flip <b>Delegate to the office</b> and I’ll put it on the board (with approval for anything irreversible).
+              </div>
+            </Card>
+          )}
+          {messages.map(m => {
+            const shown = reveal?.id === m.id ? m.text.slice(0, reveal.shown) : m.text
+            return m.role === 'user'
+              ? <UserBubble key={m.id} text={m.text} />
+              : <ArturitaBubble key={m.id} msg={m} shown={shown} />
+          })}
+          {thinking && <ArturitaThinking />}
+        </div>
+      )}
 
       {err && <div style={ui.err}>⚠ {err}</div>}
       {notice && (
@@ -472,8 +491,8 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
         </label>
       </Card>
 
-      {/* ── Free-first pipeline config (LLM/STT/TTS chains, switchable) ─────── */}
-      <AssistantPipelineConfig orgId={orgId} getToken={getToken} />
+      {/* ── Free-first pipeline config (LLM/STT/TTS chains) — under the toggle ─ */}
+      {showConvo && <AssistantPipelineConfig orgId={orgId} getToken={getToken} />}
     </div>
   )
 }
@@ -531,4 +550,9 @@ const sxHint: React.CSSProperties = { fontSize: text.xs.fontSize, color: tk.mute
 const s: Record<string, React.CSSProperties> = {
   toggle: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: text.sm.fontSize, color: tk.textDim, cursor: 'pointer', userSelect: 'none' },
   interim: { minHeight: 20, fontSize: text.sm.fontSize, lineHeight: 1.5 },
+  convoToggle: {
+    alignSelf: 'center', background: 'var(--s2)', border: '1px solid var(--line-strong)',
+    color: tk.textDim, borderRadius: tk.r.pill, padding: '5px 16px', cursor: 'pointer',
+    fontSize: text.sm.fontSize, fontWeight: 700, letterSpacing: 0.3,
+  },
 }
