@@ -2,11 +2,19 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
+import { enforceOrgRole } from '../middleware/rbac'
 
 export async function multiOrgRoutes(app: FastifyInstance) {
-  // List orgs for a user via membership table
-  app.get('/api/users/:userId/orgs', async (req) => {
+  // List orgs for a user via membership table.
+  // Self-only: the surface-wide membership gate can't see this route (it carries a
+  // `:userId`, not an org id, so it derives no org — the R-4 tail). Without this
+  // check any logged-in user could enumerate ANOTHER user's org memberships. A
+  // caller may read only their OWN membership list.
+  app.get('/api/users/:userId/orgs', async (req, reply) => {
     const { userId } = req.params as any
+    const callerId = (req as any).auth?.userId ?? (req as any).userId
+    if (!callerId) return reply.code(401).send({ error: 'Authentication required' })
+    if (callerId !== userId) return reply.code(403).send({ error: 'Cannot read another user’s organisations' })
     const memberships = await db.select().from(schema.orgMembers).where(eq(schema.orgMembers.userId, userId))
     const orgs = await Promise.all(memberships.map(async (m) => {
       const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, m.orgId) })
@@ -38,6 +46,12 @@ export async function multiOrgRoutes(app: FastifyInstance) {
     const { agentId } = req.params as any
     const { targetOrgId } = req.body as any
     if (!targetOrgId) return reply.code(400).send({ error: 'targetOrgId required' })
+    // The membership gate already proved the caller is a member of the SOURCE org
+    // (derived from :agentId). The TARGET org has no path/record the gate can see,
+    // so guard it here: a member of A must not be able to inject A's agent into an
+    // org B they don't belong to. Fail closed on non-membership of the target.
+    const targetGate = await enforceOrgRole({ userId: (req as any).auth?.userId, orgId: targetOrgId, minRole: 'member' })
+    if (!targetGate.ok) return reply.code(targetGate.code).send({ error: targetGate.error })
     const targetOrg = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, targetOrgId) })
     if (!targetOrg) return reply.code(404).send({ error: 'Target org not found' })
     await db.update(schema.agents).set({ orgId: targetOrgId, departmentId: null }).where(eq(schema.agents.id, agentId))
@@ -48,6 +62,10 @@ export async function multiOrgRoutes(app: FastifyInstance) {
     const { agentId } = req.params as any
     const { targetOrgId } = req.body as any
     if (!targetOrgId) return reply.code(400).send({ error: 'targetOrgId required' })
+    // Same target-org guard as transfer: the gate covered the source org (:agentId);
+    // cloning INTO an org requires membership of that target org.
+    const targetGate = await enforceOrgRole({ userId: (req as any).auth?.userId, orgId: targetOrgId, minRole: 'member' })
+    if (!targetGate.ok) return reply.code(targetGate.code).send({ error: targetGate.error })
     const source = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     if (!source) return reply.code(404).send({ error: 'Agent not found' })
     const cloned = { ...source, id: randomUUID(), orgId: targetOrgId, departmentId: null, status: 'idle', createdAt: new Date() }

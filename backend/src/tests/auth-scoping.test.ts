@@ -42,6 +42,7 @@ import { telemetryPlugin, telemetryQueryRoutes } from '../services/telemetry'
 import { PUBLIC_JOIN_IMPLEMENTED, TOKEN_CLAIM_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
+import { requireOrgMembership } from '../middleware/rbac'
 
 // Tenant-scoped routes that are intentionally reachable without a Clerk session.
 // Keep this list SHORT and justified — every entry is an external caller that
@@ -69,6 +70,10 @@ async function bootLikeIndex() {
 
   await app.register(async (secured) => {
     secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
+    // Mirror src/index.ts: the surface-wide membership gate rides the secured scope.
+    // (It is a preHandler; it does not affect the route-table `auth` tagging this
+    // guard inspects — the behavioural membership guard lives in membership-scoping.test.ts.)
+    secured.addHook('preHandler', requireOrgMembership)
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
     await secured.register(taskRoutes)
