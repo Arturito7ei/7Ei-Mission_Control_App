@@ -89,9 +89,13 @@ function buildWeb() {
   run('npm run build', WEB_DIR, {
     DESKTOP_BUILD: '1',
     NEXT_PUBLIC_API_URL: BACKEND_ORIGIN,
-    // Ensure no Clerk key leaks in from a local env — the packaged UI degrades
-    // to no-auth (the H6 gap). Clerk builds fine keyless (see web/Dockerfile).
+    // Ensure no Clerk key leaks in from a local env — the packaged UI ships no Clerk.
+    // Clerk builds fine keyless (see web/Dockerfile).
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: '',
+    // H6: mark this as the packaged/loopback build so the dashboard authenticates as
+    // the single local operator (Electron injects the per-install session bearer)
+    // instead of bouncing to the Clerk landing route. Hosted (Vercel) never sets this.
+    NEXT_PUBLIC_MC_PACKAGED: '1',
   })
 
   const serverJs = findFile(STANDALONE, 'server.js', 5)

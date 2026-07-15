@@ -61,8 +61,14 @@ Verify with `bash scripts/check-secrets.sh` (both now listed).
 > stored under the dev default won't decrypt under a new key — re-enter those secrets
 > (NVIDIA key, vault PAT, custom-model keys) after rotating.
 >
-> Engineering follow-up (tracked): a boot-time fail-closed guard so `NODE_ENV=production`
-> refuses to start on the default key.
+> Engineering follow-up: a boot-time fail-closed guard on the default key. **Shipped for
+> the PACKAGED profile (Epic H / H6)** — `backend/src/services/secret-keys.ts`
+> `assertSecretKeysSafe()` refuses to boot a `packaged` instance whose `SECRETS_ENC_KEY`
+> / `RUN_TOKEN_SECRET` / `MC_LOOPBACK_SESSION_SECRET` is missing or a known default, so a
+> `.dmg` install can never encrypt a real secret under the source-visible key (the
+> Electron shell generates real per-install keys into the macOS Keychain). It is a
+> **no-op on hosted** — hosted still relies on setting the Fly secrets above (a hosted
+> instance runs with a real key by construction, so the guard has nothing to catch).
 
 ---
 
@@ -429,10 +435,16 @@ notary service, and electron-builder staples the ticket → a **signed, notarize
 Gatekeeper-clean `.dmg`**. Verify with `spctl -a -vv "dist/mac-arm64/7Ei Mission Control.app"`
 (expect `accepted / source=Notarized Developer ID`).
 
-**What this does NOT do:** it does not make the packaged app secure to *use* by others —
-packaged auth is still the temporary bypass until **H6** (single-operator loopback identity
-+ fail-closed-on-default-key). Sign/notarize is about *distribution trust* (Gatekeeper),
-not *runtime auth*.
+**Runtime auth vs distribution trust — both now handled:** sign/notarize is about
+*distribution trust* (Gatekeeper accepts the download); *runtime auth* is a separate thing
+and is now built. **H6 (2026-07-15) landed real packaged auth** — a single-operator
+**loopback identity** replaces Clerk on `127.0.0.1`, per-install `SECRETS_ENC_KEY` /
+`RUN_TOKEN_SECRET` / `MC_LOOPBACK_SESSION_SECRET` are generated into the **macOS Keychain**
+(never baked into the `.dmg`), and boot **fails closed** on any default/missing key. The
+packaged app is no longer an unauthenticated bypass — it enforces an authenticated local
+operator that gates the same write routes Clerk gates on hosted. **No operator action is
+required for H6** — the shell generates the keys on first boot; the only packaged
+operator step remains the Apple Developer ID above (for a Gatekeeper-clean download).
 
 ---
 

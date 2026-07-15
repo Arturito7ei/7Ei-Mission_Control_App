@@ -36,7 +36,11 @@ import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin, auditLogQueryRoutes } from './middleware/audit-log'
 import { clerkAuth } from './middleware/clerk-auth'
+import { loopbackAuth } from './middleware/loopback-auth'
 import { requireOrgMembership } from './middleware/rbac'
+import { resolveDeploymentProfile } from './services/deployment-profile'
+import { assertSecretKeysSafe } from './services/secret-keys'
+import { bootstrapLocalOperator } from './services/loopback-identity'
 import { telemetryPlugin, telemetryQueryRoutes } from './services/telemetry'
 import { startScheduler } from './services/scheduler'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from './services/openapi'
@@ -69,6 +73,16 @@ const app = Fastify({
 })
 
 async function start() {
+  // ─── H6 FAIL-CLOSED secret-key guard (AUDIT-H1 LOW-3 #1/#2/#4) ─────────────
+  // In the `packaged` profile, REFUSE TO BOOT if SECRETS_ENC_KEY / RUN_TOKEN_SECRET /
+  // MC_LOOPBACK_SESSION_SECRET are missing or a known dev/throwaway default — no real
+  // secret may ever be encrypted under a world-readable default key, and the loopback
+  // identity cannot authenticate without a real per-install session secret. In
+  // `hosted` (the default) this is a NO-OP (real Fly secrets), so the boot is
+  // byte-identical. A throw here → start().catch → process.exit(1) = fail-closed.
+  const deploymentProfile = resolveDeploymentProfile(process.env)
+  assertSecretKeysSafe(process.env)
+
   // Self-describing API (MCA-85 D1): collect every registered route into the
   // OpenAPI route table. This baseline hook fires for all routes (it is added
   // before any registration and propagates to descendant scopes) and tags them
@@ -126,12 +140,30 @@ async function start() {
   await setupDatabase()
   await ensureIndex()  // Pinecone (non-blocking)
 
+  // ─── H6 packaged single-operator bootstrap ────────────────────────────────
+  // On the `packaged` profile, seed the one local org OWNED by the local operator
+  // (idempotent) so the loopback identity is a real owner/member the membership +
+  // owner gates can resolve against — and the packaged dashboard has a workspace on
+  // first boot. Hosted never runs this (multi-tenant, Clerk users own their orgs).
+  if (deploymentProfile === 'packaged') {
+    const localOrgId = await bootstrapLocalOperator(db)
+    console.log(`🔐 packaged profile: local operator owns org ${localOrgId} (loopback auth)`)
+  }
+
   // ─── Protected routes (MCA-14) ──────────────────────────────────────────
   // Every route in this encapsulated scope requires a valid Clerk JWT. The
   // onRequest hook attaches req.userId / req.clerkSession (and req.auth for
   // rbac/audit/telemetry compat) or replies 401. OPTIONS preflight is skipped.
+  // The identity source for the secured scope is PROFILE-BRANCHED (H6): hosted
+  // authenticates with Clerk exactly as before; packaged authenticates with the
+  // single-operator loopback identity (the per-install session secret the Electron
+  // shell injects). The hook CONTRACT is identical — both attach req.auth.userId /
+  // req.userId — so the membership gate, owner checks, audit + telemetry hooks all
+  // run unchanged whichever fills it. Hosted resolves to `clerkAuth` (the default
+  // profile), so the hosted secured scope is byte-identical to before.
+  const securedAuthHook = deploymentProfile === 'packaged' ? loopbackAuth : clerkAuth
   await app.register(async (secured) => {
-    secured.addHook('onRequest', clerkAuth)
+    secured.addHook('onRequest', securedAuthHook)
     secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
     // ─── Multi-tenant membership gate (R-4 fix) ────────────────────────────
     // ONE preHandler on the whole secured scope: every authenticated route now

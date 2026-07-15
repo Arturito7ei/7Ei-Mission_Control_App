@@ -107,6 +107,40 @@ surface-wide and fail-closed.
   scoping (a member reading a foreign record *within* their own org path) is a separate
   authz concern, still open.
 
+### 4a. Packaged-profile identity — the loopback local operator (Epic H / H6)
+
+The membership gate above authenticates hosted callers with Clerk. A **packaged** `.dmg`
+instance is single-tenant on `127.0.0.1` and ships **no Clerk keys**, so H6 replaces the
+*identity source* — and only the identity source — with a single local operator. The gate
+itself is untouched.
+
+- **Profile-branched auth hook, same gate.** `index.ts` installs
+  `profile === 'packaged' ? loopbackAuth : clerkAuth` on the **same** secured scope. Both
+  attach the identical `req.auth.userId`, so `requireOrgMembership`, `requireOrgRole`, and
+  the audit/telemetry hooks run **unchanged**. Hosted resolves to `clerkAuth` (the
+  safe-default profile) → byte-identical.
+- **The identity is OS-user-bound (H-Q6).** `loopbackAuth` (`middleware/loopback-auth.ts`)
+  authenticates a request AS the `local-operator` iff it presents the per-install
+  `MC_LOOPBACK_SESSION_SECRET` (constant-time compared, no length/timing oracle). That
+  secret lives in the **macOS login Keychain** (readable only in the logged-in user's
+  session) and is injected by the Electron shell as the `Authorization` bearer on every
+  window→backend request — **never in page JS**. A request without it **401s**: a second OS
+  account, a browser tab that never got the header, a stray localhost caller. **Not "no
+  auth" — a single-operator local identity.**
+- **A real owner, not a bypass.** `services/loopback-identity.ts` idempotently seeds the one
+  local org owned by `local-operator` (+ owner `org_members` row), so the operator passes
+  the **same** membership/owner-checked write routes (secrets, connectors, invites, …) a
+  Clerk owner passes on hosted. The packaged app is not open-on-loopback.
+- **Fail-closed secrets (AUDIT-H1 #1/#2/#4).** Per-install `SECRETS_ENC_KEY` /
+  `RUN_TOKEN_SECRET` / `MC_LOOPBACK_SESSION_SECRET` are generated into the Keychain (three
+  distinct keys, never the source default). `services/secret-keys.ts` `assertSecretKeysSafe()`
+  **refuses to boot** a packaged instance on any missing/default/reused key — so no real
+  secret is ever encrypted under a world-readable default. No-op on hosted.
+- **Verification-gated (honest flag):** the full built-app round-trip (Keychain under a
+  signed `.app`, the injected-header flow in a live BrowserWindow) is confirmed by the H6
+  audit on a built run — the same non-interactive limit as H1's sign/notarize. The backend
+  auth + fail-closed logic is covered by real-DB tests (`loopback-auth`/`secret-keys.test.ts`).
+
 ---
 
 ## 5. The audit trail
