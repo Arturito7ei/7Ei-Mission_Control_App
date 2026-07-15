@@ -45,6 +45,21 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     // T2 glass chrome — elevation for floating chrome (drawer/modal/palette).
     '--shadow-modal': '0 16px 48px rgba(7,7,7,.16)',
     '--shadow-drawer': '-12px 0 40px rgba(7,7,7,.14)',
+    // J7 — Command Center reactor. Brushed-silver / chrome gradient stops (a
+    // metallic ramp, highlight→shadow) + the translucent glowing core. These are
+    // the ONLY place the metal's raw hex lives; the reactor SVG/CSS consume the
+    // var(--*) strings so it themes with the rest of the app. Colorblind-safe:
+    // the metal is state-INDEPENDENT — voice state reads from the caption's
+    // icon+label+motion, never from the silver. Blue/purple family only.
+    '--silver-1': '#fdfdfe',                 // specular highlight (near-white)
+    '--silver-2': '#dfe2e7',                 // light steel
+    '--silver-3': '#b3b8c1',                 // mid steel
+    '--silver-4': '#868c96',                 // shadow steel
+    '--silver-edge': '#5f646e',              // ring edge / groove
+    '--reactor-core-1': 'rgba(226,238,255,.95)', // core centre (icy white-blue)
+    '--reactor-core-2': 'rgba(120,168,255,.55)',  // core mid
+    '--reactor-core-3': 'rgba(76,120,224,.20)',    // core falloff
+    '--reactor-glow': 'rgba(120,168,255,.28)',      // outer bloom behind the assembly
   },
   dark: {
     '--s0': '#070707',
@@ -80,6 +95,18 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--scrim': 'rgba(0,0,0,.6)',
     '--shadow-modal': '0 16px 48px rgba(0,0,0,.6)',
     '--shadow-drawer': '-12px 0 40px rgba(0,0,0,.5)',
+    // J7 — reactor metal on a dark field (the reference look): a cooler, deeper
+    // brushed-silver ramp so the chrome reads as machined metal against --s0, and
+    // a brighter core so the glow carries in the dark. Same key names as light.
+    '--silver-1': '#f2f5f9',                 // specular highlight
+    '--silver-2': '#c6ccd6',                 // light steel
+    '--silver-3': '#8b929e',                 // mid steel
+    '--silver-4': '#565c67',                 // shadow steel
+    '--silver-edge': '#31353d',              // ring edge / groove (reads on dark)
+    '--reactor-core-1': 'rgba(232,242,255,.97)', // core centre
+    '--reactor-core-2': 'rgba(130,178,255,.62)',  // core mid
+    '--reactor-core-3': 'rgba(86,132,240,.24)',    // core falloff
+    '--reactor-glow': 'rgba(130,178,255,.34)',      // outer bloom
   },
 }
 

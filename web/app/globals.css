@@ -363,3 +363,123 @@ p  { margin: 0; color: var(--text); }
 @media (prefers-reduced-motion: reduce) {
   .mc-orb .mc-orb-core, .mc-orb .mc-orb-ring { animation: none !important; }
 }
+
+/* ─── Command Center reactor (J7) — the big "Jarvis" silver arc-reactor ───────
+   The PRINCIPAL view of the Command Center: brushed-silver rings (metallic
+   gradients from the --silver-* tokens; some full, some gapped/segmented) that
+   counter-rotate, a translucent glowing core that swirls, and the 7Ei honeycomb
+   at the centre in glassmorphism. All motion is GPU-friendly transforms driven
+   by data-motion + a few CSS vars; it is FULLY disabled under
+   prefers-reduced-motion, where the state still reads from the caption
+   (icon + label) — colorblind-safe, same rule as the J1 orb. */
+.mc-reactor {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+}
+.mc-reactor-metal, .mc-reactor-bloom, .mc-reactor-core, .mc-reactor-ripple {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+.mc-reactor-metal {
+  width: 100%; height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 3px 8px rgba(0,0,0,.30));
+}
+/* Outer bloom behind the metal — depth/layering. */
+.mc-reactor-bloom {
+  width: 88%; height: 88%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--reactor-glow) 0%, transparent 66%);
+  filter: blur(8px);
+  z-index: -1;
+}
+/* Rotating ring groups (SVG <g>). Origin = the view-box centre so they spin in
+   place; period = the state's base --rk-spin scaled by each ring's --rk-mult.
+   Outer CW, mid gyro CCW, inner accent CW (fastest → most "thinking" motion). */
+.mc-rr { transform-box: view-box; transform-origin: center; }
+.mc-rr-cw  { animation: mcReactorCW  calc(var(--rk-spin, 40s) * var(--rk-mult, 1)) linear infinite; }
+.mc-rr-ccw { animation: mcReactorCCW calc(var(--rk-spin, 40s) * var(--rk-mult, 1)) linear infinite; }
+@keyframes mcReactorCW  { from { transform: rotate(0) }      to { transform: rotate(360deg) } }
+@keyframes mcReactorCCW { from { transform: rotate(0) }      to { transform: rotate(-360deg) } }
+
+/* Translucent glowing core (glassmorphism) sits in the ring hole. */
+.mc-reactor-core {
+  width: 46%; height: 46%;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+  background: radial-gradient(circle at 50% 46%,
+    var(--reactor-core-1) 0%, var(--reactor-core-2) 46%, var(--reactor-core-3) 74%, transparent 100%);
+  box-shadow:
+    0 0 calc(22px + 46px * var(--rk-intensity, .5)) var(--reactor-glow),
+    inset 0 0 34px rgba(255,255,255,.22);
+  z-index: 1;
+}
+/* Swirling energy inside the core. */
+.mc-reactor-swirl {
+  position: absolute; inset: -24%;
+  background: conic-gradient(from 0deg,
+    transparent 0%, var(--reactor-core-2) 16%, transparent 38%,
+    var(--reactor-core-3) 58%, transparent 76%, var(--reactor-core-2) 92%, transparent 100%);
+  opacity: .55;
+  animation: mcReactorSwirl 14s linear infinite;
+}
+@keyframes mcReactorSwirl { to { transform: rotate(360deg) } }
+/* The 7Ei honeycomb, frosted + inner-glowing, centred on the core. */
+.mc-reactor-hex {
+  position: relative;
+  width: 64%;
+  z-index: 2;
+  color: var(--reactor-core-1);
+  filter: drop-shadow(0 0 7px var(--reactor-core-1)) drop-shadow(0 1px 2px rgba(0,0,0,.35));
+}
+.mc-reactor-hex svg { display: block; width: 100%; height: auto; }
+.mc-reactor-hex::before {
+  content: "";
+  position: absolute; inset: -28%;
+  border-radius: 50%;
+  background: var(--glass);
+  border: 1px solid var(--glass-line);
+  z-index: -1;
+}
+@supports ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .mc-reactor-hex::before { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+}
+/* Listening/speaking ripples — expanding rings that read as audio energy. */
+.mc-reactor-ripple {
+  width: 46%; height: 46%;
+  border-radius: 50%;
+  border: 1.5px solid var(--rk-accent, var(--accent));
+  opacity: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+@keyframes mcReactorRipple {
+  0%   { transform: scale(1);   opacity: calc(.5 * var(--rk-intensity, 1)) }
+  100% { transform: scale(1.9); opacity: 0 }
+}
+/* Core breathing — the reference "deep breath cycle" (~0.1 Hz = 10s at idle). */
+@keyframes mcReactorBreathe { 0%,100% { transform: scale(1); opacity: .92 } 50% { transform: scale(1.045); opacity: 1 } }
+@keyframes mcReactorPulse   { 0%,100% { transform: scale(1) } 30% { transform: scale(1.09) } 55% { transform: scale(.985) } }
+
+.mc-reactor[data-motion="breathe"] .mc-reactor-core { animation: mcReactorBreathe 10s ease-in-out infinite; }
+.mc-reactor[data-motion="listen"]  .mc-reactor-core { animation: mcReactorBreathe 3.2s ease-in-out infinite; }
+.mc-reactor[data-motion="think"]   .mc-reactor-core { animation: mcReactorBreathe 2.1s ease-in-out infinite; }
+.mc-reactor[data-motion="think"]   .mc-reactor-swirl { animation-duration: 5s; }
+.mc-reactor[data-motion="speak"]   .mc-reactor-core { animation: mcReactorPulse 0.85s ease-in-out infinite; }
+.mc-reactor[data-motion="listen"]  .mc-reactor-ripple,
+.mc-reactor[data-motion="speak"]   .mc-reactor-ripple { animation: mcReactorRipple 2.4s ease-out infinite; }
+.mc-reactor-ripple-2 { animation-delay: 1.2s !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-reactor .mc-rr,
+  .mc-reactor-core,
+  .mc-reactor-swirl,
+  .mc-reactor-ripple { animation: none !important; }
+  .mc-reactor-ripple { display: none; }
+}
