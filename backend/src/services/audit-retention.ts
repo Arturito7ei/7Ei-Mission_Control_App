@@ -21,14 +21,20 @@ export const DEFAULT_AUDIT_RETENTION_DAYS = 90
 export const AUDIT_RETENTION_HOUR_UTC = 3
 
 /**
- * Resolve the retention window from the environment. A missing, non-numeric, zero
- * or negative value falls back to the 90-day default — an operator cannot
- * accidentally set retention to 0 (which would delete everything on the next tick)
- * with a typo. Pure: env in, number out.
+ * Resolve the retention window from the environment. A missing, non-numeric, zero,
+ * negative, OR sub-one-day value falls back to the 90-day default — an operator
+ * cannot accidentally collapse retention to 0 (which would delete everything on the
+ * next tick) with a typo. Pure: env in, number out.
+ *
+ * The floor is `>= 1`, NOT `> 0`: a fractional value in (0, 1) — `0.5`, `.5`,
+ * `1e-9` — passes a `> 0` gate but `Math.floor`s to 0, so the cutoff becomes `now`
+ * and the daily prune wipes the whole table. Requiring at least one whole day means
+ * `Math.floor(n) >= 1` always holds for an accepted value, so the cutoff is always
+ * at least a day in the past and the table can never be emptied by this env.
  */
 export function auditRetentionDays(env: { MC_AUDIT_RETENTION_DAYS?: string } = process.env): number {
   const n = env.MC_AUDIT_RETENTION_DAYS ? Number(env.MC_AUDIT_RETENTION_DAYS) : NaN
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_AUDIT_RETENTION_DAYS
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_AUDIT_RETENTION_DAYS
 }
 
 /** The cutoff instant: a row is prunable iff `createdAt < cutoff`. Pure. */
