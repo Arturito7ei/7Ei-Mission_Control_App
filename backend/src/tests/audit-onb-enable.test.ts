@@ -162,6 +162,28 @@ test('[ONB-H1] auditRetentionDays defaults to 90 and rejects junk/zero/negative'
   assert.equal(auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: '-5' }), 90)
   assert.equal(auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: 'abc' }), 90)
   assert.equal(auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: '45.9' }), 45, 'floored')
+  // AUDIT (audit-trail enablement) — a FRACTIONAL value below one day must not
+  // floor to 0. `0.5`/`.5`/`1e-9` pass a naive `> 0` gate but `Math.floor` to 0,
+  // which makes the cutoff `now` and the daily prune WIPE THE WHOLE TABLE. The guard
+  // is `>= 1`, so any accepted value is at least one whole day.
+  for (const junk of ['0.5', '.5', '0.9', '1e-9', '0.0001']) {
+    assert.equal(auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: junk }), 90,
+      `a sub-one-day retention (${junk}) must fall back to 90, never collapse to 0 and wipe the table`)
+  }
+  assert.equal(auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: '1' }), 1, 'exactly one whole day is the accepted minimum')
+})
+
+test('[ONB-H1] no accepted retention env can make the cutoff wipe every row', () => {
+  // Belt-and-braces on the invariant that matters: for a spread of env values —
+  // valid, junk, and the fractional near-zero typos — the resolved cutoff is always
+  // strictly in the past, so `DELETE ... WHERE created_at < cutoff` can never match
+  // a row created "now". This is the property the retention guard exists to hold.
+  const now = new Date('2026-07-15T12:00:00.000Z')
+  for (const v of ['90', '1', '0', '-5', 'abc', '0.5', '.5', '1e-9', '0.0001', '45.9', '365']) {
+    const days = auditRetentionDays({ MC_AUDIT_RETENTION_DAYS: v })
+    const cutoff = auditRetentionCutoff(now, days)
+    assert.ok(cutoff < now, `env=${v} -> ${days}d yields cutoff ${cutoff.toISOString()} which is not strictly before now (would risk wiping current rows)`)
+  }
 })
 
 test('[ONB-H1] auditRetentionCutoff is now minus N days', () => {

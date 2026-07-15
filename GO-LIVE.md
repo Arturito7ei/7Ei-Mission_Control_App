@@ -233,10 +233,12 @@ guard so `NODE_ENV=production` refuses to start on the default key.
 > see the note at the end of this section). Shipped behind the independent audit.
 >
 > **Tune it:**
-> - **Retention window:** set `MC_AUDIT_RETENTION_DAYS` (Fly secret) to any positive
->   integer; unset / junk / 0 / negative safe-defaults to **90**. Rows older than the
->   window are pruned on a daily scheduler tick (`services/audit-retention.ts`,
->   ~03:00 UTC). No cap on row count — the age window is the bound.
+> - **Retention window:** set `MC_AUDIT_RETENTION_DAYS` (Fly secret) to a whole
+>   number of days **≥ 1**; unset / junk / 0 / negative / any sub-one-day fraction
+>   (`0.5`, `.5`, `1e-9`) safe-defaults to **90** — so no typo can collapse the
+>   window to 0 and wipe the table on the next prune. Rows older than the window are
+>   pruned on a daily scheduler tick (`services/audit-retention.ts`, ~03:00 UTC). No
+>   cap on row count — the age window is the bound.
 > - **Scope:** edit `shouldAudit(method, path)` in `middleware/audit-log.ts`
 >   (`SENSITIVE_METHODS` + `AUDITED_PATH_SEGMENTS`). It is a pure, tested helper.
 > - **Turn it off again:** revert the hoist in `src/index.ts` (the `auditLogPlugin(app)`
