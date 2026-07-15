@@ -20,5 +20,11 @@ export type DangerousApprovalType = (typeof DANGEROUS_APPROVAL_TYPES)[number]
 const DANGEROUS_SET = new Set<string>(DANGEROUS_APPROVAL_TYPES)
 
 export function isDangerousApprovalType(type: string | null | undefined): boolean {
-  return type != null && DANGEROUS_SET.has(type)
+  // Normalize exactly like the backend (dangerous-approvals.ts:30-33) before
+  // matching: the direct approval-creation route stores `type` verbatim, so a
+  // stored "machine exec" / "Machine_Exec" / " wallet_tx" must still be caught
+  // client-side — otherwise L1 would render an ENABLED one-tap Approve that then
+  // dead-ends on the server's 403.
+  const norm = String(type ?? '').trim().toLowerCase().replace(/\s+/g, '_')
+  return DANGEROUS_SET.has(norm)
 }
