@@ -21,9 +21,12 @@
 // (`PATCH /api/orgs/:id`) and the document-summarise upload
 // (`POST …/knowledge/ingest-file`, multipart).
 //
-// ⚠ THE ORG PAYLOAD CONTAINS A CREDENTIAL. `GET /api/orgs` is
+// ⚠ THE ORG PAYLOAD CONTAINS CREDENTIALS — TWO OF THEM. `GET /api/orgs` is
 // `db.select().from(organisations)` (backend/src/routes/orgs.ts) — the WHOLE
-// row, and that row has a `telegramBotToken` column (backend/src/db/schema.ts).
+// row — and that row carries BOTH a `telegramBotToken` column AND a
+// `deployConfig` blob holding **LLM API keys, some in plaintext** (org creation
+// does `deployConfig[`${provider}_api_key`] = body.llmApiKey`; see
+// CREDENTIAL_BEARING_FIELDS below for the full trail through the code).
 // The phone has received this payload since MOB-1 (ConnectScreen lists orgs with
 // it); MOB-6f does not change that, and fixing it is a BACKEND narrowing that is
 // out of scope for an apps/mobile-only story — it's reported as a follow-up.
@@ -99,14 +102,45 @@ export const SETTINGS_FIELDS: SettingsField[] = [
 export const SENSITIVE_NAME_RE = /token|secret|key|password|passwd|credential|apikey|auth/i
 
 /**
- * Throws if a field list contains anything credential-shaped. Called by the test
- * against `SETTINGS_FIELDS`, so adding (say) `llmApiKey` to this screen fails CI
- * instead of shipping. It's a guard on the FIELD LIST, not a runtime mask —
- * because the right answer for this screen is that a secret never enters it at
- * all, not that we redact one on the way out.
+ * Credential-BEARING columns whose NAME doesn't smell like one.
+ *
+ * The regex above only catches a field that ANNOUNCES itself. That is a real
+ * blind spot, and `organisations` has a live example of it:
+ *
+ *   `deployConfig` — a JSON blob that stores **LLM API keys**. Org creation
+ *   writes `deployConfig[`${provider}_api_key`] = body.llmApiKey` **in
+ *   plaintext** (backend/src/routes/orgs.ts), and the executor still reads a
+ *   "legacy plaintext `<slug>_api_key`" alongside the newer AES-256-GCM
+ *   `<slug>_api_key_enc` (backend/src/services/custom-model.ts,
+ *   services/agent-executor.ts). Nothing renders it today — but "deployConfig"
+ *   sails straight past a name-based check, so the guard's promise ("a
+ *   credential-shaped field fails CI") had a hole exactly where it mattered
+ *   most: a column that IS a credential without being NAMED one.
+ *
+ * So the guard is a deny-list AND a regex. Add a column here whenever it
+ * *carries* a secret regardless of what it's called. (`telegramBotToken`, the
+ * other credential on this table, is already caught by the regex — belt and
+ * braces cost nothing.)
+ */
+export const CREDENTIAL_BEARING_FIELDS = new Set(['deployConfig'])
+
+/**
+ * Throws if a field list contains anything credential-shaped OR anything on the
+ * credential-bearing deny-list. Called by the test against `SETTINGS_FIELDS`, so
+ * adding (say) `llmApiKey` or `deployConfig` to this screen fails CI instead of
+ * shipping. It's a guard on the FIELD LIST, not a runtime mask — because the
+ * right answer for this screen is that a secret never enters it at all, not that
+ * we redact one on the way out.
  */
 export function assertNoSensitiveField(fields: { key: string; label: string }[]): void {
   for (const f of fields) {
+    if (CREDENTIAL_BEARING_FIELDS.has(f.key)) {
+      throw new Error(
+        `[MOB-6f] Settings must not render "${f.key}" (${f.label}) — it CARRIES a credential ` +
+          'even though its name does not say so (see CREDENTIAL_BEARING_FIELDS). ' +
+          'The phone shows org prose only; secrets never reach this screen.',
+      )
+    }
     if (SENSITIVE_NAME_RE.test(f.key) || SENSITIVE_NAME_RE.test(f.label)) {
       throw new Error(
         `[MOB-6f] Settings must not render a credential-shaped field: "${f.key}" (${f.label}). ` +

@@ -46,6 +46,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
+  CREDENTIAL_BEARING_FIELDS,
   SENSITIVE_NAME_RE,
   SETTINGS_FIELDS,
   SETTINGS_READONLY_NOTE,
@@ -192,6 +193,40 @@ test('[MOB-6f] the sensitive-field guard actually catches a credential', () => {
     { key: 'adminPassword', label: 'Admin' },
   ]) {
     assert.throws(() => assertNoSensitiveField([bad]), /must not render a credential-shaped field/)
+  }
+})
+
+test('[MOB-6f] the guard catches a credential-BEARING column whose name does not smell', () => {
+  // The audit nit (#293), and the sharper half of this guard. `deployConfig`
+  // stores LLM API keys — org creation writes `<provider>_api_key` into it in
+  // PLAINTEXT (backend/src/routes/orgs.ts) — but the name sails straight past a
+  // regex looking for "key"/"token"/"secret". A name-based check alone would let
+  // it onto the screen.
+  assert.throws(
+    () => assertNoSensitiveField([{ key: 'deployConfig', label: 'Deploy config' }]),
+    /CARRIES a credential/,
+  )
+  // And the regex must NOT be what caught it — otherwise the deny-list is
+  // decorative and would rot without anyone noticing.
+  assert.doesNotMatch('deployConfig', SENSITIVE_NAME_RE)
+})
+
+test('[MOB-6f] every credential-bearing column named in the deny-list still exists', () => {
+  // A deny-list entry that no longer matches a real column is a dead guard
+  // pointing at nothing — and, worse, hides that the credential moved somewhere
+  // this screen isn't checking.
+  for (const key of CREDENTIAL_BEARING_FIELDS) {
+    assert.ok(
+      ORG_COLUMNS.includes(key),
+      `CREDENTIAL_BEARING_FIELDS names "${key}", which is no longer an organisations column. ` +
+        `Find where that credential moved before deleting the entry. Columns: ${ORG_COLUMNS.join(', ')}`,
+    )
+  }
+})
+
+test('[MOB-6f] Settings renders none of the credential-bearing columns', () => {
+  for (const f of SETTINGS_FIELDS) {
+    assert.ok(!CREDENTIAL_BEARING_FIELDS.has(f.key), `Settings must not render "${f.key}"`)
   }
 })
 
