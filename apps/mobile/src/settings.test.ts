@@ -14,14 +14,37 @@
 // screen. `assertNoSensitiveField` is called here against the real field list,
 // so adding one fails CI rather than rendering a secret on a handset.
 //
-// Zero-dep: node --test --experimental-strip-types.
+// ⚠ WHY THIS SCANS THE SCHEMA'S SOURCE INSTEAD OF IMPORTING IT.
+//
+// The obvious version of this test — `import { organisations } from
+// '../../../backend/src/db/schema.ts'` — passes locally and FAILS IN CI, which
+// is the worst way for a test to be wrong. The Mobile job runs `npm ci` **inside
+// `apps/mobile`** (.github/workflows/ci.yml), so only this workspace's deps are
+// installed. A local run resolves `drizzle-orm/sqlite-core` from the hoisted
+// root `node_modules` and the import works; CI has no drizzle, the module fails
+// to LOAD, and the whole file's tests silently don't run (they don't fail — the
+// file exits 1 and the count just drops).
+//
+// So the rule this file exists to record: a cross-workspace tripwire may IMPORT
+// another workspace's source only if that source is DEPENDENCY-FREE.
+// `web/lib/trust.ts` and `backend/src/services/connectors.ts` are (hence
+// governance.test.ts and connectors.test.ts import them happily); `schema.ts`
+// imports drizzle, so it isn't.
+//
+// Reading the source as TEXT keeps the tripwire and drops the dependency: it
+// still goes red if `telegramBotToken` is renamed or if a rendered field stops
+// being a column. It's the source-scan idiom `status.test.ts` already
+// established here — and it carries that idiom's mandatory guard: assert the
+// scan actually FOUND something, because a scan that silently matches nothing
+// passes forever.
+//
+// Zero-dep: node --test --experimental-strip-types. No import beyond node:*.
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-// The SCHEMA module, not `db/client.ts` — client.ts instantiates a Turso
-// connection at module scope, which a unit test must not do. schema.ts imports
-// only drizzle's table builders, so it loads standalone.
-import { organisations } from '../../../backend/src/db/schema.ts'
+import { fileURLToPath } from 'node:url'
 import {
   SENSITIVE_NAME_RE,
   SETTINGS_FIELDS,
@@ -43,8 +66,79 @@ const ORG: OrgSettingsLite = {
 
 // ─── The schema tripwire ─────────────────────────────────────────────────────
 
+const SCHEMA_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../backend/src/db/schema.ts',
+)
+
+/**
+ * The column identifiers of one `sqliteTable(...)` block, read out of the
+ * schema's SOURCE. Brace-matched from the table's opening `{` so a later table
+ * in the file can't leak its columns into this one.
+ */
+function tableColumns(source: string, table: string): string[] {
+  const start = source.indexOf(`export const ${table} = sqliteTable(`)
+  assert.notEqual(start, -1, `schema.ts no longer declares a "${table}" table — re-check what Settings reads.`)
+  const open = source.indexOf('{', start)
+  assert.notEqual(open, -1, `Could not find the column block for "${table}".`)
+  let depth = 0
+  let end = -1
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}') {
+      depth--
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
+  assert.notEqual(end, -1, `Unbalanced braces walking the "${table}" column block.`)
+  const body = source.slice(open, end)
+  // `  someColumn: text('some_column')` → someColumn. Only at a property
+  // position followed by a drizzle column builder, so nested option objects
+  // (`{ onDelete: 'cascade' }`) don't register as columns.
+  return [...body.matchAll(/(\w+)\s*:\s*(?:text|integer|real|blob|numeric)\s*\(/g)].map((m) => m[1])
+}
+
 /** The live column list of the table Settings reads (`organisations`). */
-const ORG_COLUMNS = Object.keys(organisations)
+const ORG_COLUMNS = tableColumns(readFileSync(SCHEMA_PATH, 'utf8'), 'organisations')
+
+test('[MOB-6f] the schema scan actually found columns', () => {
+  // The guard the source-scan idiom requires: a regex that quietly matches
+  // nothing would make every assertion below vacuously true, forever.
+  assert.ok(ORG_COLUMNS.length > 5, `Scanned only ${ORG_COLUMNS.length} columns — the scan is broken, not the schema.`)
+})
+
+test('[MOB-6f] the scan reads the real table, not a neighbouring one', () => {
+  // The other half of the idiom: prove the scanner BITES, on input we control.
+  // A scan that quietly grabbed the next table's columns would report
+  // `apiToken` as an org column and make the exclusion test meaningless.
+  const SRC = `
+export const organisations = sqliteTable('organisations', {
+  id: text('id').primaryKey(),
+  mission: text('mission'),
+  telegramBotToken: text('telegram_bot_token'),
+  ownerId: text('owner_id').references(() => users.id, { onDelete: 'cascade' }),
+})
+
+export const secrets = sqliteTable('secrets', {
+  apiToken: text('api_token'),
+})
+`
+  assert.deepEqual(tableColumns(SRC, 'organisations'), [
+    'id',
+    'mission',
+    'telegramBotToken',
+    'ownerId',
+  ])
+  // `onDelete: 'cascade'` is not a column, and `secrets.apiToken` is not ours.
+  assert.ok(!tableColumns(SRC, 'organisations').includes('apiToken'))
+  assert.ok(!tableColumns(SRC, 'organisations').includes('onDelete'))
+  assert.deepEqual(tableColumns(SRC, 'secrets'), ['apiToken'])
+  // A table that isn't there must fail loudly, not return [].
+  assert.throws(() => tableColumns(SRC, 'nonexistent'), /no longer declares/)
+})
 
 test('[MOB-6f] every field the screen renders is a real organisations column', () => {
   for (const f of SETTINGS_FIELDS) {
