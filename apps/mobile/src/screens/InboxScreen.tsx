@@ -2,11 +2,12 @@
 // approvals and lets the operator approve / reject / request-changes from the
 // phone. POST /api/approvals/:id/decide.
 //
-// Honest note: approving a *dangerous* type (file_destructive | wallet_tx |
-// email_send | machine_exec) requires a fresh Arturita step-up session token,
-// which this phase-1 client does not mint — so approve may 403 with a clear
-// "step-up required" message. Reject / request-changes never need step-up, so the
-// remote *stop* action always works. Step-up on mobile is story MOB-4.
+// MOB-4: approving a *dangerous* type (file_destructive | wallet_tx | email_send
+// | machine_exec) is now fully supported from the phone via an on-device STEP-UP
+// (StepUpModal): a local biometric/typed gate, then a fresh Arturita command
+// session sent in the `x-arturita-session` header exactly as the backend gate
+// requires. Reject / request-changes never need step-up and remain one-tap, so
+// the remote *stop* action always works.
 
 import React, { useCallback, useEffect, useState } from 'react'
 import {
@@ -19,15 +20,18 @@ import {
 } from 'react-native'
 import { Api, type Approval } from '../api'
 import { useAuth } from '../auth'
-import { isDangerousApprovalType } from '../constants'
+import { approvalNeedsStepUp } from '../constants'
 import { font, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Empty, Loading } from '../ui'
+import StepUpModal from './StepUpModal'
 
 export default function InboxScreen() {
   const { apiUrl, getToken, orgId } = useAuth()
   const [items, setItems] = useState<Approval[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  // The dangerous approval currently mid-step-up (null = modal closed). MOB-4.
+  const [stepUp, setStepUp] = useState<Approval | null>(null)
 
   const load = useCallback(async () => {
     const token = await getToken()
@@ -63,9 +67,22 @@ export default function InboxScreen() {
     [apiUrl, getToken],
   )
 
-  // Only reached for NON-dangerous approvals: dangerous ones disable Approve (L1),
-  // because one-tap approve of them always 403s until on-device step-up (MOB-4).
-  function confirmApprove(a: Approval) {
+  // Approve. Anything the backend would step-up-gate (a dangerous type OR a
+  // non-dangerous outer type carrying payload.requiresStepUp, e.g. a low-trust
+  // review wrapping a dangerous action) routes through the on-device step-up modal
+  // (MOB-4); truly safe types keep the lightweight one-tap confirm.
+  function onApprove(a: Approval) {
+    if (approvalNeedsStepUp(a)) {
+      // The modal can't mint a session without an org scope. If orgId is briefly
+      // null (reconnecting / org not yet resolved), surface it instead of a silent
+      // no-op that makes the button look inert.
+      if (!orgId) {
+        setError('Reconnecting — try again in a moment.')
+        return
+      }
+      setStepUp(a)
+      return
+    }
     Alert.alert('Approve?', a.summary || a.type, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Approve', onPress: () => decide(a, 'approved') },
@@ -80,6 +97,20 @@ export default function InboxScreen() {
   }
 
   return (
+    <>
+    {stepUp && orgId ? (
+      <StepUpModal
+        approval={stepUp}
+        apiUrl={apiUrl}
+        orgId={orgId}
+        getToken={getToken}
+        onCancel={() => setStepUp(null)}
+        onApproved={(id) => {
+          setStepUp(null)
+          setItems((cur) => (cur ?? []).filter((x) => x.id !== id))
+        }}
+      />
+    ) : null}
     <ScrollView
       contentContainerStyle={s.wrap}
       refreshControl={
@@ -98,7 +129,10 @@ export default function InboxScreen() {
         <Empty text="No pending approvals. You're all caught up." />
       ) : (
         items.map((a) => {
-          const dangerous = isDangerousApprovalType(a.type)
+          // "dangerous" here = the backend would step-up-gate approving it (a
+          // dangerous type OR payload.requiresStepUp) — so the chip, the "step-up"
+          // Approve label, and the note all read honestly for a wrapped case too.
+          const dangerous = approvalNeedsStepUp(a)
           const busy = busyId === a.id
           return (
             <Card key={a.id} style={{ marginBottom: space.lg }}>
@@ -117,16 +151,15 @@ export default function InboxScreen() {
 
               <View style={s.actions}>
                 <View style={s.actionBtn}>
-                  {/* L1: dangerous approvals can't be one-tap approved from the phone
-                      yet — approve needs a step-up session token (MOB-4), so a plain
-                      Approve tap would always 403. Disable + relabel it so the UX is
-                      honest instead of a dead-end tap. Reject/revision never step up. */}
+                  {/* MOB-4: dangerous approvals are now approvable from the phone —
+                      the tap opens the on-device step-up modal (biometric/typed gate
+                      → fresh session → x-arturita-session header). Safe types keep the
+                      one-tap confirm. Reject/revision never step up. */}
                   <Button
                     title={dangerous ? 'Approve — step-up' : 'Approve'}
-                    onPress={() => confirmApprove(a)}
+                    onPress={() => onApprove(a)}
                     tone="ok"
                     busy={busy}
-                    disabled={dangerous}
                   />
                 </View>
                 <View style={s.actionBtn}>
@@ -135,8 +168,8 @@ export default function InboxScreen() {
               </View>
               {dangerous ? (
                 <Text style={s.stepup}>
-                  ⚠ Approving this dangerous action needs an on-device step-up session (MOB-4). Reject
-                  or request changes from here — those always work.
+                  ⚠ Approving this dangerous action requires an on-device step-up (Face ID / Touch ID,
+                  or a typed confirmation). Reject or request changes here without it.
                 </Text>
               ) : null}
               <View style={{ marginTop: space.sm }}>
@@ -152,6 +185,7 @@ export default function InboxScreen() {
         })
       )}
     </ScrollView>
+    </>
   )
 }
 

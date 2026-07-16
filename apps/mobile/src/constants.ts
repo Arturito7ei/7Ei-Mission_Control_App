@@ -28,3 +28,16 @@ export function isDangerousApprovalType(type: string | null | undefined): boolea
   const norm = String(type ?? '').trim().toLowerCase().replace(/\s+/g, '_')
   return DANGEROUS_SET.has(norm)
 }
+
+/** Does approving this item require an on-device step-up? Mirrors the backend
+ *  decide gate (tasks.ts:478), which requires step-up for a direct dangerous
+ *  type OR any approval carrying `payload.requiresStepUp === true` — e.g. a
+ *  `low_trust_review` WRAPPING a dangerous action, whose OUTER type is not itself
+ *  dangerous. Without the second clause such an item would read as safe, route to
+ *  the one-tap approve, and 403 at the server. */
+export function approvalNeedsStepUp(a: {
+  type?: string | null
+  payload?: { requiresStepUp?: unknown } | null
+}): boolean {
+  return isDangerousApprovalType(a?.type) || a?.payload?.requiresStepUp === true
+}

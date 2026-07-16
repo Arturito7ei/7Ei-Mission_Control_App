@@ -30,7 +30,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Confirm your identity to approve a dangerous action from your phone (MOB-4 step-up)."
+        }
+      ]
     ],
     "extra": {
       "//": "EXPO_PUBLIC_API_URL / EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY are read from env at runtime via process.env; see README."
