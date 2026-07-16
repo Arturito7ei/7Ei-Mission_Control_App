@@ -14,12 +14,14 @@ const EXISTING_TABS = [
 ]
 
 // P1 — surfaces taken off the rail entirely. Still routable, never rendered in the sidebar.
-const REMOVED_FROM_RAIL = ['search', 'tasks', 'goals', 'pipelines', 'workspaces', 'artifacts']
+// P2 — `tasks` left this list: it is now a hosted tab under Inbox (see FOLDED).
+const REMOVED_FROM_RAIL = ['search', 'goals', 'pipelines', 'workspaces', 'artifacts']
 
 // P1 — surfaces folded into a parent page's tab bar: child → parent.
 const FOLDED: Record<string, string> = {
   budgets: 'costs',
   plugins: 'connectors',
+  tasks: 'inbox', // P2 — tasks + approvals are one area
   comms: 'inbox',
   adapters: 'settings',
   secrets: 'settings',
@@ -63,7 +65,6 @@ test('[P1-nav] removed surfaces stay routable — the code is kept, not deleted'
     assert.equal(allSurfaces().some(sfc => sfc.id === id), true)
   }
   // The real surfaces we kept still render the way they always did.
-  assert.equal(findNavItem('tasks')!.kind, 'tab')
   assert.equal(navSectionKey('goals'), 'goals')
   assert.equal(navSectionKey('workspaces'), 'workspaces')
 })
@@ -93,8 +94,11 @@ test('[P1-nav] each parent page exposes exactly the expected tab bar, itself fir
     { id: 'connectors', label: 'Connectors' },
     { id: 'plugins', label: 'Plugins' },
   ])
+  // P2 — the tasks + approvals area: the Inbox tab is the approvals view, Tasks
+  // is the log, and they sit side by side under one rail entry.
   assert.deepEqual(navPageTabs('inbox'), [
     { id: 'inbox', label: 'Inbox' },
+    { id: 'tasks', label: 'Tasks' },
     { id: 'comms', label: 'Comms' },
   ])
   assert.deepEqual(navPageTabs('settings'), [
@@ -113,10 +117,37 @@ test('[P1-nav] each parent page exposes exactly the expected tab bar, itself fir
   )
 })
 
-test('[P1-nav] the Inbox rail entry reads "Inbox / Comms" but its own tab reads "Inbox"', () => {
-  const inbox = allNavItems().find(i => i.id === 'inbox')
-  assert.equal(inbox?.label, 'Inbox / Comms')
+// P2 — the operator asked for tasks folded under Inbox and for "Tasks" to reach
+// the tasks + approvals dashboard. These are that ask, locked down.
+test('[P2-nav] Tasks is folded under Inbox and clicking it keeps Inbox lit', () => {
+  const railIds = allNavItems().map(i => i.id)
+  assert.equal(railIds.includes('tasks'), false, 'Tasks is not its own rail entry')
+  assert.equal(isHidden('tasks'), false, 'Tasks is no longer an off-rail surface')
+  assert.equal(navParentId('tasks'), 'inbox')
+  assert.equal(navSelectedId('tasks'), 'inbox')
+  assert.equal(findNavItem('tasks')?.kind, 'tab', 'Tasks still renders the real Task Log, not a placeholder')
+  assert.equal(findNavItem('tasks')?.label, 'Tasks')
+})
+
+test('[P2-nav] selecting Tasks surfaces the approvals view as a sibling tab', () => {
+  // Reaching Tasks puts the operator on the Inbox area's tab bar, where the
+  // Inbox tab IS the approvals surface (CockpitPanel section `inbox`).
+  const bar = navPageTabs(navSelectedId('tasks'))
+  assert.ok(bar.some(t => t.id === 'tasks'), 'Tasks is on the bar it lands on')
+  assert.ok(bar.some(t => t.id === 'inbox'), 'approvals are one tab away')
+  assert.equal(navSectionKey('inbox'), 'inbox')
+})
+
+test('[P2-nav] the Inbox rail entry is labelled for itself, like every other parent', () => {
+  // It used to read "Inbox / Comms"; enumerating children stops scaling once a
+  // parent hosts more than one, and Costs/Connectors/Settings never did it.
+  for (const id of ['inbox', 'costs', 'connectors', 'settings']) {
+    const item = allNavItems().find(i => i.id === id)!
+    assert.equal(item.label.includes('/'), false, `${id} must not enumerate its children`)
+  }
+  assert.equal(allNavItems().find(i => i.id === 'inbox')?.label, 'Inbox')
   assert.equal(navSurfaceTitle('inbox'), 'Inbox')
+  assert.equal(navSurfaceTitle('tasks'), 'Tasks')
   assert.equal(navSurfaceTitle('comms'), 'Comms')
 })
 

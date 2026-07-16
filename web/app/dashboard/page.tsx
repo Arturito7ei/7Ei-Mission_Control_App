@@ -72,6 +72,10 @@ export default function DashboardPage() {
   const [jiraIssues, setJiraIssues] = useState<JiraIssue[]>([])
   const [jiraConnected, setJiraConnected] = useState(false)
   const [usage, setUsage] = useState<UsageStats | null>(null)
+  // P2 — how many approvals are waiting. Tasks and approvals are one area now, so
+  // the Task Log links across to them rather than leaving the operator to find the
+  // Inbox tab on their own. Same source the Inbox tab renders from.
+  const [pendingApprovals, setPendingApprovals] = useState(0)
   const [tab, setTab] = useState<string>('overview')
   // AG1 — the agent detail page lives inside the `agents` area and deep-links
   // through the URL hash (#agents/<id>/<tab>), parsed by the pure lib/agentRoute.
@@ -108,6 +112,7 @@ export default function DashboardPage() {
         setAgents(ad.agents); setTasks(td.tasks); setProjects(pd.projects); setNotifications(nd.notifications)
         // Optional enrichments
         try { const sd = await apiFetch<{ skills: Skill[] }>('/api/skills', token); setSkills(sd.skills) } catch {}
+        try { const ib = await apiFetch<{ approvals: unknown[] }>(`/api/orgs/${o.id}/inbox`, token); setPendingApprovals(ib.approvals?.length ?? 0) } catch {}
         try { const ud = await apiFetch<{ usage: UsageStats }>(`/api/orgs/${o.id}/usage`, token); setUsage(ud.usage) } catch {}
         try {
           const jStatus = await apiFetch<{ connected: boolean }>(`/api/orgs/${o.id}/jira/status`, token)
@@ -468,7 +473,18 @@ export default function DashboardPage() {
 
         {tab === 'tasks' && (
           <div style={s.page}>
-            <h1 style={s.h1}>Task Log ({tasks.length})</h1>
+            {/* P2 — Tasks lives in the Inbox area; the approvals waiting on this
+                work are the sibling tab, so say so instead of relying on the
+                operator spotting the tab bar. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <h1 style={s.h1}>Task Log ({tasks.length})</h1>
+              <button onClick={() => selectTab('inbox')} style={{ ...s.approvalsLink, marginLeft: 'auto' }}
+                title="Approvals live on the Inbox tab of this area">
+                {pendingApprovals > 0
+                  ? `⏳ ${pendingApprovals} approval${pendingApprovals > 1 ? 's' : ''} pending — review →`
+                  : '✓ No approvals pending — open Inbox →'}
+              </button>
+            </div>
             <div style={s.table}>
               <div style={{ ...s.thead, gridTemplateColumns: '3fr 1.5fr 1fr 1fr 1fr' }}><span>Task</span><span>Agent</span><span>Status</span><span>Cost</span><span>Tokens</span></div>
               {tasks.slice(0, 100).map(t => {
@@ -673,4 +689,5 @@ const s: Record<string, React.CSSProperties> = {
   formInput: { background: 'var(--s0)', border: '1px solid var(--line-strong)', borderRadius: 8, padding: '10px 12px', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box' as const },
   primaryBtn: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
   uploadChip: { fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'var(--s2)', border: '1px solid var(--line-strong)', padding: '5px 12px', borderRadius: 8, cursor: 'pointer' },
+  approvalsLink: { fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', background: 'var(--s2)', border: '1px solid var(--line-strong)', padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit' },
 }

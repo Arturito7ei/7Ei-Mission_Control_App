@@ -8,8 +8,8 @@
 // P1 — the rail is deliberately short. Two mechanisms keep it that way without
 // losing a surface:
 //   * hosted tabs (`tabs`)  — a child surface renders as a tab on its parent's
-//     page (Budgets under Costs, Plugins under Connectors, Comms under Inbox,
-//     Adapters + Secrets under Settings). One rail entry, two-plus surfaces.
+//     page (Budgets under Costs, Plugins under Connectors, Tasks + Comms under
+//     Inbox, Adapters + Secrets under Settings). One rail entry, two-plus surfaces.
 //   * HIDDEN_ITEMS        — surfaces dropped from the rail but still routable:
 //     the command palette lists them and the dashboard still renders them, so
 //     nothing is deleted and no deep link dies.
@@ -47,8 +47,9 @@ export interface NavItem {
    */
   tabs?: NavItem[]
   /**
-   * P1 — the parent's own tab label when it differs from the rail label
-   * (Inbox / Comms in the rail; the first tab just reads "Inbox").
+   * The parent's own tab label, when its rail entry needs to read differently
+   * from its first tab. No parent needs it today (each is labelled for itself);
+   * `navPageTabs` / `navSurfaceTitle` fall back to `label`.
    */
   tabLabel?: string
 }
@@ -81,10 +82,16 @@ export const NAV_GROUPS: NavGroup[] = [
       // It sits directly under Dashboard: it is the operator's primary way in.
       { id: 'assistant', label: 'Command Center', icon: '🎙️', kind: 'tab', paperclip: 'Board Chat', beyond: true },
       { id: 'cockpit', label: 'Operations', icon: '🛰️', kind: 'tab', paperclip: 'Dashboard / live' },
-      // P1 — Comms folds in here: one "Inbox / Comms" rail entry, tabs Inbox | Comms.
+      // P1 — Comms folds in here. P2 — Tasks folds in too: the operator's queue of
+      // work and the approvals waiting on them are one area, so the rail carries a
+      // single "Inbox" entry with tabs Inbox | Tasks | Comms. The Inbox tab is the
+      // approvals + notifications view (CockpitPanel's InboxSection); Tasks is the
+      // task log next to it. Labelled for the parent alone, like Costs / Connectors
+      // / Settings — enumerating children in the rail label stops scaling at two.
       {
-        id: 'inbox', label: 'Inbox / Comms', tabLabel: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox',
+        id: 'inbox', label: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox',
         tabs: [
+          { id: 'tasks', label: 'Tasks', icon: '📋', kind: 'tab', paperclip: 'Issues / Tasks' },
           { id: 'comms', label: 'Comms', icon: '📬', kind: 'tab', paperclip: 'Communications', beyond: true },
         ],
       },
@@ -163,7 +170,6 @@ export const NAV_GROUPS: NavGroup[] = [
  */
 export const HIDDEN_ITEMS: NavItem[] = [
   { id: 'search', label: 'Search', icon: '🔍', kind: 'placeholder', paperclip: 'Search', note: 'Global search page. Today: press ⌘K for the command palette. A dedicated search surface is an Epic-P gap.' },
-  { id: 'tasks', label: 'Issues', icon: '📋', kind: 'tab', paperclip: 'Issues / Tasks' },
   { id: 'goals', label: 'Goals', icon: '🎯', kind: 'section', section: 'goals', paperclip: 'Goals' },
   { id: 'pipelines', label: 'Pipelines', icon: '🧩', kind: 'placeholder', paperclip: 'Pipelines', note: 'Multi-stage case pipelines. Not yet built (no pipeline/case entity) — Epic-P gap.' },
   { id: 'workspaces', label: 'Workspaces', icon: '🧱', kind: 'section', section: 'workspaces', paperclip: 'Workspaces' },

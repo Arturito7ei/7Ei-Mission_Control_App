@@ -23,7 +23,7 @@ P1 shortened the rail. **No surface was deleted** — every one of them is still
 
 | Group | Rail item | Tabs it hosts |
 |---|---|---|
-| **Overview** | Dashboard · 🎙️ Command Center · Operations · **Inbox / Comms** · Activity | Inbox / Comms → `Inbox` \| `Comms` |
+| **Overview** | Dashboard · 🎙️ Command Center · Operations · **Inbox** · Activity | Inbox → `Inbox` \| `Tasks` \| `Comms` |
 | **Workspace** | Agents · Projects · Org · Routines _(soon)_ | — |
 | **Operate** | Governance · Review Queue _(soon)_ | — |
 | **Delivery** | **Costs** · Skills · Memory | Costs → `Costs` \| `Budgets` |
@@ -31,7 +31,7 @@ P1 shortened the rail. **No surface was deleted** — every one of them is still
 | **General** | Usage · **Settings** | Settings → `Settings` \| `Adapters` \| `Secrets` |
 
 **Off the rail, still routable** (`HIDDEN_ITEMS` — reachable via ⌘K, code untouched):
-`Search`, `Issues`, `Goals`, `Pipelines`, `Workspaces`, `Artifacts`.
+`Search`, `Goals`, `Pipelines`, `Workspaces`, `Artifacts`.
 
 Selecting a hosted tab keeps its **parent** lit in the rail (`navSelectedId`), so the rail never
 "loses" the user inside a tabbed page.
@@ -50,7 +50,7 @@ Selecting a hosted tab keeps its **parent** lit in the rail (`navSelectedId`), s
 | Overview | Activity | `Activity` **(live, P0b)** | promoted Cockpit `TimelineSection` — heartbeat / last-24h feed |
 | Overview | Board Chat | `Arturita` (assistant tab) | conversational operator surface (beyond Paperclip) |
 | Overview | Search | _placeholder_ | today: **⌘K command palette**; a dedicated search page is the Epic-P gap |
-| **Workspace** | Issues / Tasks | `Issues` (tasks tab) | Tasks **↔** Issues — the unit of agent work |
+| **Workspace** | Issues / Tasks | `Tasks` (tasks tab, **P2**: an Inbox tab) | Tasks **↔** Issues — the unit of agent work. P2 folded it under Inbox, next to the approvals waiting on it |
 | Workspace | Agents | `Agents` (agents tab + Cockpit fleet) | the hired agent fleet + status |
 | Workspace | Projects | `Projects` (projects tab) | codebase/initiative grouping |
 | Workspace | Goals | `Goals` **(live, P0b)** | promoted Cockpit `GoalsSection` — strategic goals tree |
@@ -92,11 +92,18 @@ analog; they're mounted in the nearest-fit group and clearly ours.
   Governance (see note above).
 - **P1 — shorten the rail (shipped):** P0b made every surface first-class, which made the rail long.
   P1 folds five surfaces into their parent's **tab bar** (`Budgets`→Costs, `Plugins`→Connectors,
-  `Comms`→Inbox _(now "Inbox / Comms")_, `Adapters` + `Secrets`→Settings) via a new `PageTabs.tsx`
-  driven by `navPageTabs()`, and takes six off the rail entirely (`Search`, `Issues`, `Goals`,
-  `Pipelines`, `Workspaces`, `Artifacts` → `HIDDEN_ITEMS`). **Nothing was deleted and nothing became
-  unreachable** — the palette walks `allSurfaces()`, and the nav tests assert the removals, each fold
-  target, and the "every prior surface still reachable" invariant.
+  `Comms`→Inbox _(then labelled "Inbox / Comms")_, `Adapters` + `Secrets`→Settings) via a new
+  `PageTabs.tsx` driven by `navPageTabs()`, and takes six off the rail entirely (`Search`, `Issues`,
+  `Goals`, `Pipelines`, `Workspaces`, `Artifacts` → `HIDDEN_ITEMS`). **Nothing was deleted and nothing
+  became unreachable** — the palette walks `allSurfaces()`, and the nav tests assert the removals, each
+  fold target, and the "every prior surface still reachable" invariant.
+- **P2 — fold Tasks under Inbox (this PR):** P1 took `Issues` off the rail entirely, which left the
+  operator's own task log reachable **only** via ⌘K — there was no "Tasks" to click. P2 folds it back
+  in as a **tab of Inbox** (`Inbox` \| `Tasks` \| `Comms`), so the queue of work and the approvals
+  waiting on it read as one area: the `Inbox` tab *is* the approvals view (`InboxSection`, inline
+  tri-state), and the Task Log sits beside it and links across to it. The rail entry drops to plain
+  **`Inbox`**, matching Costs / Connectors / Settings — a parent is labelled for itself, and
+  enumerating children stops scaling past one. Governance keeps the full approvals config.
 
 ## Non-negotiables carried through
 Colorblind-safe (icon + label + tone, never color alone), **design tokens only** (no raw hex in new
