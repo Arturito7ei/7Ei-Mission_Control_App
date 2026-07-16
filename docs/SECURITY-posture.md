@@ -250,6 +250,13 @@ name-based redaction would ever have caught it.
 
 ## 10. Known / accepted residuals
 
+- **`PATCH /api/orgs/:orgId` takes an unvalidated body** — the **write-side** counterpart
+  to the §9a read leak, and older than it. The route strips only `ownerId`/`id` and spreads
+  the rest into `db.update().set()`, with no Zod schema, so **any member can write
+  `deployConfig` or `telegramBotToken`** — overwrite the org's LLM API keys, or repoint the
+  Telegram bot. §9a closed the read side only. Fix is the mirror image: an allow-list of
+  *writable* columns (reuse `SECRET_ORG_FIELDS`; don't start a third list), and likely
+  owner-only for credential columns. Tracked in `STATUS.md` → Standing items.
 - **Object-level authz** (a member reading a foreign record by id *within* their own org
   path) — a separate concern, still open.
 - **`requireOrgRole` no-ops on a path with no `:orgId`** — a live footgun left flagged;
