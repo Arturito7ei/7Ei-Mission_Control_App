@@ -74,7 +74,8 @@ export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageStats | null>(null)
   // P2 — how many approvals are waiting. Tasks and approvals are one area now, so
   // the Task Log links across to them rather than leaving the operator to find the
-  // Inbox tab on their own. Same source the Inbox tab renders from.
+  // Inbox tab on their own. Same source the Inbox tab renders from; fetched lazily
+  // on entering the Task Log (see below), never on the default dashboard load.
   const [pendingApprovals, setPendingApprovals] = useState(0)
   const [tab, setTab] = useState<string>('overview')
   // AG1 — the agent detail page lives inside the `agents` area and deep-links
@@ -112,7 +113,6 @@ export default function DashboardPage() {
         setAgents(ad.agents); setTasks(td.tasks); setProjects(pd.projects); setNotifications(nd.notifications)
         // Optional enrichments
         try { const sd = await apiFetch<{ skills: Skill[] }>('/api/skills', token); setSkills(sd.skills) } catch {}
-        try { const ib = await apiFetch<{ approvals: unknown[] }>(`/api/orgs/${o.id}/inbox`, token); setPendingApprovals(ib.approvals?.length ?? 0) } catch {}
         try { const ud = await apiFetch<{ usage: UsageStats }>(`/api/orgs/${o.id}/usage`, token); setUsage(ud.usage) } catch {}
         try {
           const jStatus = await apiFetch<{ connected: boolean }>(`/api/orgs/${o.id}/jira/status`, token)
@@ -157,6 +157,23 @@ export default function DashboardPage() {
 
   // Any nav selection leaves the agent detail page behind.
   const selectTab = useCallback((t: string) => { closeAgent(); setTab(t) }, [closeAgent])
+
+  // P2 — the pending-approvals count, fetched LAZILY: `…/inbox` is a heavy query,
+  // and the count is only ever rendered on the Task Log, so operators who never
+  // open it never pay for it. Keyed on `tab`, so landing on the Task Log re-reads
+  // it and the number isn't stale after deciding an approval on the Inbox tab.
+  // (Entering the tab is enough — no polling.)
+  useEffect(() => {
+    if (tab !== 'tasks' || !org) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const ib = await apiFetch<{ approvals: unknown[] }>(`/api/orgs/${org.id}/inbox`, await getToken())
+        if (!cancelled) setPendingApprovals(ib.approvals?.length ?? 0)
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [tab, org, getToken])
 
   // Model catalogue for the org-creation picker (data-driven from the backend)
   useEffect(() => {
