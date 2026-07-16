@@ -40,13 +40,16 @@ import AgentDetailScreen from './screens/AgentDetailScreen'
 import AgentsScreen from './screens/AgentsScreen'
 import BudgetsScreen from './screens/BudgetsScreen'
 import CommandCenterScreen from './screens/CommandCenterScreen'
+import ConnectorsScreen from './screens/ConnectorsScreen'
 import CostsScreen from './screens/CostsScreen'
+import GovernanceScreen from './screens/GovernanceScreen'
 import HealthScreen from './screens/HealthScreen'
 import InboxScreen from './screens/InboxScreen'
 import MemoryScreen from './screens/MemoryScreen'
 import MoreScreen from './screens/MoreScreen'
 import OrgScreen from './screens/OrgScreen'
 import PlaceholderScreen from './screens/PlaceholderScreen'
+import SettingsScreen from './screens/SettingsScreen'
 import TasksScreen from './screens/TasksScreen'
 
 /**
@@ -80,6 +83,13 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   // the roster does — the web's card opens the agent too.
   memory: MemoryScreen,
   org: OrgScreen,
+  // MOB-6f — the three remaining operator-facing menus, all READ-ONLY. Each web
+  // peer is an editor wrapped around a reading; the phone ships the reading and
+  // defers every write (parity doc §6.7). Governance is the sharp one: it decides
+  // what an agent may do, and a mis-tap there has no undo.
+  governance: GovernanceScreen,
+  settings: SettingsScreen,
+  connectors: ConnectorsScreen,
 }
 
 /**

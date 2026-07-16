@@ -126,13 +126,29 @@ test("'ready' is exactly the set of screens that exist", () => {
   //
   // MOB-1..4 shipped assistant/inbox/agents/status; MOB-6b added `tasks` (the
   // Task Log); MOB-6d added `costs`, `budgets` and `activity`; MOB-6e added
-  // `memory` and `org` (the two heavy web views, as native trees). The agent
+  // `memory` and `org` (the two heavy web views, as native trees); MOB-6f added
+  // `governance`, `settings` and `connectors` (the operator-facing menus, all
+  // read-only — every web write on those three is deferred). The agent
   // DETAIL screen is deliberately absent — it is not a navModel surface on either
   // client (the web reaches it by drilling into the Agents area, not from the
   // rail), so it is a stack route pushed from the roster rather than a
   // destination the model knows.
   assert.deepEqual(
     allNavItems().filter((i) => i.status === 'ready').map((i) => i.id).sort(),
-    ['activity', 'agents', 'assistant', 'budgets', 'costs', 'inbox', 'memory', 'org', 'status', 'tasks'],
+    [
+      'activity',
+      'agents',
+      'assistant',
+      'budgets',
+      'connectors',
+      'costs',
+      'governance',
+      'inbox',
+      'memory',
+      'org',
+      'settings',
+      'status',
+      'tasks',
+    ],
   )
 })
