@@ -245,17 +245,21 @@ export default function MemoryScreen() {
     (row: TreeRow) => {
       if (row.entry.type === 'dir') {
         const path = row.entry.path
+        const willExpand = !expanded.has(path)
+        // The updater stays PURE — it computes the next set and nothing else.
+        // A state updater must be safe to call twice: React StrictMode
+        // deliberately double-invokes it, so a fetch in here would issue two GETs
+        // per folder open (and, on a slow network, two writes racing into `dirs`).
+        // The side effect belongs to the EVENT, not to the state transition.
         setExpanded((x) => {
           const n = new Set(x)
-          if (n.has(path)) n.delete(path)
-          else {
-            n.add(path)
-            // Fetch on FIRST open only — a folder already fetched reopens
-            // instantly, and a closed subtree is never re-walked.
-            if (dirs[path] === undefined) loadDir(path)
-          }
+          if (willExpand) n.add(path)
+          else n.delete(path)
           return n
         })
+        // Fetch on FIRST open only — a folder already fetched reopens instantly,
+        // and a closed subtree is never re-walked.
+        if (willExpand && dirs[path] === undefined) loadDir(path)
         return
       }
       // A note. `isNotePath` already gated the tap (the row isn't pressable
@@ -277,7 +281,9 @@ export default function MemoryScreen() {
         }
       })()
     },
-    [apiUrl, dirs, getToken, loadDir, orgId],
+    // `expanded` is read to decide the toggle direction, so it belongs here: a
+    // stale closure would flip the wrong way and, worse, mis-decide the fetch.
+    [apiUrl, dirs, expanded, getToken, loadDir, orgId],
   )
 
   const rows = useMemo(

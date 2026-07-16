@@ -20,6 +20,7 @@
 // Zero-dep: node --test --experimental-strip-types.
 
 import assert from 'node:assert/strict'
+import { readFile, readdir } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   isMarkdownPath as backendIsMarkdownPath,
@@ -277,4 +278,108 @@ test('[MOB-6e] vault content is data, never markup — there is no HTML path at 
 test('[MOB-6e] an empty note parses to nothing rather than throwing', () => {
   assert.deepEqual(parseMarkdown(''), [])
   assert.deepEqual(parseMarkdown('\n\n\n'), [])
+})
+
+// ─── Source-level guard: state updaters must stay pure ───────────────────────
+//
+// AUDIT (MOB-6e, Low): `MemoryScreen` called `loadDir(path)` from INSIDE the
+// `setExpanded` updater. React deliberately double-invokes updaters under
+// StrictMode to surface exactly this, so opening a folder would have fired TWO
+// GETs — and on a slow link, two responses racing into `dirs`. The side effect
+// belongs to the EVENT, not to the state transition.
+//
+// No unit test can reach it: the screens import react-native and cannot load
+// under `node --test` (the constraint navModel.test.ts and status.test.ts both
+// work around). So the call site gets a source-level guard, in the shape
+// status.test.ts already established — this is the assertion that fails if
+// someone writes the defect back.
+const EFFECTS = [
+  { re: /\bloadDir\s*\(/, why: 'fetches a directory' },
+  { re: /\bApi\.\w+\s*\(/, why: 'calls the API client' },
+  { re: /\bfetch\s*\(/, why: 'fetches' },
+  { re: /\bawait\b/, why: 'awaits' },
+]
+
+/** The body of every `setX((…) => …)` updater in a source file. */
+function updaterBodies(src: string): { name: string; body: string }[] {
+  const out: { name: string; body: string }[] = []
+  const re = /\b(set[A-Z]\w*)\s*\(/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) {
+    const open = m.index + m[0].length - 1 // the call's own '('
+    // Functional updaters only: `setX(value)` passing a plain value has no body
+    // to be impure in. The walk must start at the CALL's paren, not the arrow's
+    // parameter list — starting at the latter would stop dead on `(x)`.
+    if (!/^\s*(\(|function\b|async\b)/.test(src.slice(open + 1))) continue
+    // Walk to the matching close, so a nested `(`/`{` can't end the scan early.
+    let depth = 0
+    let i = open
+    for (; i < src.length; i++) {
+      const c = src[i]
+      if (c === '(' || c === '{') depth++
+      else if (c === ')' || c === '}') {
+        depth--
+        if (depth === 0) break
+      }
+    }
+    out.push({ name: m[1], body: src.slice(m.index, i + 1) })
+  }
+  return out
+}
+
+test('[MOB-6e] no screen performs a side effect inside a state updater', async () => {
+  const dir = new URL('./screens/', import.meta.url)
+  let checked = 0
+  for (const file of await readdir(dir)) {
+    if (!file.endsWith('.tsx')) continue
+    const src = await readFile(new URL(file, dir), 'utf8')
+    for (const { name, body } of updaterBodies(src)) {
+      checked++
+      for (const { re, why } of EFFECTS) {
+        assert.ok(
+          !re.test(body),
+          `${file}: the ${name}(…) updater ${why}. React double-invokes updaters ` +
+            'under StrictMode, so this fires the effect twice per event. Compute ' +
+            'the next state in the updater and do the effect in the handler body.',
+        )
+      }
+    }
+  }
+  // A guard that silently matches nothing passes forever. Prove it has teeth.
+  assert.ok(checked > 0, 'the updater scan found no updaters — the pattern has drifted')
+})
+
+test('[MOB-6e] the updater scan actually detects the defect it guards against', () => {
+  // The guard above is a regex over source. If its scan were wrong it would pass
+  // on the very code it exists to reject, so feed it the ORIGINAL defect verbatim.
+  const defect = `
+    setExpanded((x) => {
+      const n = new Set(x)
+      if (n.has(path)) n.delete(path)
+      else {
+        n.add(path)
+        if (dirs[path] === undefined) loadDir(path)
+      }
+      return n
+    })
+  `
+  const bodies = updaterBodies(defect)
+  assert.equal(bodies.length, 1)
+  assert.equal(bodies[0].name, 'setExpanded')
+  assert.ok(/\bloadDir\s*\(/.test(bodies[0].body), 'the scan must see the whole updater body')
+
+  // And the shipped shape — pure updater, effect outside — must pass.
+  const fixed = `
+    const willExpand = !expanded.has(path)
+    setExpanded((x) => {
+      const n = new Set(x)
+      if (willExpand) n.add(path)
+      else n.delete(path)
+      return n
+    })
+    if (willExpand && dirs[path] === undefined) loadDir(path)
+  `
+  const fixedBodies = updaterBodies(fixed)
+  assert.equal(fixedBodies.length, 1)
+  assert.ok(!/\bloadDir\s*\(/.test(fixedBodies[0].body), 'the effect must fall outside the updater')
 })
