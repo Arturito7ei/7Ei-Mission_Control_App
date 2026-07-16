@@ -8,8 +8,8 @@
 //
 //   1. Biometric (Face ID / Touch ID / device passcode) via
 //      `expo-local-authentication` — a first-party Expo module BUNDLED in Expo
-//      Go (expo/bundledNativeModules.json → ~57.0.1), so it runs without a dev
-//      build. A dev build only hardens the enrollment/anti-spoof posture.
+//      Go (SDK 54 → ~17.0.8), so it runs without a dev build. A dev build only
+//      hardens the enrollment/anti-spoof posture.
 //   2. Typed-confirmation fallback (type APPROVE) when biometric hardware is
 //      absent or not enrolled (e.g. a simulator, or a device with no Face ID) —
 //      so the gate NEVER silently degrades to a one-tap approve.
