@@ -111,18 +111,47 @@ export const Api = {
       token,
     }).then((r) => r.approvals ?? []),
 
+  // Decide an approval. For a DANGEROUS type approved from the phone, the backend
+  // requires STEP-UP: a fresh Arturita command-session token presented in the
+  // `x-arturita-session` header (backend/src/routes/tasks.ts — approve of
+  // file_destructive/wallet_tx/email_send/machine_exec else 403). `sessionToken`
+  // is that step-up token, minted per-approval via `mintArturitaSession` right
+  // before this call. Reject/revision never step up, so they pass it undefined.
+  // The token is a bearer-grade secret: it rides in a header (NEVER a URL/query)
+  // and is NEVER logged. The same contract accepts a body `sessionToken`, but the
+  // header is the primary path the web gate reads, so we use the header only.
   decideApproval: (
     base: string,
     token: string,
     id: string,
     decision: 'approved' | 'rejected' | 'revision_requested',
     note?: string,
+    sessionToken?: string,
   ) =>
     api<{ approval: Approval }>(base, `/api/approvals/${id}/decide`, {
       token,
       method: 'POST',
       body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
+      ...(sessionToken ? { headers: { 'x-arturita-session': sessionToken } } : {}),
     }),
+
+  // ─── Step-up: mint a fresh Arturita command session (MOB-4) ────────────────
+  // Clerk-authed owner surface: POST /api/orgs/:orgId/arturita/session returns a
+  // one-shot `token` (the backend stores only its hash) that is FRESH for the
+  // step-up window (backend DEFAULT_STEPUP_FRESHNESS_MS = 5 min) and valid for the
+  // session TTL (30 min). We mint one PER dangerous approval right before deciding
+  // and discard it after — never cache or reuse it across approvals, matching the
+  // backend's freshness/single-operator intent. `source` is a descriptive label
+  // on the sessions list; the enum is {desk, telegram} and the phone authenticates
+  // exactly like the web desk (first-party Clerk JWT), so we mint as 'desk'. The
+  // returned token is a secret: hold it only in a local var, attach it to the one
+  // decide call, and NEVER log it or put it in a URL.
+  mintArturitaSession: (base: string, token: string, orgId: string) =>
+    api<{ session: { id: string; expiresAt?: string }; token: string }>(
+      base,
+      `/api/orgs/${orgId}/arturita/session`,
+      { token, method: 'POST', body: JSON.stringify({ source: 'desk' }) },
+    ).then((r) => r.token),
 
   converse: (
     base: string,
