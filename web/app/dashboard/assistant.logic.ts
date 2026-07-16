@@ -52,6 +52,83 @@ export function resolveVoiceState(flags: { speaking?: boolean; thinking?: boolea
   return 'idle'
 }
 
+// ─── Attachments (CC-ATT) ────────────────────────────────────────────────────
+// The operator can attach a document to a turn. The file goes to
+// POST /arturita/attachments/extract (the backend's officeparser path — the same
+// one the knowledge ingest uses); the extracted TEXT comes back and rides the
+// next /converse call as `attachment`. Nothing is stored anywhere.
+//
+// The checks below are a courtesy, not a control: the server re-checks type,
+// size and length. Their job is to fail in the composer — instantly, before a
+// 10 MB upload — rather than after a round-trip.
+
+// ⚠️ MIRRORS THE SERVER — the web bundle has no import path into `backend/`, so
+// these two constants are hand-copied, exactly as `web/lib/adapterProfile.ts`
+// mirrors the adapter registry. That is tolerable ONLY because the server is the
+// real enforcer: drift here costs a worse message (a file the composer waves
+// through, refused a second later by the backend with the same reasoning), never
+// a bypass. If you change either, change it there FIRST:
+//   backend/src/services/converse-attachments.ts → MAX_ATTACHMENT_BYTES
+//   backend/src/services/document-ingest.ts      → SUPPORTED_DOC_EXTS
+
+/** Extensions the backend's parser can read. Mirrors SUPPORTED_DOC_EXTS. */
+export const ATTACH_EXTS = [
+  'csv', 'docx', 'json', 'log', 'markdown', 'md', 'odp', 'ods', 'odt', 'pdf', 'pptx', 'tsv', 'txt', 'xlsx',
+] as const
+
+/** The `accept` attribute for the file picker — filters the OS dialog. */
+export const ATTACH_ACCEPT = ATTACH_EXTS.map(e => `.${e}`).join(',')
+
+/** Mirrors MAX_ATTACHMENT_BYTES in backend/src/services/converse-attachments.ts. */
+export const ATTACH_MAX_BYTES = 10 * 1024 * 1024
+
+export interface AttachedDoc {
+  name: string
+  size: number
+  /** extracted text — absent until the extract call returns. */
+  text?: string
+  truncated?: boolean
+}
+
+export function attachExtension(filename: string): string {
+  return (filename.split('.').pop() ?? '').toLowerCase()
+}
+
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * Why this file can't be attached, or null if it can. Phrased for the operator:
+ * it names the limit or the readable types, so the next attempt succeeds.
+ */
+export function rejectAttachment(file: { name: string; size: number }): string | null {
+  const ext = attachExtension(file.name)
+  if (!(ATTACH_EXTS as readonly string[]).includes(ext)) {
+    return `I can't read .${ext} files. Try one of: ${ATTACH_EXTS.join(', ')}.`
+  }
+  if (file.size <= 0) return `“${file.name}” is empty.`
+  if (file.size > ATTACH_MAX_BYTES) {
+    return `“${file.name}” is ${formatFileSize(file.size)} — the limit is ${formatFileSize(ATTACH_MAX_BYTES)}.`
+  }
+  return null
+}
+
+/** The chip label under the composer: name + size, plus a truncation hint. */
+export function attachmentChipLabel(doc: AttachedDoc): string {
+  const base = `${doc.name} · ${formatFileSize(doc.size)}`
+  return doc.truncated ? `${base} · truncated` : base
+}
+
+/** A send is allowed when there is text OR a fully-extracted document. */
+export function canSendTurn(input: { typed: string; attachment?: AttachedDoc | null; busy?: boolean }): boolean {
+  if (input.busy) return false
+  if (input.typed.trim().length > 0) return true
+  return !!input.attachment?.text
+}
+
 // ─── Conversation model ──────────────────────────────────────────────────────
 
 export type Role = 'user' | 'arturita'
@@ -100,17 +177,31 @@ export function toConverseRequest(input: {
   existingThreadId?: string | null
   history: Message[]
   historyLimit?: number
-}): { message: string; explicitDelegate: boolean; existingThreadId: string | null; history: Array<{ role: 'user' | 'assistant'; content: string }> } {
+  /** CC-ATT: the document attached to THIS turn (already extracted to text). */
+  attachment?: AttachedDoc | null
+}): {
+  message: string
+  explicitDelegate: boolean
+  existingThreadId: string | null
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+  attachment?: { name: string; text: string; truncated: boolean }
+} {
   const limit = input.historyLimit ?? 10
   const history = input.history
     .filter(m => m.text.trim().length > 0)
     .slice(-limit)
     .map(m => ({ role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant', content: m.text }))
+  // Only a document that actually extracted to text is worth sending; an empty
+  // one would just cost tokens for an empty block.
+  const att = input.attachment?.text?.trim()
+    ? { name: input.attachment.name, text: input.attachment.text, truncated: !!input.attachment.truncated }
+    : undefined
   return {
     message: input.message.trim(),
     explicitDelegate: !!input.explicitDelegate,
     existingThreadId: input.existingThreadId ?? null,
     history,
+    ...(att ? { attachment: att } : {}),
   }
 }
 

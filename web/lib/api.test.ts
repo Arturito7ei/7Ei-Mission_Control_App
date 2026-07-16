@@ -41,3 +41,14 @@ test('[AGFIX4] an explicit Content-Type still wins', () => {
   const h = apiHeaders({ method: 'POST', body: 'x', headers: { 'Content-Type': 'text/plain' } })
   assert.equal(h['Content-Type'], 'text/plain')
 })
+
+test('[CC-ATT] a FormData body is left for the browser to type', () => {
+  // Only the browser knows the multipart boundary, so claiming JSON over a
+  // FormData body produces a request the server can't parse — it must not be set.
+  const h = apiHeaders({ method: 'POST', token: 't', body: new FormData() })
+  assert.equal(h['Content-Type'], undefined)
+  assert.equal(h.Authorization, 'Bearer t')
+  // an explicit override still wins, as with every other body type
+  const forced = apiHeaders({ method: 'POST', body: new FormData(), headers: { 'Content-Type': 'multipart/form-data; boundary=x' } })
+  assert.equal(forced['Content-Type'], 'multipart/form-data; boundary=x')
+})

@@ -93,6 +93,65 @@
 | GET | `/api/orgs/:orgId/knowledge/file/:fileId` | Yes | Read Google Drive file |
 | DELETE | `/api/knowledge/:itemId` | Yes | Delete knowledge item |
 
+## Arturita — Command Center
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/orgs/:orgId/arturita/converse` | Yes | Conversational front door — answers directly, or delegates to the agent flow |
+| POST | `/api/orgs/:orgId/arturita/attachments/extract` | Yes | Extract plain text from a document attached to a turn (multipart) |
+| GET | `/api/orgs/:orgId/arturita/llm-status` | Yes | Cloud-LLM reachability probe (real 1-token ping) |
+
+### Attaching a document to a turn (CC-ATT)
+
+Two steps, so the JSON `/converse` contract (and its `deferAnswer` local-streaming
+path) stays intact:
+
+1. **`POST /arturita/attachments/extract`** — multipart, one `file` part. The text is
+   extracted with the same `officeparser` path the knowledge ingest uses
+   (`services/document-ingest.ts` → `extractText`) and returned. The document is
+   **never stored, embedded, or logged**; the buffer is discarded with the response.
+
+   ```jsonc
+   // 200
+   { "attachment": { "name": "Q3.pdf", "text": "…", "truncated": false },
+     "bytes": 24576, "chars": 1840, "truncated": false }
+   ```
+
+   **Readable types:** `csv, docx, json, log, markdown, md, odp, ods, odt, pdf, pptx,
+   tsv, txt, xlsx`. **Size cap:** 10 MB. **Text cap:** 40,000 chars per turn — longer
+   documents are clipped, `truncated: true` is returned, and the operator is told.
+
+   Failures are clean JSON with a `code`, never a 500: `415 unsupported_type`,
+   `413 too_large`, `422 empty` / `unreadable` (corrupt, encrypted, or a scan with no
+   text layer), `400` (no file).
+
+2. **`POST /arturita/converse`** with the returned text as `attachment`:
+
+   ```jsonc
+   { "message": "what was Q3 revenue?",
+     "attachment": { "name": "Q3.pdf", "text": "…", "truncated": false } }
+   ```
+
+   The text is injected into **that turn only**, after the operator's message, fenced
+   as `=== ATTACHED DOCUMENT <nonce>: <name> === … === END ATTACHED DOCUMENT <nonce>: <name> ===`.
+   It is not added to `history`, so it doesn't re-enter (and re-bill) later turns. The
+   server re-clips over-budget text — the client is not the enforcer.
+
+   **The fence nonce is a boundary, not decoration.** With a fixed marker, a document
+   containing the literal closing fence would end its own block early, and the rest of
+   its text would read to the model as the *operator* speaking. The nonce is 8 random
+   bytes drawn **after** the text is in hand (re-drawn on collision), so no document can
+   predict it; the filename is sanitized (no newlines, no `===` runs, ≤120 chars) before
+   interpolation. Containment is bounded anyway — routing reads the operator's message
+   only, and this text never enters history — so the worst case was always a misleading
+   single-turn reply, never an action.
+
+Both routes sit in the Clerk-secured scope behind `requireOrgMembership`, so a
+non-member of `:orgId` is refused identically to `/converse` itself. Routing
+(`answer` vs `delegate`) reads the **operator's message only** — a document's contents
+can never steer a turn into execute-mode. Delegated turns don't carry the attachment
+(it lives for one turn); the acknowledgement says so.
+
 ## Scheduled Tasks
 
 | Method | Path | Auth | Description |

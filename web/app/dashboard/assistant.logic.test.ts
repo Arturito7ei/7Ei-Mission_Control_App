@@ -5,6 +5,8 @@ import assert from 'node:assert/strict'
 import {
   orbVisual, resolveVoiceState, toConverseRequest, toArturitaMessage,
   revealNext, isRevealComplete, revealStepFor, routingBadge,
+  rejectAttachment, attachmentChipLabel, canSendTurn, formatFileSize,
+  ATTACH_EXTS, ATTACH_ACCEPT, ATTACH_MAX_BYTES,
   type Message, type ConverseResponse,
 } from './assistant.logic.ts'
 
@@ -117,4 +119,68 @@ test('[J1] routingBadge distinguishes answer / delegate / approval (icon + label
     const b = routingBadge(m)
     assert.ok(b.icon.length > 0 && b.label.length > 0)
   }
+})
+
+// ─── Attachments (CC-ATT) ────────────────────────────────────────────────────
+// The composer's guard rails. These are a COURTESY check (the server re-enforces
+// type, size and length) — their job is to fail instantly in the composer rather
+// than after a 10 MB upload, so the messages must name the fix.
+
+test('[CC-ATT] rejectAttachment accepts every type the backend parser reads', () => {
+  for (const ext of ATTACH_EXTS) {
+    assert.equal(rejectAttachment({ name: `doc.${ext}`, size: 1000 }), null, `${ext} should attach`)
+  }
+})
+
+test('[CC-ATT] rejectAttachment names the readable types on an unsupported file', () => {
+  const r = rejectAttachment({ name: 'clip.mp4', size: 1000 })
+  assert.match(r!, /\.mp4/)
+  assert.match(r!, /pdf/)          // tells the operator what WOULD work
+})
+
+test('[CC-ATT] rejectAttachment states the real limit on an oversized file', () => {
+  const r = rejectAttachment({ name: 'big.pdf', size: ATTACH_MAX_BYTES + 1 })
+  assert.match(r!, /10\.0 MB/)
+  assert.equal(rejectAttachment({ name: 'big.pdf', size: ATTACH_MAX_BYTES }), null, 'the boundary is inclusive')
+  assert.match(rejectAttachment({ name: 'empty.txt', size: 0 })!, /empty/)
+})
+
+test('[CC-ATT] rejectAttachment ignores extension case', () => {
+  assert.equal(rejectAttachment({ name: 'Report.FINAL.PDF', size: 10 }), null)
+})
+
+test('[CC-ATT] the accept list is a real file-dialog filter', () => {
+  assert.match(ATTACH_ACCEPT, /\.pdf/)
+  assert.match(ATTACH_ACCEPT, /\.docx/)
+  assert.ok(!ATTACH_ACCEPT.includes(' '))
+})
+
+test('[CC-ATT] the chip reads name · size, and says when text was truncated', () => {
+  assert.equal(attachmentChipLabel({ name: 'Q3.pdf', size: 2048 }), 'Q3.pdf · 2 KB')
+  assert.match(attachmentChipLabel({ name: 'big.pdf', size: 5 * 1024 * 1024, truncated: true }), /5\.0 MB · truncated/)
+  assert.equal(formatFileSize(512), '512 B')
+})
+
+test('[CC-ATT] canSendTurn: text alone, or a fully-extracted document alone', () => {
+  assert.equal(canSendTurn({ typed: 'hi' }), true)
+  assert.equal(canSendTurn({ typed: '   ' }), false)
+  // a document still being parsed has no text yet → cannot send
+  assert.equal(canSendTurn({ typed: '', attachment: { name: 'a.pdf', size: 10 } }), false)
+  assert.equal(canSendTurn({ typed: '', attachment: { name: 'a.pdf', size: 10, text: 'body' } }), true)
+  // busy (thinking / still reading) blocks the send either way
+  assert.equal(canSendTurn({ typed: 'hi', busy: true }), false)
+})
+
+test('[CC-ATT] toConverseRequest carries an extracted attachment, and only then', () => {
+  const base = { message: 'read this', history: [] }
+  assert.equal(toConverseRequest(base).attachment, undefined)
+  // a picked-but-unparsed doc must not be sent as an empty block
+  assert.equal(toConverseRequest({ ...base, attachment: { name: 'a.pdf', size: 9 } }).attachment, undefined)
+  assert.equal(toConverseRequest({ ...base, attachment: { name: 'a.pdf', size: 9, text: '   ' } }).attachment, undefined)
+
+  const withDoc = toConverseRequest({ ...base, attachment: { name: 'Q3.pdf', size: 9, text: 'revenue 4M', truncated: true } })
+  assert.deepEqual(withDoc.attachment, { name: 'Q3.pdf', text: 'revenue 4M', truncated: true })
+  // the existing contract is untouched
+  assert.equal(withDoc.message, 'read this')
+  assert.equal(withDoc.explicitDelegate, false)
 })

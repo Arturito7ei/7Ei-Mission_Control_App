@@ -26,9 +26,22 @@ import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
 import { parseLlmChain, usableLlmChain, usableCloudProviders } from '../services/arturita-pipeline'
 import { resolveLlmCreds, keyAvailableFor } from '../services/custom-model'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
+import { extractText } from '../services/document-ingest'
+import {
+  checkAttachment, clipAttachmentText, withAttachmentContext,
+  MAX_ATTACHMENT_BYTES, SUPPORTED_ATTACHMENT_EXTS,
+} from '../services/converse-attachments'
 
 const ConverseBody = z.object({
   message: z.string(),
+  /** CC-ATT: a document the operator attached to this turn. `text` is the
+   *  extracted plain text from POST /arturita/attachments/extract — the doc
+   *  itself is never uploaded here and never stored. */
+  attachment: z.object({
+    name: z.string().min(1).max(300),
+    text: z.string(),
+    truncated: z.boolean().optional(),
+  }).nullable().optional(),
   /** the operator opted this turn into the agent flow (UI "delegate" toggle). */
   explicitDelegate: z.boolean().optional(),
   /** conversational continuity — the running task thread, if any. */
@@ -84,8 +97,22 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     try { b = ConverseBody.parse(req.body ?? {}) } catch (e: any) { return reply.code(400).send({ error: e?.message ?? 'invalid body' }) }
 
     const message = String(b.message ?? '').trim()
-    if (!message) return reply.code(400).send({ error: 'message is required' })
+    // An attachment alone is a legitimate turn ("read this") — but there must be
+    // SOMETHING to act on.
+    if (!message && !b.attachment) return reply.code(400).send({ error: 'message is required' })
 
+    // Re-clip server-side: the client already clips, but it is not the enforcer.
+    const attachment = b.attachment
+      ? (() => {
+          const { text, truncated } = clipAttachmentText(b.attachment.text)
+          return { name: b.attachment.name, text, truncated: truncated || !!b.attachment.truncated }
+        })()
+      : null
+
+    // Routing decides on the OPERATOR's words only — never the document's. A doc
+    // that happens to contain "delete the production database" must not be able
+    // to route the turn into execute-mode; the operator's intent is the only
+    // input to that decision.
     const decision = decideConverseMode({ transcript: message, explicitDelegate: b.explicitDelegate })
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
     const agent = await ensureArturita(orgId)
@@ -104,9 +131,13 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         parentTaskId: route.isFollowUp ? (b.existingThreadId ?? null) : null,
         createdAt: new Date(),
       } as any)
-      const ack = decision.destructive
+      let ack = decision.destructive
         ? "Got it — I've put it on the board and I'll stop for your approval before anything irreversible."
         : "Got it — I've put it on the board for the office to run."
+      // Delegated tasks are executed later by an agent, so an attachment held only
+      // for this turn cannot travel with them (persisting it is a separate story).
+      // Say so rather than letting the operator believe the doc went with the task.
+      if (attachment) ack += ` Note: “${attachment.name}” stays with this conversation — I didn't attach it to the task, so mention anything from it the office will need.`
       return {
         mode: 'delegate',
         routing: { trigger: decision.trigger, reason: decision.reason, workMode: route.workMode, destructive: decision.destructive, approvalType: decision.approvalType ?? null, isFollowUp: route.isFollowUp },
@@ -124,7 +155,11 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       contextBlock,
     })
     const history = (b.history ?? []).map(h => ({ role: h.role, content: h.content }))
-    const messages = [...history, { role: 'user' as const, content: message }]
+    // The attached document rides on THIS turn only — delimited, after the
+    // operator's question. It is never added to `history`, so it doesn't re-enter
+    // the prompt (and re-bill) on every later turn of the thread.
+    const userContent = withAttachmentContext(message || 'Please read the attached document.', attachment)
+    const messages = [...history, { role: 'user' as const, content: userContent }]
 
     // J-prod: hand the built prompt back so the client streams tokens locally
     // (browser→Ollama). No LLM call here, no secrets in the payload.
@@ -178,6 +213,83 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
   })
 
+  // ── CC-ATT: attachment text extraction ──────────────────────────────────────
+  // The operator attaches a document to a Command Center turn. This endpoint is
+  // the ONLY thing that touches the file: it extracts plain text with the SAME
+  // parser the knowledge ingest-file route uses (`extractText` → officeparser)
+  // and hands the text straight back. The document is NEVER written to the DB,
+  // never embedded, and never logged — the buffer is garbage after the reply.
+  // The client then sends that text back on the next /converse turn as
+  // `attachment`, which keeps the JSON converse contract (and the deferAnswer /
+  // local-Ollama path) intact. That round-trip grants the client no new power:
+  // it could already put arbitrary text in `message`.
+  //
+  // Auth + tenancy come from the enclosing `secured` scope (Clerk onRequest +
+  // requireOrgMembership preHandler on the `:orgId` path) — identical to
+  // /converse itself. Every failure is clean JSON; none is a 500 with a stack.
+  app.post('/api/orgs/:orgId/arturita/attachments/extract', async (req, reply) => {
+    let data: any
+    try {
+      data = await (req as any).file?.({ limits: { fileSize: MAX_ATTACHMENT_BYTES } })
+    } catch {
+      return reply.code(400).send({ error: 'Attach the document as a multipart file upload.' })
+    }
+    if (!data) return reply.code(400).send({ error: 'No file attached.' })
+
+    const filename: string = data.filename ?? ''
+    // Gate on type BEFORE reading the body — no point buffering 10 MB of a file
+    // the parser can't read anyway.
+    const typeCheck = checkAttachment({ filename, size: 1 })
+    if (typeCheck) return reply.code(415).send({ error: typeCheck.error, code: typeCheck.code })
+
+    let buffer: Buffer
+    try {
+      buffer = await data.toBuffer()
+    } catch (err: any) {
+      // @fastify/multipart aborts the stream past `limits.fileSize`.
+      if (err?.code === 'FST_REQ_FILE_TOO_LARGE' || /file too large/i.test(String(err?.message))) {
+        return reply.code(413).send({
+          error: `That file is over the ${Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB limit.`,
+          code: 'too_large',
+        })
+      }
+      return reply.code(400).send({ error: 'Could not read the uploaded file.', code: 'unreadable' })
+    }
+
+    const sizeCheck = checkAttachment({ filename, size: buffer.byteLength })
+    if (sizeCheck) {
+      const status = sizeCheck.code === 'too_large' ? 413 : sizeCheck.code === 'empty' ? 422 : 415
+      return reply.code(status).send({ error: sizeCheck.error, code: sizeCheck.code })
+    }
+
+    let raw: string
+    try {
+      raw = await extractText(buffer, filename)
+    } catch (err) {
+      // Log the FAILURE, never the document. `err` from officeparser can carry
+      // file content in its message, so only the name/size go to the log.
+      req.log.warn({ filename, bytes: buffer.byteLength }, 'converse attachment extraction failed')
+      return reply.code(422).send({
+        error: `I couldn't read “${filename}” — it may be corrupt, password-protected, or a scanned image with no text layer.`,
+        code: 'unreadable',
+      })
+    }
+    if (!raw || !raw.trim()) {
+      return reply.code(422).send({
+        error: `I couldn't find any text in “${filename}”. If it's a scan, it needs OCR first.`,
+        code: 'empty',
+      })
+    }
+
+    const { text, truncated } = clipAttachmentText(raw)
+    return {
+      attachment: { name: filename, text, truncated },
+      bytes: buffer.byteLength,
+      chars: raw.length,
+      truncated,
+    }
+  })
+
   // ── Talk-path LLM reachability probe (for the Config self-test) ─────────────
   // Answers the honest question the reachability-of-`/pipeline` check can't: can
   // the CLOUD fallback actually produce a token? It runs a tiny real completion
@@ -225,6 +337,10 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/converse', {
     summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow)',
     tag: 'arturita', body: ConverseBody,
+  })
+  documentEndpoint('POST', '/api/orgs/:orgId/arturita/attachments/extract', {
+    summary: `Extract plain text from a document attached to a Command Center turn (multipart file; ${SUPPORTED_ATTACHMENT_EXTS.join('/')}; ≤${Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB). Nothing is stored — the text is returned for the next /converse turn's \`attachment\`.`,
+    tag: 'arturita',
   })
   documentEndpoint('GET', '/api/orgs/:orgId/arturita/llm-status', {
     summary: 'Talk-path cloud-LLM reachability probe (real 1-token ping) — powers the Config self-test; catches stored-but-invalid keys',
