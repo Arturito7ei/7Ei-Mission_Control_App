@@ -9,7 +9,7 @@
 ## 0. TL;DR — the four decisions
 
 1. **The web app is not 30 pages — it's one page.** `/dashboard` is the only authed Next route; every "menu" is a client-side `tab` string rendered by conditionals in a 43KB `page.tsx`. Nav is pure data in `web/lib/navModel.ts`. **Mobile can mirror the nav model directly** — it's already a testable, framework-free structure, and porting it means porting data, not routing.
-2. **The gap is smaller than the menu count suggests.** 30 routable surfaces, but **7 are placeholders with no UI at all** ("coming soon") and 4 more are thin. The real port is ~12 screens.
+2. **The gap is smaller than the menu count suggests.** 29 routable surfaces, but **7 are placeholders with no UI at all** ("coming soon") and 4 more are thin. The real port is ~12 screens. *(Was "30" — see the count correction in §1.)*
 3. **Voice has a backend blocker, not an Expo blocker.** `DESIGN-mobile-expo.md` §6 says to "POST the audio to the hosted Whisper/converse leg." **That leg does not exist.** There is no backend endpoint anywhere that accepts audio. The web app gets its STT from the browser's Web Speech API (which React Native does not have) or from `adapters/arturita-stt` bound to `127.0.0.1:8790` on the operator's own Mac (which a phone cannot reach). **Mic capture in Expo Go is fine; the audio has nowhere to go.** MOB-5 therefore needs a backend story (`MOB-5a`) before any phone code.
 4. **TTS is free today.** `expo-speech` ships inside Expo Go and is a 1:1 peer of the web's `window.speechSynthesis`. Spoken replies need no dev build and no backend work.
 
@@ -223,7 +223,7 @@ RootStack  (@react-navigation/native-stack)
   └── Section   any destination pushed from More — real screen or placeholder
 ```
 
-**The drawer this plan suggested was rejected.** A drawer is a desktop metaphor: it costs `react-native-reanimated` + `react-native-gesture-handler`, and it *hides* the sections we're trying to make discoverable. A pushed list screen is one tap in, one swipe back, scrolls to any length, and reads correctly under VoiceOver with no extra work. The "recents" list is dropped too — with 25 rows on one scrollable screen there's nothing to shortcut yet; revisit if the list gets unwieldy.
+**The drawer this plan suggested was rejected.** A drawer is a desktop metaphor: it costs `react-native-reanimated` + `react-native-gesture-handler`, and it *hides* the sections we're trying to make discoverable. A pushed list screen is one tap in, one swipe back, scrolls to any length, and reads correctly under VoiceOver with no extra work. The "recents" list is dropped too — with 26 rows on one scrollable screen there's nothing to shortcut yet; revisit if the list gets unwieldy.
 
 The tab bar holds **5**: iOS collapses a 6th tab into its own, worse "More". Membership is data (`primary` in the model), not a decision baked into the navigator.
 
@@ -241,10 +241,29 @@ The tab bar holds **5**: iOS collapses a 6th tab into its own, worse "More". Mem
 **What the port keeps and what it changes.** Ids, labels, and group order are the web's — one surface, one name, in both clients. The web's rail/hosted-tab/hidden split is **flattened** (a 390pt screen has no rail to fold; a hosted tab is just another row), but recorded in `webHosted`/`webHidden` so the mapping stays auditable. The one mobile-only axis is `status`, three-valued on purpose:
 
 - **`ready`** (4) — a real screen ships today: `assistant`, `inbox`, `agents`, `status`.
-- **`planned`** (18) — the web has it and the phone's Clerk JWT already reaches the data (§4). A named `MOB-6x` builds it; the placeholder says which.
+- **`planned`** (19) — the web has it and the phone's Clerk JWT already reaches the data (§4). A named `MOB-6x` builds it; the placeholder says which.
 - **`gap`** (7) — unbuilt on the web too (the Epic-P placeholders). Nothing to port; waiting won't help. Asserted ≡ the web's `kind:'placeholder'`.
 
 A flat "coming soon" would blur `planned` and `gap` — the two states make very different promises to the operator.
+
+**The arithmetic, in one place** (it was wrong in three docs before the audit caught it, because no line ever showed the sum):
+
+```
+30 destinations = 4 ready + 19 planned + 7 gap
+                = 4 tab bar  + 26 More rows
+26 placeholders = 19 planned + 7 gap          (every non-tab row today)
+29 web surfaces = 30 − 1 phone-only (Status)  (§1: 18 rail + 5 hosted + 6 hidden)
+```
+
+Recompute rather than trust the prose — `allNavItems()`, `primaryItems()`, `moreItems()` are the source:
+
+```bash
+cd apps/mobile && node --experimental-strip-types -e "
+const m = await import('./src/navModel.ts')
+const n = (s) => m.allNavItems().filter(i => i.status === s).length
+console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('planned'),
+              gap: n('gap'), tabs: m.primaryItems().length, more: m.moreItems().length })"
+```
 
 **Adding a screen in 6b+ is two lines:** flip `status: 'ready'` in `navModel.ts`, add the component to `SCREENS` in `navigation.tsx`. A missing registry entry falls through to the placeholder — never a crash. (A test pins the `ready` set, since `navigation.tsx` imports react-native and can't load under `node --test`.)
 
