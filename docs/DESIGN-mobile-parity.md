@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity rule is now a merge gate — §6.3). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -315,7 +315,7 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 - **Push vocabulary seam.** MOB-3's `PushRouteTarget` says `'command'`; the model uses the web's id `'assistant'`. Translated by one map in `navigation.tsx` rather than renaming MOB-3's file or diverging from the web.
 - **No `linking` config.** Push taps route in-process; sections aren't URL-addressable. Worth doing if a push ever needs to open a non-tab section.
 - **Nav state isn't persisted** across reloads — matching the web, which loses its tab on reload.
-- ~~**CI doesn't run `apps/mobile`**~~ — **RESOLVED by CI-MOB-1 (§6.3).** `.github/workflows/ci.yml` now has a `mobile` job; `npm test` here is a **merge gate**, not just a local one.
+- ~~**CI doesn't run `apps/mobile`**~~ — **RESOLVED by CI-MOB-1 (§6.3).** `.github/workflows/ci.yml` now has a `mobile` job, so `npm test` here **runs automatically on every PR and turns the check red on drift** — it is no longer only a local/audit gate. ⚠️ **Red does not yet BLOCK a merge**: `main` has no branch protection, so every check on this repo is advisory. Making it blocking is an operator action — §6.3 + `GO-LIVE.md` item 18.
 
 ### 6.2 MOB-PAR-1 — the first parity mirror (web #284/#285/#286 → phone)
 
@@ -350,9 +350,20 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 
 ---
 
-### 6.3 CI-MOB-1 — the parity rule becomes a merge gate (as built)
+### 6.3 CI-MOB-1 — the parity tripwires start running on every PR (as built)
 
-**The problem this closes:** every parity tripwire in `apps/mobile` was firing into the void. `navModel.test.ts` sat **red on `main`** after #286 and nothing failed, because **no workflow referenced `apps/mobile`** — the shipping app was the one workspace CI couldn't see. A rule nothing enforces is a suggestion.
+**The problem this closes:** every parity tripwire in `apps/mobile` was firing into the void. `navModel.test.ts` sat **red on `main`** after #286 and nothing failed, because **no workflow referenced `apps/mobile`** — the shipping app was the one workspace CI couldn't see. A rule nothing runs is a suggestion.
+
+> #### ⚠️ What this does and does NOT do — read before trusting it
+>
+> **It DOES:** run the tripwires on every PR to `main`, automatically, and turn the **`Mobile (apps/mobile)`** check **red** on drift. That is a **visible signal** where previously there was silence. *(Proven, not assumed: injecting a one-word label change into `web/lib/navModel.ts` fails the mobile suite with `label drift on "tasks"` — the exact error that sat unseen on `main`.)*
+>
+> **It does NOT (yet): block a merge.** `main` has **no branch protection and no rulesets** (verified: `GET /branches/main/protection` → 404 *"Branch not protected"*; `GET /rulesets` → `[]`). **Every check on this repo is advisory today** — a red mobile job can still be merged straight past, and this repo's convention is `--squash --admin` anyway.
+>
+> **So the honest state is: someone still has to look — but now there is something to look at.** The gap CI-MOB-1 closes is *"the test never ran"*, not *"a human might ignore red"*.
+>
+> **Making it a real gate is one operator action** (GitHub Settings → Branches → protect `main` → require **`Mobile (apps/mobile)`**): **operator-only**, not something a builder can do from the CLI. Tracked as **`GO-LIVE.md` item 18**.
+> **⚠️ If you do that, do NOT add `npm audit` to the required list** — it fails on every PR by design and is knowingly non-blocking; requiring it would wedge every merge. Require `Mobile (apps/mobile)`, `Install check (backend/web/app)`, and `Backend unit tests`.
 
 **The change is one file, one new job, 48 added lines, 0 removed:** `.github/workflows/ci.yml` gains a `mobile` job. *(Operator-approved exception to the root guide's "don't touch `.github/workflows/`" — this is the change that makes the standing parity rule real.)*
 
