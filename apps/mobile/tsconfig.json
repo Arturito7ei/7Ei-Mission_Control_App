@@ -2,5 +2,7 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  "//": "Tests are excluded for the same reason web/ excludes its own: they run under `node --test --experimental-strip-types`, so they import with explicit .ts extensions, which this config (correctly, for Metro) rejects.",
+  "exclude": ["src/**/*.test.ts"]
 }
