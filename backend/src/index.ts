@@ -27,6 +27,7 @@ import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
 import { arturitaWalletRoutes } from './routes/arturita-wallet'
 import { arturitaVoiceRoutes } from './routes/arturita-voice'
+import { arturitaSttRoutes } from './routes/arturita-stt'
 import { arturitaConverseRoutes } from './routes/arturita-converse'
 import { arturitaPipelineRoutes } from './routes/arturita-pipeline'
 import { arturitaCustomModelRoutes } from './routes/arturita-custom-model'
@@ -202,6 +203,7 @@ async function start() {
     await secured.register(arturitaRoutes)        // Arturita persona/session/binding (A1)
     await secured.register(arturitaWalletRoutes)  // Arturita wallet read/prepare/simulate + policy (E1/E2)
     await secured.register(arturitaVoiceRoutes)   // Arturita voice command → task + spoken reply (B1/S1)
+    await secured.register(arturitaSttRoutes)     // MOB-5a — hosted speech-to-text: audio blob → { transcript }
     await secured.register(arturitaConverseRoutes) // Arturita conversational front door — answer vs delegate (J1)
     await secured.register(arturitaPipelineRoutes) // Arturita free-first pipeline chains (LLM/STT/TTS) config (J2)
     await secured.register(arturitaCustomModelRoutes) // Arturita custom operator-defined LLM insertion (J2+)

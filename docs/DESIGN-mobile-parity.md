@@ -1,7 +1,7 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
-> **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
 ---
@@ -10,7 +10,7 @@
 
 1. **The web app is not 30 pages — it's one page.** `/dashboard` is the only authed Next route; every "menu" is a client-side `tab` string rendered by conditionals in a 43KB `page.tsx`. Nav is pure data in `web/lib/navModel.ts`. **Mobile can mirror the nav model directly** — it's already a testable, framework-free structure, and porting it means porting data, not routing.
 2. **The gap is smaller than the menu count suggests.** 29 routable surfaces, but **7 are placeholders with no UI at all** ("coming soon") and 4 more are thin. The real port is ~12 screens. *(Was "30" — see the count correction in §1.)*
-3. **Voice has a backend blocker, not an Expo blocker.** `DESIGN-mobile-expo.md` §6 says to "POST the audio to the hosted Whisper/converse leg." **That leg does not exist.** There is no backend endpoint anywhere that accepts audio. The web app gets its STT from the browser's Web Speech API (which React Native does not have) or from `adapters/arturita-stt` bound to `127.0.0.1:8790` on the operator's own Mac (which a phone cannot reach). **Mic capture in Expo Go is fine; the audio has nowhere to go.** MOB-5 therefore needs a backend story (`MOB-5a`) before any phone code.
+3. **Voice had a backend blocker, not an Expo blocker — and `MOB-5a` has now cleared it.** `DESIGN-mobile-expo.md` §6 said to "POST the audio to the hosted Whisper/converse leg." **That leg did not exist**: no backend endpoint accepted audio at all. The web app got its STT from the browser's Web Speech API (which React Native does not have) or from `adapters/arturita-stt` bound to `127.0.0.1:8790` on the operator's own Mac (which a phone cannot reach). **✅ SHIPPED (`mob-5a-stt-endpoint`): `POST /api/orgs/:orgId/arturita/transcribe`** — the hosted, org-scoped STT leg. Contract in §3.4. **The audio now has somewhere to go; MOB-5c can be written.** ⚠️ It transcribes on Fly **only once the operator supplies a cloud key** — see §3.5.
 4. **TTS is free today.** `expo-speech` ships inside Expo Go and is a 1:1 peer of the web's `window.speechSynthesis`. Spoken replies need no dev build and no backend work.
 
 ---
@@ -108,14 +108,18 @@ Plus `notifications.tsx` (push register + tap→deep-link, MOB-3).
 
 ## 3. Voice — feasibility, precisely
 
-### 3.1 The headline: there is no hosted STT
+### 3.1 The headline: there was no hosted STT — MOB-5a built it
 
-`DESIGN-mobile-expo.md` §6 step 2 says: *"POST the audio to the hosted Whisper/converse leg (the same STT the web app + `adapters/arturita-stt` use)."* **This is not true of the current code, and it is the single fact that gates MOB-5.**
+> **STATUS: RESOLVED by MOB-5a.** The finding below is preserved as the WHY; the
+> endpoint that answers it is specified in **§3.4** and its deployment/key reality
+> in **§3.5**. Everything in this subsection describes the state *before* MOB-5a.
+
+`DESIGN-mobile-expo.md` §6 step 2 says: *"POST the audio to the hosted Whisper/converse leg (the same STT the web app + `adapters/arturita-stt` use)."* **This was not true of the code, and it was the single fact that gated MOB-5.**
 
 - **No backend route accepts audio.** `@fastify/multipart` is registered (`backend/src/index.ts:8,122`) but only for 25MB *document* uploads on the knowledge routes. `backend/src/routes/arturita-voice.ts:29-36` takes a **JSON transcript**, and its own header comment (`:11-13`) says so: it accepts a transcript "produced client-side or by a future STT adapter."
 - **The web app's STT is browser-side or localhost-side, never hosted.** Either `SpeechRecognition`/`webkitSpeechRecognition` (`AssistantPanel.tsx:279`) — an API React Native does not have — or `adapters/arturita-stt`, a Node daemon wrapping the local `whisper` CLI, **bound to `127.0.0.1` only** (`server.mjs:94`) on port 8790, with **no auth** (CORS is its only gate). `AssistantPanel.tsx:336` → `web/lib/whisper.ts:84` POSTs the audio to **localhost**. Audio bytes never touch the Fly backend.
 
-So: a phone off the operator's LAN has **no STT destination**. Mic capture is the easy part; transcription is the missing leg.
+So: a phone off the operator's LAN had **no STT destination**. Mic capture is the easy part; transcription was the missing leg — **now built, see §3.4**.
 
 ### 3.2 The split
 
@@ -128,11 +132,11 @@ So: a phone off the operator's LAN has **no STT destination**. Mic capture is th
 | **Playing *returned* audio** | `expo-av` `Audio.Sound` from a `data:` URI | Works in Expo Go. Relevant only if we use the backend TTS below. |
 | **Text converse** | already shipped | — |
 
-**Needs backend work first (not a dev-build issue):**
+**Backend work — DONE (was the blocker; not a dev-build issue):**
 
-| Capability | Blocker |
+| Capability | Status |
 |---|---|
-| **Any phone STT** | No hosted endpoint accepts audio (§3.1). Needs `MOB-5a`: a Clerk-gated `POST …/arturita/transcribe` (multipart audio → `{text}`) that fronts a cloud Whisper. The `adapters/arturita-stt` daemon is a usable *reference implementation* of the contract (`POST /v1/audio/transcriptions`, field `file`, 25MB cap) but is **not** deployable as-is: localhost-bound, unauthenticated, and shells out to a local CLI. |
+| **Any phone STT** | ✅ **Unblocked by MOB-5a.** `POST /api/orgs/:orgId/arturita/transcribe` — Clerk-gated (loopback on packaged), org-scoped, multipart audio → `{ transcript, text }`. It deliberately mirrors the `adapters/arturita-stt` contract (`/v1/audio/transcriptions`, field `file`, `{text}` out), so the **web client can point at it by changing a URL alone**. The daemon itself remains **not** deployable as-is — localhost-bound, unauthenticated, shells out to a local CLI — so it is wired as the *self-host* provider only, behind the same interface. **Contract: §3.4. Which provider runs where + the key the operator must supply: §3.5.** |
 
 **Needs an EAS dev build:**
 
@@ -147,6 +151,39 @@ So: a phone off the operator's LAN has **no STT destination**. Mic capture is th
 
 `POST …/arturita/voice` **can** return `audioBase64` + `mime` when `speak:true` (`arturita-voice.ts:100,121-129`), via NVIDIA Chatterbox (`services/voice-provider.ts:20`), keyed by `NVIDIA_API_KEY` from the encrypted store. **But** `:125` hard-codes `caps:{localAvailable:false}` and the provider returns text-only without a key. **`/converse` returns no audio at all** — the Command Center's TTS is purely browser `speechSynthesis`. **Recommendation: use `expo-speech` on-device and ignore this endpoint.** It costs nothing, needs no key, and matches what the web actually does.
 
+### 3.4 The hosted STT endpoint (MOB-5a — as built)
+
+`backend/src/routes/arturita-stt.ts` (route) + `backend/src/services/stt-provider.ts` (provider layer).
+
+| | |
+|---|---|
+| **Method + path** | `POST /api/orgs/:orgId/arturita/transcribe` |
+| **Auth** | The `secured` scope — **Clerk JWT on hosted, loopback identity on packaged** (H6), exactly like every sibling route. No bearer → **401**. Never public. |
+| **Multi-tenancy** | `:orgId` comes from the **path**, and the scope-level `requireOrgMembership` preHandler proves membership of *that* org before the handler runs → **403** for a foreign org. No body/query field can name an org: the session decides, never the caller. |
+| **Body** | `multipart/form-data`, **one file part, field `file`** (the OpenAI/daemon/web-client name — `web/lib/whisper.ts:81` already sends it). Non-multipart → **415**. Wrong field → **400**. |
+| **Accepted audio** | `audio/m4a`, `audio/x-m4a`, `audio/mp4`, `audio/aac` (**what `expo-av` produces on iOS**), `audio/wav`, `audio/webm`, `audio/ogg`, `audio/mpeg`/`audio/mp3`, `audio/3gpp`, `audio/amr`. Parameters (`;codecs=opus`) and case tolerated. Anything else — **including `application/octet-stream`** — → **415**. *The phone client (MOB-5c) must set a real audio content type.* |
+| **Optional** | `?language=en` (forwarded to the provider; omit to auto-detect). |
+| **Success** | **200** `{ transcript: string, text: string, provider: 'cloud_openai'\|'local_whisper', bytes: number }`. `text` is the **same value** as `transcript`, under the key the daemon/OpenAI return and `web/lib/whisper.ts:37` already reads — that pairing is what makes this a **drop-in for the daemon URL**. |
+| **Errors** (always clean JSON, never a stack) | **401** no bearer · **403** not a member · **400** `no_audio`/`bad_field`/`empty_audio`/`bad_upload` · **413** `too_large` · **415** `not_multipart`/`unsupported_type` · **502** `provider_error` · **504** `timeout` · **503** `not_configured` (no transcriber on this deployment — see §3.5). |
+| **Limits** | **10 MB** per clip (`MC_STT_MAX_BYTES`) — a per-route clamp, deliberately *tighter* than the 25 MB global `@fastify/multipart` limit that exists for **document** uploads. **60 s** provider timeout (`MC_STT_TIMEOUT_MS`) → 504. |
+| **Duration cap** | Bounded **indirectly**, by bytes + the timeout — *not* by decoded duration. Reading true duration from an m4a/AAC container means parsing MP4 atoms or shelling out to `ffprobe`: a real dependency for a guard the byte cap already provides. Deliberate, and flagged here so it isn't mistaken for an oversight. |
+| **Privacy** | Audio is held in memory for the provider call and **never persisted** (AUDIO_RETENTION, PRD §7.8). **Neither audio nor transcript reaches a log sink at any level** — the transcript is user content; only its *length* is logged. Upstream provider error bodies are dropped, never echoed to the client. |
+| **Scope** | Transcribes **only**. It creates no task and runs nothing — the caller posts the transcript on to `POST …/arturita/voice` (which gates confidence and routes to the A2 approval path) if it wants an action. The dangerous surface stays where the approval gate already is. |
+
+### 3.5 Which transcriber actually runs — and the key the operator owes
+
+One interface, two legs, chosen by **`MC_STT_PROVIDER`** (`auto` default · `cloud` · `local` · `off`). The local daemon already speaks an **OpenAI-compatible** `/v1/audio/transcriptions` (`adapters/arturita-stt/src/server.mjs:12`), so both legs are the *same* adapter with a different base URL — adding a third OpenAI-compatible engine (Groq, a self-hosted whisper.cpp server) is config, not code.
+
+| Leg | Provider | Where it works | Config |
+|---|---|---|---|
+| **`cloud_openai`** | OpenAI-compatible hosted Whisper (`whisper-1`) | **The only leg that can ever work on Fly** | Key: per-org `OPENAI_API_KEY` in the encrypted store (Cockpit → Secrets) **→ falls back to** the `OPENAI_API_KEY` env/Fly secret. Same precedence as `llm-router.ts:175`. Overridable: `MC_STT_CLOUD_URL`, `MC_STT_CLOUD_MODEL`. |
+| **`local_whisper`** | The `adapters/arturita-stt` daemon | **Self-host only** — `127.0.0.1:8790` on Fly is the Fly VM, not the operator's Mac | `MC_STT_LOCAL_URL=http://127.0.0.1:8790/v1` (**the `/v1` matters** — the daemon matches `req.url` exactly). Not auto-enabled: absent this var, `auto` never guesses a local daemon. |
+
+`auto` picks cloud when a key is present, else local when a URL is configured, else answers a clean **503**. **A pinned `cloud`/`local` never silently falls back to the other** — quietly shipping audio to a cloud the operator pinned *away* from would be a privacy downgrade, so it fails instead.
+
+> ⚠️ **OPERATOR ACTION — STT does not transcribe on Fly until this is done.**
+> The deployed backend needs an **`OPENAI_API_KEY`** (Fly secret, or per-org via Cockpit → Secrets). It is listed as an **optional** Fly secret in `backend/CLAUDE.md` and is already used for embeddings (`services/vector-search.ts:25`) and the OpenAI LLM leg — **but whether it is actually set on `7ei-backend` was NOT verifiable from the build session** (no `fly` CLI). **No new key type is invented by this story**; it reuses the one the repo already knows. Until a key is present, `POST …/arturita/transcribe` answers a clean **503 `not_configured`** — the endpoint, auth, and guard rails are live and correct, but nothing transcribes. Verify with `fly secrets list -a 7ei-backend`.
+
 ---
 
 ## 4. Auth / endpoint reality per surface
@@ -156,13 +193,13 @@ The good news dominates: **the phone's Clerk JWT reaches every surface's REST AP
 | Surface | Exception | Impact |
 |---|---|---|
 | **Command Center** | The `deferAnswer` path (`arturita-converse.ts:131-138`) returns a *prompt* for the **browser to stream directly to the operator's local Ollama** (`web/lib/ollama.ts`). A phone cannot reach that machine. | **Low.** Mobile already sends `deferAnswer:false` and gets a buffered server-side answer. Just never enable it. |
-| **Command Center (voice)** | Web Speech + `localhost:8790` Whisper — both unreachable from a phone. | **The MOB-5 blocker.** §3.1. |
+| **Command Center (voice)** | Web Speech + `localhost:8790` Whisper — both unreachable from a phone. | ~~**The MOB-5 blocker.**~~ **Cleared by MOB-5a**: `POST …/arturita/transcribe` is the phone's STT destination (§3.4). |
 | **Connectors** | OAuth is a `window.location` redirect. | Needs `expo-web-browser` + a redirect URI; the callback lands on the *web* origin. **Read-only connector status is trivial; initiating OAuth is a real story.** Defer. |
 | **Agents (avatar), Settings (ingest)** | Raw `fetch` + `FormData` multipart, bypassing `lib/api.ts`. | RN `FormData` works, but `apps/mobile/src/api.ts` sets `Content-Type: application/json` whenever a body exists — **it would need a multipart escape hatch.** Both are write paths; skip in v1. |
 | **Memory graph, Org chart** | `d3-force` → `<svg>`, and hand-rolled `<svg>` + drag. | Not an auth problem — a rendering problem. §5. |
 | **Sidebar collapse** | localStorage. | Irrelevant — mobile has its own nav. |
 
-**Net: no web tab is unreachable by the phone's auth.** Everything is the same gated REST API. The only true blocker is voice-STT, and it's a missing endpoint, not an auth mismatch.
+**Net: no web tab is unreachable by the phone's auth.** Everything is the same gated REST API. The only true blocker was voice-STT — a missing endpoint, not an auth mismatch — and **MOB-5a has built it** (§3.4).
 
 ---
 
@@ -185,13 +222,13 @@ Do **not** pixel-port these.
 
 | Story | What | Endpoints | Effort | Dev build? |
 |---|---|---|---|---|
-| **MOB-5a** | **Backend: hosted STT.** New Clerk-gated `POST /api/orgs/:orgId/arturita/transcribe`, multipart audio → `{text}`, fronting a cloud Whisper; mirror the `adapters/arturita-stt` contract (field `file`, 25MB cap) so the web client can point at it too. **Blocks everything below.** Backend story, no phone code. | new | **M** | No |
+| **MOB-5a** | ✅ **SHIPPED** (`mob-5a-stt-endpoint`) — **Backend: hosted STT.** `POST /api/orgs/:orgId/arturita/transcribe`, multipart field `file` → `{ transcript, text }`, fronting an OpenAI-compatible Whisper (cloud) or the local daemon (self-host), behind one provider interface. Mirrors the daemon contract so the web client can repoint by URL. **No longer blocks 5c.** ⚠️ Needs `OPENAI_API_KEY` on Fly to actually transcribe — **§3.5**. Contract: **§3.4**. | `…/arturita/transcribe` | **M** | No |
 | **MOB-5b** | **TTS-only voice.** `expo-speech` speaks the converse reply; a speaker toggle. Ships *before* STT and is independently useful. | none new | **S** | No |
 | **MOB-5c** | **Push-to-talk.** `expo-av` record → `POST …/arturita/transcribe` → existing `…/arturita/converse` → 5b speaks the reply. Mic permission + a hold-to-talk button. Closes the loop. | MOB-5a + converse | **M** | No |
 | **MOB-5d** | **Voice pipeline config.** Mobile view of `GET/PUT …/arturita/pipeline`. | pipeline | **S** | No |
 | **MOB-5e** | **Wake word / hands-free.** Native recognizer + background audio. | — | **L** | **YES** |
 
-**5a→5b→5c is the whole useful loop and none of it needs a dev build.** Only 5e does.
+**5a→5b→5c is the whole useful loop and none of it needs a dev build.** Only 5e does. **5a is now shipped**, so 5b and 5c are both unblocked.
 
 ### MOB-6 — the menus
 
