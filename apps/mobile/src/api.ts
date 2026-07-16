@@ -16,10 +16,16 @@ export function transportError(method: string, path: string): string {
 
 function headers(init?: ApiInit): Record<string, string> {
   const { token, body, headers } = init ?? {}
+  // A FormData body must NOT carry a hand-set Content-Type: the runtime sets
+  // `multipart/form-data; boundary=…` itself, and the boundary is the only thing
+  // that makes the parts parseable. Declaring `application/json` over multipart
+  // is the same class of trap as the empty-JSON-body 400 — the request looks
+  // well-formed and the server rejects it for a reason the client never names.
+  const isMultipart = typeof FormData !== 'undefined' && body instanceof FormData
   return {
     Accept: 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+    ...(body != null && !isMultipart ? { 'Content-Type': 'application/json' } : {}),
     ...((headers ?? {}) as Record<string, string>),
   }
 }
@@ -153,17 +159,61 @@ export const Api = {
       { token, method: 'POST', body: JSON.stringify({ source: 'desk' }) },
     ).then((r) => r.token),
 
+  // ─── CC-ATT: extract an attached document's text (mirrors the web) ────────
+  // The SAME two-step contract the web Command Center uses
+  // (web/app/dashboard/AssistantPanel.tsx → pickAttachment): the file is posted
+  // as multipart to /arturita/attachments/extract, the backend parses it with
+  // the existing officeparser path, and only the extracted TEXT comes back. The
+  // document itself is never stored, and never reaches /converse.
+  //
+  // Extraction happens on PICK, not on send — so an unreadable file (a scan with
+  // no text layer) is reported while the operator is still choosing it, rather
+  // than after they've typed a question and hit Send.
+  //
+  // `uri` is the local file URI from expo-document-picker. React Native's FormData
+  // takes this {uri,name,type} shape and streams the file itself; the document's
+  // bytes never pass through JS, and NOTHING here logs its content.
+  extractAttachment: (
+    base: string,
+    token: string,
+    orgId: string,
+    file: { uri: string; name: string; mimeType?: string | null },
+  ) => {
+    const form = new FormData()
+    // The field name is `file` — what the route's `req.file()` reads.
+    form.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.mimeType ?? 'application/octet-stream',
+    } as any)
+    return api<{
+      attachment: { name: string; text: string; truncated: boolean }
+      bytes?: number
+      chars?: number
+      truncated: boolean
+    }>(base, `/api/orgs/${orgId}/arturita/attachments/extract`, { token, method: 'POST', body: form })
+  },
+
   converse: (
     base: string,
     token: string,
     orgId: string,
     message: string,
     history: { role: 'user' | 'assistant'; content: string }[],
+    // CC-ATT: the document attached to THIS turn, already extracted to text. The
+    // backend fences it into this turn's prompt only — it never enters history,
+    // so it can't re-enter (and re-bill) later turns.
+    attachment?: { name: string; text: string; truncated: boolean },
   ) =>
     api<ConverseResult>(base, `/api/orgs/${orgId}/arturita/converse`, {
       token,
       method: 'POST',
-      body: JSON.stringify({ message, history: history.slice(-20), deferAnswer: false }),
+      body: JSON.stringify({
+        message,
+        history: history.slice(-20),
+        deferAnswer: false,
+        ...(attachment ? { attachment } : {}),
+      }),
     }),
 
   // ─── Push token registration (MOB-3) ──────────────────────────────────────

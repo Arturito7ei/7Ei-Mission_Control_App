@@ -2,20 +2,28 @@
 // POST /api/orgs/:orgId/arturita/converse → renders the reply + a "via" chip
 // (which provider/model answered, or that it was delegated to a task). This is the
 // P0 remote-control surface: talk to your office from your phone.
+//
+// CC-ATT (web #285, mirrored) — the operator can attach a document to a turn and
+// have Arturita answer from its contents. Same two-step contract as the web
+// (extract on pick → send the text with the turn); the decisions live in
+// ../attach, which is tested against the web's own module.
 
 import React, { useCallback, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native'
+import * as DocumentPicker from 'expo-document-picker'
 import { Api } from '../api'
 import { useAuth } from '../auth'
+import { attachmentChipLabel, canSendTurn, rejectAttachment, toConverseAttachment, type AttachedDoc } from '../attach'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Chip } from '../ui'
 
@@ -31,20 +39,100 @@ export default function CommandCenterScreen() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // CC-ATT — the document attached to the NEXT turn (one at a time, as on the
+  // web). Its text is extracted on pick, so pressing Send is never blocked on a
+  // parse over cellular.
+  const [attachment, setAttachment] = useState<AttachedDoc | null>(null)
+  const [attaching, setAttaching] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const scroller = useRef<ScrollView>(null)
+
+  // ── CC-ATT: attach a document to the next turn ─────────────────────────────
+  // Mirrors the web's pickAttachment. The file never leaves this handler — only
+  // the extracted text is kept, and nothing here logs the document's contents.
+  //
+  // The picker is opened with type '*/*' where the web sets an `accept` filter.
+  // That is a platform difference, not a policy one: iOS filters by MIME/UTI, and
+  // several readable types (.md, .log, .tsv) have no reliable MIME on iOS — a
+  // filter would grey out files the office can read perfectly well. The type GATE
+  // is unchanged and runs on the picked file, so an unreadable one is refused with
+  // the same wording the web uses, just a moment later.
+  const pickAttachment = useCallback(async () => {
+    setError(null)
+    setNotice(null)
+    let picked: DocumentPicker.DocumentPickerResult
+    try {
+      picked = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        multiple: false,
+        copyToCacheDirectory: true,
+      })
+    } catch {
+      setError("Couldn't open the file picker.")
+      return
+    }
+    if (picked.canceled) return
+    const file = picked.assets?.[0]
+    if (!file) return
+
+    const local = rejectAttachment({ name: file.name, size: file.size ?? undefined })
+    if (local) {
+      setError(local)
+      return
+    }
+
+    const token = await getToken()
+    if (!token || !orgId) return
+    setAttaching(true)
+    setAttachment({ name: file.name, size: file.size ?? undefined }) // chip shows while parsing
+    try {
+      const res = await Api.extractAttachment(apiUrl, token, orgId, {
+        uri: file.uri,
+        name: file.name,
+        mimeType: file.mimeType,
+      })
+      setAttachment({
+        name: file.name,
+        size: file.size ?? undefined,
+        text: res.attachment.text,
+        truncated: res.truncated,
+      })
+      if (res.truncated) {
+        setNotice(
+          `“${file.name}” is long, so I've attached the first part of it. I'll tell you if an answer needs the rest.`,
+        )
+      }
+    } catch (e: any) {
+      // The backend's message already names the reason (corrupt, password-
+      // protected, a scan with no text layer) — it's written for the operator.
+      setError(e?.message ?? "Couldn't read that document.")
+      setAttachment(null)
+    } finally {
+      setAttaching(false)
+    }
+  }, [apiUrl, getToken, orgId])
 
   const send = useCallback(async () => {
     const text = input.trim()
     const token = await getToken()
-    if (!text || !token || !orgId) return
+    if (!token || !orgId) return
+    // A document alone is a legitimate turn ("read this") — the same gate the web
+    // applies, and the same one the backend enforces.
+    if (!canSendTurn({ typed: text, attachment, busy: busy || attaching })) return
     setError(null)
+    setNotice(null)
     setInput('')
+    const sent = attachment
+    setAttachment(null) // the attachment rides THIS turn only
     const history = messages.map((m) => ({ role: m.role, content: m.content }))
-    const next = [...messages, { role: 'user' as const, content: text }]
+    // The bubble shows the attachment the way the web does: the operator's words
+    // plus a 📎 line, so the thread records what the turn actually carried.
+    const bubble = sent ? [text, `📎 ${attachmentChipLabel(sent)}`].filter(Boolean).join('\n\n') : text
+    const next = [...messages, { role: 'user' as const, content: bubble }]
     setMessages(next)
     setBusy(true)
     try {
-      const r = await Api.converse(apiUrl, token, orgId, text, history)
+      const r = await Api.converse(apiUrl, token, orgId, text, history, toConverseAttachment(sent))
       const via =
         r.mode === 'delegate'
           ? {
@@ -71,7 +159,7 @@ export default function CommandCenterScreen() {
       setBusy(false)
       requestAnimationFrame(() => scroller.current?.scrollToEnd({ animated: true }))
     }
-  }, [apiUrl, getToken, orgId, input, messages])
+  }, [apiUrl, getToken, orgId, input, messages, attachment, attaching, busy])
 
   return (
     <KeyboardAvoidingView
@@ -123,12 +211,55 @@ export default function CommandCenterScreen() {
         </View>
       ) : null}
 
+      {notice ? (
+        <View style={{ paddingHorizontal: space.lg }}>
+          <Banner kind="info">{notice}</Banner>
+        </View>
+      ) : null}
+
+      {/* ── Attached document chip (CC-ATT) — name + size, removable ───────── */}
+      {attachment ? (
+        <View style={s.attachRow}>
+          <Text style={s.attachGlyph} accessibilityElementsHidden>
+            📎
+          </Text>
+          <Text style={s.attachLabel} numberOfLines={1} ellipsizeMode="middle">
+            {attachmentChipLabel(attachment)}
+          </Text>
+          {attaching ? (
+            <Text style={s.attachReading}>· reading…</Text>
+          ) : (
+            <Text
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${attachment.name}`}
+              onPress={() => {
+                setAttachment(null)
+                setNotice(null)
+              }}
+              style={s.attachRemove}
+            >
+              ✕
+            </Text>
+          )}
+        </View>
+      ) : null}
+
       <View style={s.composer}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Attach a document"
+          accessibilityState={{ disabled: attaching || busy }}
+          disabled={attaching || busy}
+          onPress={pickAttachment}
+          style={[s.attachBtn, (attaching || busy) && { opacity: 0.4 }]}
+        >
+          <Text style={s.attachBtnText}>📎</Text>
+        </Pressable>
         <TextInput
           style={s.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Message Arturita…"
+          placeholder={attachment ? 'Ask about the attached document…' : 'Message Arturita…'}
           placeholderTextColor={theme.textFaint}
           multiline
           editable={!busy}
@@ -136,7 +267,10 @@ export default function CommandCenterScreen() {
         <Text
           accessibilityRole="button"
           onPress={busy ? undefined : send}
-          style={[s.sendBtn, (!input.trim() || busy) && { opacity: 0.4 }]}
+          style={[
+            s.sendBtn,
+            !canSendTurn({ typed: input, attachment, busy: busy || attaching }) && { opacity: 0.4 },
+          ]}
         >
           Send
         </Text>
@@ -185,4 +319,29 @@ const s = StyleSheet.create({
     fontWeight: '800',
     padding: space.md,
   },
+  // CC-ATT — the chip sits directly above the composer, like the web's.
+  attachRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.md,
+    marginBottom: space.xs,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    backgroundColor: theme.s2,
+    borderWidth: 1,
+    borderColor: theme.s3,
+    borderRadius: radius.md,
+  },
+  attachGlyph: { fontSize: font.base },
+  attachLabel: { flex: 1, color: theme.text, fontSize: font.sm },
+  attachReading: { color: theme.textDim, fontSize: font.sm },
+  attachRemove: {
+    color: theme.textDim,
+    fontSize: font.base,
+    fontWeight: '800',
+    paddingHorizontal: space.sm,
+  },
+  attachBtn: { paddingVertical: space.md, paddingHorizontal: space.xs },
+  attachBtnText: { fontSize: font.lg },
 })

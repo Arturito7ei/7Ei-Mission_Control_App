@@ -103,6 +103,22 @@ export const NAV_GROUPS: NavGroup[] = [
         story: 'MOB-6f',
         blurb: 'The live operations shell.',
       },
+      // P2 (web #286) — Tasks folds in under Inbox: the operator's queue of work
+      // and the approvals waiting on them are ONE area, so Tasks sits beside
+      // Inbox and Comms here exactly as it does in the web's tab bar
+      // (Inbox | Tasks | Comms). The phone has no rail to fold, so the fold shows
+      // up as adjacency + a shared group — but the id, the label, and the
+      // neighbours are the web's, which is what keeps the two clients readable as
+      // one product.
+      {
+        id: 'tasks',
+        label: 'Tasks',
+        glyph: '📋',
+        status: 'planned',
+        story: 'MOB-6c',
+        blurb: 'The task log, beside the approvals it feeds.',
+        webHosted: 'inbox',
+      },
       {
         id: 'comms',
         label: 'Comms',
@@ -149,15 +165,6 @@ export const NAV_GROUPS: NavGroup[] = [
         status: 'planned',
         story: 'MOB-6g',
         blurb: 'Who reports to whom — an indented tree, not the desktop canvas.',
-      },
-      {
-        id: 'tasks',
-        label: 'Issues',
-        glyph: '📋',
-        status: 'planned',
-        story: 'MOB-6c',
-        blurb: 'Tasks and issues — list plus a read-only detail.',
-        webHidden: true,
       },
       {
         id: 'routines',

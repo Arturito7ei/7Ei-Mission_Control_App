@@ -12,7 +12,9 @@ This repo is part of the 7Ei agent organisation. Cross-agent protocols live in [
 Monorepo (npm workspaces)
 ├── backend/   Node 22 · TypeScript · Fastify · Drizzle · Turso — Fly `7ei-backend` (fra)  → backend/CLAUDE.md
 ├── web/       Next.js 15 App Router — Vercel (app.7ei.ai), Clerk — PRIMARY UI            → web/CLAUDE.md
-├── app/       React Native (Expo) — LEGACY/frozen; do not build new features here
+├── apps/mobile/   React Native (Expo SDK 54) — iPhone remote, SHIPPING → mirror web here (below)
+├── apps/desktop/  Electron shell packaging the mesh (Epic H)
+├── app/       React Native (Expo) — LEGACY/frozen; do not build new features here (≠ apps/mobile)
 ├── adapters/  External BYO-agent runtimes (OpenClaw, Cursor, presets)                     → adapters/CLAUDE.md
 ├── cli/       `7ei-mc` zero-dep Node CLI over the agent API
 ├── evals/     Orchestration eval harness (11 scenarios)
@@ -27,6 +29,16 @@ Monorepo (npm workspaces)
 cd backend && npm test && npm run evals   # zero failures + 11/11 — the invariant
 cd web && npm run build
 ```
+
+## Web ⇄ mobile parity (standing rule — applies to every UI story)
+
+**Any web/desktop feature or UX change must be mirrored to `apps/mobile/` in the same PR, or in one that immediately follows.** The phone is not a side project: it is the operator's remote, and a gap there is a broken promise, not a backlog item. Say which of the three you did — mirrored, deferred to a named story, or **N/A with a reason** (a web-only surface — e.g. the reactor — has no phone peer; don't invent one to have something to mirror).
+
+- **The phone is a thin REST client to the SAME hosted backend**, so a backend change usually serves both already — mirroring is normally client work only. Reuse the web's exact contract (same endpoint, same field names, same limits) so behaviour is identical.
+- **Mobile mirrors stay additive, Expo SDK 54, and bootable in Expo Go.** SDK 54 is the App Store Expo Go ceiling — **do not bump it**; take dep versions from `apps/mobile/node_modules/expo/bundledNativeModules.json`, keep the `react`/`react-dom` exact pins.
+- **Mirror the decision, don't re-invent it.** Metro can't import from `web/`, so shared limits/lists get hand-copied — then pin the copy with a test that imports the web module and asserts they agree (`src/navModel.test.ts`, `src/attach.test.ts`). Copy without a tripwire = silent drift.
+- **Verify:** `cd apps/mobile && npm test && npm run typecheck && npm run export`. ⚠️ **CI does not run `apps/mobile`** — that gate is yours to run, or drift reaches `main` unseen (it has).
+- Plan + as-built log: `docs/DESIGN-mobile-parity.md` (§6.2 is the worked example).
 
 ## Conventions (cross-cutting)
 
