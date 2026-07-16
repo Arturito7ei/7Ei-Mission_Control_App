@@ -62,6 +62,15 @@ export function resolveVoiceState(flags: { speaking?: boolean; thinking?: boolea
 // size and length. Their job is to fail in the composer — instantly, before a
 // 10 MB upload — rather than after a round-trip.
 
+// ⚠️ MIRRORS THE SERVER — the web bundle has no import path into `backend/`, so
+// these two constants are hand-copied, exactly as `web/lib/adapterProfile.ts`
+// mirrors the adapter registry. That is tolerable ONLY because the server is the
+// real enforcer: drift here costs a worse message (a file the composer waves
+// through, refused a second later by the backend with the same reasoning), never
+// a bypass. If you change either, change it there FIRST:
+//   backend/src/services/converse-attachments.ts → MAX_ATTACHMENT_BYTES
+//   backend/src/services/document-ingest.ts      → SUPPORTED_DOC_EXTS
+
 /** Extensions the backend's parser can read. Mirrors SUPPORTED_DOC_EXTS. */
 export const ATTACH_EXTS = [
   'csv', 'docx', 'json', 'log', 'markdown', 'md', 'odp', 'ods', 'odt', 'pdf', 'pptx', 'tsv', 'txt', 'xlsx',
@@ -70,7 +79,7 @@ export const ATTACH_EXTS = [
 /** The `accept` attribute for the file picker — filters the OS dialog. */
 export const ATTACH_ACCEPT = ATTACH_EXTS.map(e => `.${e}`).join(',')
 
-/** Mirrors MAX_ATTACHMENT_BYTES on the server. */
+/** Mirrors MAX_ATTACHMENT_BYTES in backend/src/services/converse-attachments.ts. */
 export const ATTACH_MAX_BYTES = 10 * 1024 * 1024
 
 export interface AttachedDoc {

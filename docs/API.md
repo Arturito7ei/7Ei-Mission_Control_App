@@ -133,9 +133,18 @@ path) stays intact:
    ```
 
    The text is injected into **that turn only**, after the operator's message, fenced
-   as `=== ATTACHED DOCUMENT: <name> === … === END ATTACHED DOCUMENT: <name> ===`. It
-   is not added to `history`, so it doesn't re-enter (and re-bill) later turns. The
+   as `=== ATTACHED DOCUMENT <nonce>: <name> === … === END ATTACHED DOCUMENT <nonce>: <name> ===`.
+   It is not added to `history`, so it doesn't re-enter (and re-bill) later turns. The
    server re-clips over-budget text — the client is not the enforcer.
+
+   **The fence nonce is a boundary, not decoration.** With a fixed marker, a document
+   containing the literal closing fence would end its own block early, and the rest of
+   its text would read to the model as the *operator* speaking. The nonce is 8 random
+   bytes drawn **after** the text is in hand (re-drawn on collision), so no document can
+   predict it; the filename is sanitized (no newlines, no `===` runs, ≤120 chars) before
+   interpolation. Containment is bounded anyway — routing reads the operator's message
+   only, and this text never enters history — so the worst case was always a misleading
+   single-turn reply, never an action.
 
 Both routes sit in the Clerk-secured scope behind `requireOrgMembership`, so a
 non-member of `:orgId` is refused identically to `/converse` itself. Routing
