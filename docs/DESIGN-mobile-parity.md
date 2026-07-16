@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends) + **MOB-6d shipped** (Costs · Budgets · Activity — §6.5; Delivery's cost pair and the event feed, all read-only) + **MOB-6e shipped** (Memory + Org — §6.6; the two *heavy* web views as native trees: the vault reader without the d3 graph, the reporting tree without the canvas. Absorbed MOB-6g). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends) + **MOB-6d shipped** (Costs · Budgets · Activity — §6.5; Delivery's cost pair and the event feed, all read-only) + **MOB-6e shipped** (Memory + Org — §6.6; the two *heavy* web views as native trees: the vault reader without the d3 graph, the reporting tree without the canvas. Absorbed MOB-6g) + **MOB-6f shipped** (Governance · Settings · Connectors — §6.7; the last three operator menus, all read-only: each web panel is an editor wrapped around a reading, and only the reading travels. Re-scoped — it absorbed 6h + 6k + the Settings half of 6j, and **displaced Overview to MOB-6l**). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -240,12 +240,13 @@ Do **not** pixel-port these.
 | **MOB-6c** | **Task detail** — the read-only drawer behind a log row (the web's `TaskDrawer`). The Tasks *list* shipped in 6b (§6.4); this is what a row opens. | `/api/tasks/:id`, `…/timeline` | **S** | No |
 | **MOB-6d** | ✅ **SHIPPED** (`mob-6d-costs-activity`) — **Costs + Budgets + Activity.** Spend at a glance, the caps beside it, and the event feed. All read-only. Also fixed the roster-glyph drift the 6b audit flagged. As-built: **§6.5**. | `…/tasks`, `…/agents`, `…/budgets`, `…/timeline` (**not** `…/usage` / `…/preflight` — this row guessed wrong; see §6.5) | **S** | No |
 | **MOB-6e** | ✅ **SHIPPED** (`mob-6e-memory-org`) — **Memory + Org.** The vault **tree + note reader** (not the graph) and the **indented org tree** (not the canvas). Both read-only. **Absorbed MOB-6g**: the two are the same problem — a heavy web view whose value is a hierarchy rather than its canvas — so they shipped as one story. As-built: **§6.6**. | `…/memory/tree`, `…/memory/file`, `…/orgchart` | **M** | No |
-| **MOB-6f** | **Overview** — the summary cards. (Activity shipped early, in 6d — §6.5.) | `…/cockpit` | **S** | No |
+| **MOB-6f** | ✅ **SHIPPED** (`mob-6f-gov-settings-connectors`) — **Governance + Settings + Connectors.** The three remaining operator-facing menus, all read-only. **Re-scoped and absorbed 6h + 6k + the Settings half of 6j**: the three are one problem — a web panel that is an *editor wrapped around a reading*, where only the reading travels — so they shipped as one story. ⚠️ **This row previously read "Overview"; that screen was NOT built** and moves to **MOB-6l**. As-built: **§6.7**. | `…/policies`, `…/agents`, `…/revisions`, `…/connectors`, `/api/orgs` | **M** | No |
 | ~~**MOB-6g**~~ | ✅ **Org chart** — **shipped inside MOB-6e** (§6.6). Row kept so the id doesn't dangle in older plans/links. | `…/orgchart` | — | — |
-| **MOB-6h** | **Governance** — read-only policies/trust/revisions. Writes stay on desktop. | `…/policies`, `…/agents/:aid/trust`, `…/revisions` | **M** | No |
+| ~~**MOB-6h**~~ | ✅ **Governance** — **shipped inside MOB-6f** (§6.7). Row kept so the id doesn't dangle in older plans/links. | `…/policies`, `…/agents`, `…/revisions` | — | — |
 | **MOB-6i** | **Projects, Skills, Goals, Workspaces, Usage** — five thin read-only lists; batch them. | `…/projects`, `/api/skills`, `…/goals`, `…/workspaces`, `…/usage` | **S** | No |
-| **MOB-6j** | **Settings + Secrets** — read-only org info + secret *refs* (never values). | `/api/orgs/:id`, `…/secrets` | **S** | No |
-| **MOB-6k** | **Connectors** — status read-only. OAuth initiation deferred (§4). | `…/connectors` | **M** | No |
+| **MOB-6j** | **Secrets** — secret *refs* (never values). ⚠️ **Re-scoped:** the Settings half shipped in MOB-6f (§6.7); `secrets` is what's left, and it is NOT a tab of the web's Settings — it's its own surface inside the Cockpit shell (see §6.7). | `…/secrets` | **S** | No |
+| ~~**MOB-6k**~~ | ✅ **Connectors** — **shipped inside MOB-6f** (§6.7). Row kept so the id doesn't dangle in older plans/links. | `…/connectors` | — | — |
+| **MOB-6l** | **Overview** — the Dashboard summary cards, and **Operations** (the cockpit shell). Displaced from the old 6f row when MOB-6f was re-scoped to the three menus; neither screen is built. | `…/cockpit`, `…/agents`, `…/tasks`, `…/projects` | **S** | No |
 
 **Not ported:** the 7 placeholders (no UI exists), `comms`/`plugins` (thin, fold into 6i/6k), Evals (no web surface), and every desktop-editing write path (avatar upload, doc ingest, policy editing, canvas drag).
 
@@ -521,6 +522,61 @@ Both chips now route through `status.ts` (`statusIcon`/`statusTone`, and `heartb
 The interesting part is the guard, not the fix. No unit test can reach it — the screens import react-native and can't load under `node --test` (the constraint `navModel.test.ts` and `status.test.ts` both work around), so it gets a **source-level guard** in the shape `status.test.ts` already established: brace-match every `setX(…)` **functional** updater in `screens/*.tsx` and reject `loadDir(`/`Api.`/`fetch(`/`await` inside one. Two details keep it honest — it asserts it actually **found** updaters (a scan that silently matches nothing passes forever), and a sibling test feeds the scan the **original defect verbatim** plus the shipped fix, so a broken regex fails rather than waving the defect through. **Proven by reintroducing the defect and watching it go red**, then restoring — not assumed. (The first draft of the scan was in fact wrong: it started the brace-walk at the arrow's parameter list and stopped dead on `(x)`.)
 
 **Verified:** `npm test` **105/105** · `npm run typecheck` clean · `npm run export` bundles (3.6 MB, 1131 modules) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
+
+---
+
+### 6.7 MOB-6f — Governance · Settings · Connectors: the readings travel, the writes don't (as built)
+
+**Branch `mob-6f-gov-settings-connectors`.** The last three operator-facing menus, all **read-only**. Re-scoped from the plan above: this row used to say *Overview*, and Governance/Settings/Connectors were 6h/6j/6k. They shipped together because they are **one problem**, not three: each web panel is *an editor wrapped around a reading*, and only the reading travels to a phone. **Overview was not built** — it moves to **MOB-6l**, and the `overview`/`cockpit` placeholders now name that story instead of pointing at this shipped one.
+
+| Screen | Endpoints (all GET) | Mirrors | Deferred |
+|---|---|---|---|
+| **Governance** | `…/policies`, `…/agents`, `…/revisions` | All four of the web panel's readings: execution policies, per-agent permissions, trust tier + boundary, config revisions | add/remove policy · save permissions · trust tier + boundary (**owner-only**) · model profile · **rollback** |
+| **Settings** | `/api/orgs` | The org's Description / Mission & Vision / Culture & Principles | edit the three fields (`PATCH /api/orgs/:id`) · document-summarise upload |
+| **Connectors** | `…/connectors` | The connector list grouped by category, each with connected status + account label | **connect / OAuth** · test · disconnect · token rotation · Google toggles · gear sheets |
+
+**The web's fourth Governance call, `…/available-models`, is deliberately NOT made.** It exists only to populate the model-profile `<select>`. No editor, no select, nothing to populate — fetching it would be asking for data to render nothing.
+
+**Why Governance is read-only, stated plainly:** this is the surface that decides *what an agent is allowed to do*. Every control deferred above is destructive-by-mis-tap in a way no other mobile screen is — a "Remove" beside a policy, a one-tap rollback, a trust tier one scroll-flick from Standard to Low-trust. None has an undo, and several are owner-only for exactly that reason. The **readings** carry none of that risk and all of the value away from a desk. Deferred, not dropped; the screen says so in a banner rather than showing dead controls.
+
+#### The trap this story existed to not fall into
+
+**An empty permission list means _allow all_, not _allowed nothing_.** The backend treats `permissions == null/[]` as legacy allow-all (`services/code-executor.ts`) and the web says so in its hint (*"Empty = allow all"*) and its placeholder (*"allow all (empty)"*). A read-only list that rendered `[]` as "none" would tell the operator an agent is **locked down** while it is in fact **unrestricted** — the single most dangerous thing this screen could get backwards, and the easy mistake, since "empty list → show nothing" is the obvious code. So the empty case is a **label, not a blank**: `capsLabel()` returns `⚠ Allow all (unrestricted)`, and a test pins it across `null`, `undefined`, `''`, `'[]'`, `'{}'` and garbage.
+
+#### ⚠️ Found while building: the org payload carries live credentials — two of them
+
+`GET /api/orgs` is `db.select().from(organisations)` (`backend/src/routes/orgs.ts`) — **the whole row** — and that row carries:
+
+1. **`telegramBotToken`** — a bot token (`backend/src/db/schema.ts`).
+2. **`deployConfig`** — a JSON blob holding **LLM API keys**, and org creation writes `deployConfig[`${provider}_api_key`] = body.llmApiKey` **in plaintext** (`routes/orgs.ts`). The executor still reads a "legacy plaintext `<slug>_api_key`" beside the newer AES-256-GCM `<slug>_api_key_enc` (`services/custom-model.ts`, `services/agent-executor.ts`), so the plaintext path is live, not vestigial.
+
+**The phone has received this payload since MOB-1** (`ConnectScreen` lists orgs with it); MOB-6f neither introduces nor worsens it, and narrowing the projection is a **backend** change, out of scope for an `apps/mobile`-only story. **Reported as a follow-up, not silently absorbed.**
+
+**`deployConfig` is why the guard is a deny-list and not just a regex** (audit nit, #293). A name-based check catches a field that *announces* itself — `telegramBotToken` does; **`deployConfig` does not**, and it is the one carrying plaintext API keys. That's the blind spot exactly where it costs most: a column that **is** a credential without being **named** one. So `CREDENTIAL_BEARING_FIELDS` names it explicitly, a test proves the **deny-list** (not the regex) is what catches it, and another asserts every denied column **still exists** — a deny-list entry pointing at nothing is a dead guard that also hides that the credential moved.
+
+What this story owes is that none of it reaches a pixel, and that's a **structural** guarantee rather than a promise: `SettingsScreen` renders a fixed **allow-list** (`SETTINGS_FIELDS` — three prose fields), never a spread of the org, never a key walk, and nothing is logged. `OrgSettingsLite` types only the five harmless fields, so a future `{...org}` doesn't typecheck its way onto the screen. **No secret value is rendered on any of the three screens, and no screen fetches one.**
+
+#### Settings is short because the web surface is short — reported, not padded
+
+The web's Settings tab is **a form and almost nothing else**: three inputs, an upload chip, Save. Its only *reading* is the current value of those three fields, which arrive with the org itself. So the phone's Settings is a small screen **by the web's shape, not by our trimming**, and it was not padded out to look like a peer of Governance. It's still worth having — Mission and Culture are read by every agent, so *"what did we tell them we are?"* is a real question to answer from a phone.
+
+**`secrets` is not part of it.** The nav model lists `secrets` as a tab `webHosted: 'settings'`, but the web's Settings tab **does not render it** — Secrets is its own surface, fed by `…/secrets` inside the Cockpit shell. The bookkeeping records the web's IA intent; the code is the authority. MOB-6f reads nothing from that endpoint, and MOB-6j is now **Secrets only**.
+
+#### Tripwires — pinned to the server where possible, honest where not
+
+Three new pure modules (`governance.ts`, `connectors.ts`, `settings.ts`) — React-free so `node --test` can load them **and** their sources. **+37 tests.**
+
+- **Governance → `web/lib/trust.ts` (import).** `parseTrustMode` / `isLowTrust` / `trustBadge` / `isContainedToNothing` are asserted **equal to the web's** across every value a TEXT column can hold (casing, padding, `null`, garbage) × 8 boundary shapes. Whether an agent reads as *contained* must not depend on which device you picked up — that sentence **is** the screen.
+- **Connectors → `backend/src/services/connectors.ts` (import).** Stronger than the usual mirror test: the registry is dependency-free, so the phone is pinned to the **server** rather than to a copy of the web's copy. `CATEGORY_ORDER` must **cover** every category the backend ships (and carry no stale one), every backend connector must land in a group, and the Google trio is asserted against the backend's derived `GOOGLE_MEMBERS` rather than the web's hard-coded `['gmail','gcal','gdrive']`. A connector added or re-categorised server-side now fails CI instead of vanishing from the phone's list.
+- **Settings → `backend/src/db/schema.ts` (SOURCE SCAN, not an import).** A cross-workspace tripwire may *import* another workspace's source only if that source is **dependency-free**; `schema.ts` imports drizzle, and the Mobile CI job runs `npm ci` inside `apps/mobile` only — so the import passed locally and **silently dropped the whole file's tests in CI** (132 vs 142). Scanning the source as text keeps the tripwire and drops the dep, with the idiom's two guards: assert the scan **found** columns, and a sibling test proving the scanner **bites** on controlled input. Every rendered field must be a real `organisations` column; and the guard test asserts the **hazard is real** — `telegramBotToken` still exists — *and* that the allow-list excludes it. `assertNoSensitiveField` is proven to bite (`llmApiKey`, `token`, `Secret sauce`, `adminPassword` all throw), because a guard that never fires is indistinguishable from no guard.
+- **Honestly NOT import-tripwirable (JSX-bound, pinned as literals next to a comment naming the source):** `CAP_HINTS` and the `CATEGORY_ORDER` *ordering* both live inside component modules (`GovernancePanel.tsx`, `ConnectorsPanel.tsx`), and Settings' three labels are inline JSX in `page.tsx` with no `Org` type to import. Cosmetic if they drift — none is a rule the backend enforces — and for `CATEGORY_ORDER` the *coverage* (the part that can hide a row) **is** pinned to the backend.
+- The `navModel.test.ts` ready-set tripwire **fired as designed** when the three statuses flipped, and was updated with them.
+
+**No mutating call exists anywhere in this PR** — all five new `Api` helpers are bare GETs, and no `method:` appears in any MOB-6f file.
+
+**Verified:** `npm test` **147/147** (+42) · `npm run typecheck` clean · `npm run export` bundles (3.63 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
+
+**Remaining placeholders after 6f:** `overview` + `cockpit` (**MOB-6l**), `tasks` detail (6c), `comms` + `projects` + `skills` + `goals` + `workspaces` + `usage` (6i), `secrets` (6j), `plugins` — plus the 7 `gap` surfaces that don't exist on the web either.
 
 ---
 

@@ -16,6 +16,11 @@ import type { BudgetLite } from './costs'
 // pure modules that read them (memory.ts / org.ts) and imported here.
 import type { VaultCfgLite, VaultEntryLite } from './memory'
 import type { OrgAgentLite } from './org'
+// MOB-6f — same rule: the governance, connector and settings wire shapes are
+// defined in the pure modules that read them.
+import type { GovAgentLite, PolicyLite, RevisionLite } from './governance'
+import type { ConnectorRowLite } from './connectors'
+import type { OrgSettingsLite } from './settings'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -280,6 +285,58 @@ export const Api = {
     api<{ agents: OrgAgentLite[]; count: number }>(base, `/api/orgs/${orgId}/orgchart`, {
       token,
     }).then((r) => r.agents ?? []),
+
+  // ─── MOB-6f — Governance (read-only) ──────────────────────────────────────
+  // The SAME three calls the web's GovernancePanel makes on load. The web makes
+  // a fourth — `…/available-models` — which the phone deliberately does NOT: it
+  // exists only to populate the model-profile <select>, and the phone has no
+  // editor to populate. Asking for it would be fetching data to render nothing.
+  //
+  // The web's panel also POSTs a policy, DELETEs one, PATCHes permissions, PUTs
+  // trust + model-profile, and POSTs a rollback. The phone does NONE of those —
+  // see GovernanceScreen for why (this surface decides what an agent may do).
+  policies: (base: string, token: string, orgId: string) =>
+    api<{ policies: PolicyLite[] }>(base, `/api/orgs/${orgId}/policies`, { token }).then(
+      (r) => r.policies ?? [],
+    ),
+
+  revisions: (base: string, token: string, orgId: string) =>
+    api<{ revisions: RevisionLite[] }>(base, `/api/orgs/${orgId}/revisions`, { token }).then(
+      (r) => r.revisions ?? [],
+    ),
+
+  // The governance projection of the roster. Same endpoint as `agents` above —
+  // the web's Governance panel calls that exact URL — but typed to the columns
+  // this screen reads (`permissions`, `trustMode`, `trustBoundary`), which the
+  // roster's `Agent` doesn't carry. One call, two readings, no second contract.
+  governanceAgents: (base: string, token: string, orgId: string) =>
+    api<{ agents: GovAgentLite[] }>(base, `/api/orgs/${orgId}/agents`, { token }).then(
+      (r) => r.agents ?? [],
+    ),
+
+  // ─── MOB-6f — Connectors (read-only) ──────────────────────────────────────
+  // The SAME call the web's ConnectorsPanel loads with. The backend merges its
+  // registry metadata with the org's live status and returns `detail` as an
+  // ACCOUNT LABEL — never a credential (backend/src/routes/connectors.ts).
+  //
+  // Read-only here: the web can also POST /connect (or bounce to Google's
+  // consent screen), POST /test, and DELETE the connector. The phone does none.
+  connectors: (base: string, token: string, orgId: string) =>
+    api<{ connectors: ConnectorRowLite[] }>(base, `/api/orgs/${orgId}/connectors`, {
+      token,
+    }).then((r) => r.connectors ?? []),
+
+  // ─── MOB-6f — Settings (read-only) ────────────────────────────────────────
+  // The web's Settings tab reads its three fields off the ORG, which arrives
+  // with the org list (page.tsx seeds `settings` from the loaded org). Same
+  // source here — no new endpoint, because the web has none to mirror.
+  //
+  // ⚠ This payload is the whole `organisations` row, which includes a
+  // `telegramBotToken` column (see settings.ts). Callers must read it through
+  // the `SETTINGS_FIELDS` allow-list and never spread it. `OrgSettingsLite`
+  // types only the harmless fields so that stays hard to get wrong.
+  orgSettings: (base: string, token: string) =>
+    api<{ orgs: OrgSettingsLite[] }>(base, '/api/orgs', { token }).then((r) => r.orgs ?? []),
 
   pendingApprovals: (base: string, token: string, orgId: string) =>
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {

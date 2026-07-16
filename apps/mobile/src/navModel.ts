@@ -92,7 +92,12 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Dashboard',
         glyph: '🏠',
         status: 'planned',
-        story: 'MOB-6f',
+        // Was MOB-6f. That story got re-scoped to the three operator menus
+        // (Governance/Settings/Connectors) and shipped WITHOUT this screen, so
+        // the promise moves to MOB-6l rather than pointing at a done story —
+        // a placeholder naming a shipped story is exactly the dead end the
+        // three-valued `status` exists to avoid. Parity doc §6 table.
+        story: 'MOB-6l',
         blurb: 'Org summary — agent, task, and project cards at a glance.',
       },
       {
@@ -100,7 +105,8 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Operations',
         glyph: '🛰️',
         status: 'planned',
-        story: 'MOB-6f',
+        // Was MOB-6f — see the note on `overview` above.
+        story: 'MOB-6l',
         blurb: 'The live operations shell.',
       },
       // P2 (web #286) — Tasks folds in under Inbox: the operator's queue of work
@@ -187,8 +193,13 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'governance',
         label: 'Governance',
         glyph: '🛡️',
-        status: 'planned',
-        story: 'MOB-6h',
+        // MOB-6f built this (it was pencilled in for MOB-6h). The blurb already
+        // promised read-only-with-edits-on-desktop, and the screen keeps that
+        // promise exactly rather than quietly widening it: every write on the
+        // web panel (add/remove policy, save permissions, trust tier, rollback)
+        // is deferred, because this is the surface that decides what an agent is
+        // allowed to do and none of those has an undo.
+        status: 'ready',
         blurb: 'Policies, trust tiers, and revisions — read-only; edits stay on desktop.',
       },
       {
@@ -284,8 +295,10 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'connectors',
         label: 'Connectors',
         glyph: '🔌',
-        status: 'planned',
-        story: 'MOB-6k',
+        // MOB-6f built this (it was pencilled in for MOB-6k). The blurb's promise
+        // is kept verbatim: status reads, and starting an OAuth flow stays on the
+        // desktop — as do the credential forms, which this app never shows.
+        status: 'ready',
         blurb: 'Integration status. Starting an OAuth flow stays on desktop.',
       },
       {
@@ -293,7 +306,12 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Plugins',
         glyph: '🧰',
         status: 'planned',
-        story: 'MOB-6k',
+        // Was MOB-6k, which shipped inside MOB-6f (§6.7) WITHOUT this screen —
+        // 6f built the connector status read, not the plugin manifests. The
+        // parity doc always had this folding into "6i/6k" as a thin read-only
+        // list, so it goes to the batch that's still open rather than naming a
+        // story that's already done.
+        story: 'MOB-6i',
         blurb: 'Installed plugin manifests.',
         webHosted: 'connectors',
       },
@@ -332,8 +350,13 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'settings',
         label: 'Settings',
         glyph: '⚙️',
-        status: 'planned',
-        story: 'MOB-6j',
+        // MOB-6f built this (it was pencilled in for MOB-6j). It is a SHORT
+        // screen, because the web's Settings tab is a form whose only reading is
+        // these three fields — the blurb already said exactly that, so it stands.
+        // `secrets` below stays planned: despite the webHosted bookkeeping, the
+        // web's Settings tab does not render it, and MOB-6f reads nothing from
+        // the secrets endpoint.
+        status: 'ready',
         blurb: 'Org description, mission, and culture — read-only.',
       },
       {
