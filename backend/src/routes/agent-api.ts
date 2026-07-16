@@ -11,6 +11,7 @@ import { parseBlockedBy, blockersSatisfied, isClaimable, appendLog } from '../se
 import { agentRecentPath, appendSection, formatSessionSummary } from '../services/agent-memory'
 import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval } from '../services/governance2'
 import { prepareApprovalRecord } from '../services/dangerous-approvals'
+import { notifyApprovalCreated } from '../services/push'
 import { documentEndpoint } from '../services/openapi'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
@@ -153,7 +154,10 @@ export async function agentApiRoutes(app: FastifyInstance) {
     if (!isCapabilityAllowed(parseCapabilities(agent.permissions), 'memory:write')) return reply.code(403).send({ error: 'agent lacks capability memory:write' })
     const pols = await db.select().from(schema.executionPolicies).where(and(eq(schema.executionPolicies.orgId, agent.orgId), eq(schema.executionPolicies.action, 'memory.write')))
     if (requiresApproval(pols as any, 'memory.write')) {
-      await db.insert(schema.approvalRequests).values({ id: randomUUID(), orgId: agent.orgId, type: 'memory.write', summary: `${agent.name} → write ${String((req.body as any)?.path ?? '')}`, payload: { agentId: agent.id, path: (req.body as any)?.path }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      const approvalId = randomUUID()
+      const summary = `${agent.name} → write ${String((req.body as any)?.path ?? '')}`
+      await db.insert(schema.approvalRequests).values({ id: approvalId, orgId: agent.orgId, type: 'memory.write', summary, payload: { agentId: agent.id, path: (req.body as any)?.path }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      notifyApprovalCreated({ id: approvalId, orgId: agent.orgId, type: 'memory.write', summary }).catch(() => {})
       return reply.code(202).send({ pending: true, error: 'requires human approval (policy: memory.write)' })
     }
     const { token, cfg } = await resolveVault(agent.orgId)
@@ -175,7 +179,10 @@ export async function agentApiRoutes(app: FastifyInstance) {
     if (!isCapabilityAllowed(parseCapabilities(agent.permissions), 'memory:write')) return reply.code(403).send({ error: 'agent lacks capability memory:write' })
     const pols = await db.select().from(schema.executionPolicies).where(and(eq(schema.executionPolicies.orgId, agent.orgId), eq(schema.executionPolicies.action, 'memory.write')))
     if (requiresApproval(pols as any, 'memory.write')) {
-      await db.insert(schema.approvalRequests).values({ id: randomUUID(), orgId: agent.orgId, type: 'memory.write', summary: `${agent.name} → session summary`, payload: { agentId: agent.id }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      const approvalId = randomUUID()
+      const summary = `${agent.name} → session summary`
+      await db.insert(schema.approvalRequests).values({ id: approvalId, orgId: agent.orgId, type: 'memory.write', summary, payload: { agentId: agent.id }, status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date() } as any)
+      notifyApprovalCreated({ id: approvalId, orgId: agent.orgId, type: 'memory.write', summary }).catch(() => {})
       return reply.code(202).send({ pending: true, error: 'requires human approval (policy: memory.write)' })
     }
     const { token, cfg } = await resolveVault(agent.orgId)
@@ -449,6 +456,8 @@ export async function agentApiRoutes(app: FastifyInstance) {
       status: 'pending', requestedByAgentId: agent.id, decidedBy: null, decidedAt: null, createdAt: new Date(),
     }
     await db.insert(schema.approvalRequests).values(approval as any)
+    // MOB-3B: an agent-proposed approval (incl. dangerous types) pings the owner's phone.
+    notifyApprovalCreated({ id: approval.id, orgId: agent.orgId, type: approval.type, summary: approval.summary }).catch(() => {})
     return { ok: true, approval, warnings: prepared.warnings }
   })
 

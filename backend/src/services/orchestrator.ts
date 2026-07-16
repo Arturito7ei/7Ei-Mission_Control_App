@@ -12,6 +12,7 @@ import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from './agent-executor'
 import { fireWebhook } from './outbound-webhooks'
+import { notifyApprovalCreated } from './push'
 import { evaluateLowTrustAction, buildReviewCaseRow, isLowTrust } from './review'
 
 export interface DelegateDirective {
@@ -93,6 +94,8 @@ export async function executeDelegations(
           if (evaluation.decision === 'quarantine') {
             const row = buildReviewCaseRow({ id: randomUUID(), orgId, agentId: orchestratorAgentId, action: { type: 'task_assign', resources: [{ kind: 'agent', id: agent.id }], payload: { targetName: agent.name, agentId: agent.id, task: directive.task } }, evaluation, now: new Date() })
             await db.insert(schema.approvalRequests).values(row as any)
+            // MOB-3B: a quarantined delegation needs a human decision — ping the owner's phone.
+            notifyApprovalCreated({ id: (row as any).id, orgId, type: (row as any).type, summary: (row as any).summary }).catch(() => {})
           }
           console.warn(`Orchestrator: low-trust delegation ${evaluation.decision} — ${evaluation.reason}`)
           results.push({ agentId: agent.id, agentName: agent.name, output: `[held: ${evaluation.decision}] ${evaluation.reason}`, taskId: '' })

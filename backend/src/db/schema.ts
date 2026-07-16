@@ -566,3 +566,18 @@ export const auditLogs = sqliteTable('audit_logs', {
   metadata:   text('metadata', { mode: 'json' }).$type<Record<string, unknown>>(),
   createdAt:  integer('created_at', { mode: 'timestamp' }).notNull(),
 })
+
+// MOB-3B: persisted Expo push-token registry (replaces the in-memory Map that
+// cleared on every Fly restart). Keyed by USER, not org — a device belongs to a
+// person, and the push senders resolve the org OWNER's user id before looking
+// tokens up here (services/push.ts). `token` is UNIQUE so register is an upsert
+// (one physical device = one row); re-registering the same device under a new
+// login just re-points `userId`. `platform` (ios | android | web) is nullable.
+export const pushTokens = sqliteTable('push_tokens', {
+  id:        text('id').primaryKey(),
+  userId:    text('user_id').notNull(),
+  token:     text('token').notNull(),          // Expo push token — UNIQUE (idx_push_tokens_token)
+  platform:  text('platform'),                 // ios | android | web
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})

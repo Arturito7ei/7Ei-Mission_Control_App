@@ -223,6 +223,18 @@ export async function setupDatabase() {
     try { await dbClient.execute(col) } catch { /* column already exists */ }
   }
 
+  // MOB-3B: push_tokens — persisted Expo push-token registry. Additive and
+  // idempotent (CREATE IF NOT EXISTS); nothing is backfilled — the previous store
+  // was an in-memory Map, so there is no legacy row to migrate, and an install
+  // with no registered device simply has zero rows. The UNIQUE index on `token`
+  // makes register an upsert (dedupe by device); the `user_id` index serves the
+  // send path's "tokens for this owner" lookup. Reversible: DROP TABLE push_tokens.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS push_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token TEXT NOT NULL, platform TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_push_tokens_token ON push_tokens(token)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

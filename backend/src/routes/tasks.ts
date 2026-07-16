@@ -22,6 +22,7 @@ import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../serv
 import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
+import { notifyApprovalCreated } from '../services/push'
 // Epic ONB / ONB3 — deciding an `agent_join_request` card in this queue IS the
 // board-approval gate; it runs the same decision path as the dedicated owner routes.
 import { JOIN_APPROVAL_TYPE, joinRequestView, parseJoinDecision } from '../services/join-requests'
@@ -144,6 +145,8 @@ export async function taskRoutes(app: FastifyInstance) {
     if (!prepared.ok) return reply.code(400).send({ error: prepared.error })
     const approval = { id: randomUUID(), orgId, type: b.type, summary: prepared.summary, payload: prepared.payload ?? null, status: 'pending', requestedByAgentId: b.requestedByAgentId ?? null, decidedBy: null, decidedAt: null, createdAt: new Date() }
     await db.insert(schema.approvalRequests).values(approval as any)
+    // MOB-3B: ping the owner's phone the moment an approval is filed (fire-and-forget).
+    notifyApprovalCreated({ id: approval.id, orgId, type: approval.type, summary: approval.summary }).catch(() => {})
     reply.code(201); return { approval, warnings: prepared.warnings }
   })
 
@@ -178,6 +181,8 @@ export async function taskRoutes(app: FastifyInstance) {
     if (evaluation.decision === 'quarantine') {
       const row = buildReviewCaseRow({ id: randomUUID(), orgId, agentId, action, evaluation, now: new Date() })
       await db.insert(schema.approvalRequests).values(row as any)
+      // MOB-3B: a quarantined low-trust action is a review case that needs a human — ping.
+      notifyApprovalCreated({ id: (row as any).id, orgId, type: (row as any).type, summary: (row as any).summary }).catch(() => {})
       reply.code(202) // Accepted-but-held
       return { decision: 'quarantine', reason: evaluation.reason, approval: row }
     }

@@ -1,25 +1,47 @@
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, desc, and, gte } from 'drizzle-orm'
-import { pushTokens } from '../services/push'
+import { registerPushToken, unregisterPushToken } from '../services/push'
 
 // Re-exported for backwards compatibility — the implementation lives in services/push.
 export { sendPushNotification } from '../services/push'
 
+/** The authenticated identity the secured onRequest hook (clerkAuth on hosted /
+ *  loopbackAuth on packaged) attaches. Both set the SAME `req.auth.userId` /
+ *  `req.userId` contract, so this is profile-agnostic. */
+function authedUserId(req: any): string | null {
+  return req?.auth?.userId ?? req?.userId ?? null
+}
+
 export async function notificationRoutes(app: FastifyInstance) {
-  // Register Expo push token
-  app.post('/api/notifications/register', async (req) => {
-    const { userId, token } = req.body as any
-    if (!userId || !token) return { ok: false }
-    if (!pushTokens.has(userId)) pushTokens.set(userId, new Set())
-    pushTokens.get(userId)!.add(token)
+  // Register Expo push token. MOB-3B (audit L1): the device is keyed on the
+  // AUTHENTICATED identity, never a body-supplied `userId` — otherwise any
+  // authenticated user could register a device under another user's id and
+  // receive their pushes. A `userId` in the body is accepted only for
+  // client compatibility, and only if it MATCHES the session; a mismatch is 403.
+  app.post('/api/notifications/register', async (req, reply) => {
+    const sub = authedUserId(req)
+    if (!sub) return reply.code(401).send({ error: 'Unauthorized' })
+    const { userId: bodyUserId, token, platform } = (req.body ?? {}) as any
+    if (!token || typeof token !== 'string') return reply.code(400).send({ error: 'token is required' })
+    if (bodyUserId != null && String(bodyUserId) !== sub) {
+      return reply.code(403).send({ error: 'userId does not match the authenticated session' })
+    }
+    await registerPushToken({ userId: sub, token, platform: typeof platform === 'string' ? platform : null })
     return { ok: true }
   })
 
-  // Unregister
-  app.delete('/api/notifications/register', async (req) => {
-    const { userId, token } = req.body as any
-    pushTokens.get(userId)?.delete(token)
+  // Unregister — same identity rule, and the delete is scoped to the caller's own
+  // identity in the service (a user can only unregister their own device).
+  app.delete('/api/notifications/register', async (req, reply) => {
+    const sub = authedUserId(req)
+    if (!sub) return reply.code(401).send({ error: 'Unauthorized' })
+    const { userId: bodyUserId, token } = (req.body ?? {}) as any
+    if (!token || typeof token !== 'string') return reply.code(400).send({ error: 'token is required' })
+    if (bodyUserId != null && String(bodyUserId) !== sub) {
+      return reply.code(403).send({ error: 'userId does not match the authenticated session' })
+    }
+    await unregisterPushToken({ userId: sub, token })
     return { ok: true }
   })
 
