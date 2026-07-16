@@ -435,7 +435,7 @@ p  { margin: 0; color: var(--text); }
   position: relative;
   width: 64%;
   z-index: 2;
-  color: var(--reactor-core-1);
+  color: var(--reactor-logo-fill);
   filter: drop-shadow(0 0 7px var(--reactor-core-1)) drop-shadow(0 1px 2px rgba(0,0,0,.35));
 }
 .mc-reactor-hex svg { display: block; width: 100%; height: auto; }
