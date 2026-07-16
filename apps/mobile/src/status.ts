@@ -83,3 +83,22 @@ export const HEARTBEAT_STATUS: Record<string, CanonicalStatus> = {
 export function heartbeatStatus(h: string | undefined | null): CanonicalStatus {
   return HEARTBEAT_STATUS[(h ?? '').toLowerCase()] ?? 'idle'
 }
+
+// A heartbeat is a SEPARATE vocabulary (green/amber/stale) from a task or run
+// status, and only HEARTBEAT_STATUS bridges the two. Passing a raw heartbeat to
+// statusIcon/statusTone silently collapses `green` and `amber` onto 'idle' —
+// neither word is in ICON or ALIAS — so a healthy agent renders with the same
+// ○/neutral chip as one that has never checked in, and amber loses its warning.
+// (`stale` only survives that path by coincidence: it happens to be an ALIAS
+// key.) These two wrappers are the only correct way to glyph a heartbeat; call
+// them instead of reaching for statusIcon/statusTone directly.
+
+/** The glyph for a heartbeat — always via the heartbeat mapping. */
+export function heartbeatIcon(h: string | undefined | null): string {
+  return ICON[heartbeatStatus(h)]
+}
+
+/** The chip tone for a heartbeat — always via the heartbeat mapping. */
+export function heartbeatTone(h: string | undefined | null): StatusTone {
+  return TONE[heartbeatStatus(h)]
+}

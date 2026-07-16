@@ -36,7 +36,7 @@ import {
   type AgentRecentTask,
 } from '../api'
 import { useAuth } from '../auth'
-import { statusIcon, statusTone } from '../status'
+import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
 import { formatCost, formatTokens, NONE } from '../taskLog'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Card, Chip, Empty, Loading } from '../ui'
@@ -130,10 +130,14 @@ export default function AgentDetailScreen({ agentId }: { agentId: string }) {
               tone={statusTone(agent.status)}
               glyph={statusIcon(agent.status)}
             />
+            {/* A heartbeat is its own vocabulary (green/amber/stale) — it has to
+                go through the heartbeat mapping, not the task-status table, or
+                `green` and `amber` collapse onto 'idle' and a healthy agent
+                looks exactly like one that never checked in. */}
             <Chip
               label={`heartbeat: ${agent.heartbeatStatus || 'unknown'}`}
-              tone={statusTone(agent.heartbeatStatus)}
-              glyph={statusIcon(agent.heartbeatStatus)}
+              tone={heartbeatTone(agent.heartbeatStatus)}
+              glyph={heartbeatIcon(agent.heartbeatStatus)}
             />
           </View>
         </Card>
