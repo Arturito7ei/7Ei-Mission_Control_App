@@ -34,3 +34,21 @@ export const CLERK_PUBLISHABLE_KEY = (process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_
 export function clerkEnabled(): boolean {
   return CLERK_PUBLISHABLE_KEY.startsWith('pk_')
 }
+
+// ─── Push notifications (MOB-3) ─────────────────────────────────────────────────
+//
+// The EAS project id gates *remote* push. `getExpoPushTokenAsync()` needs a
+// projectId to mint an Expo push token; in Expo Go (managed, no dev build) there
+// is none, so remote push is unavailable and the client no-ops gracefully (local
+// notifications still work, proving the handler wiring). Once the operator runs
+// `eas init`, they set EXPO_PUBLIC_EAS_PROJECT_ID (the same id EAS writes to
+// app.json → extra.eas.projectId) and rebuild via an EAS dev build — no code
+// change, just this env var, flips remote delivery on. See docs/DESIGN-mobile-expo.md §4/§14.
+export const EAS_PROJECT_ID = (process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? '').trim()
+
+// True when a projectId is configured → remote Expo push tokens can be minted.
+// When false (the Expo Go default), the app requests permission + runs local
+// notifications only, and clearly labels remote push as "needs a dev build".
+export function pushRemoteConfigured(): boolean {
+  return EAS_PROJECT_ID.length > 0
+}

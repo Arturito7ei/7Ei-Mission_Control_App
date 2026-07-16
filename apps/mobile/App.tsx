@@ -8,6 +8,7 @@
 import React, { useState } from 'react'
 import { SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native'
 import { AuthProvider, useAuth } from './src/auth'
+import { PushProvider, useNotificationRouting } from './src/notifications'
 import { font, space, theme } from './src/theme'
 import { Loading } from './src/ui'
 import AgentsScreen from './src/screens/AgentsScreen'
@@ -29,6 +30,10 @@ function Shell() {
   const { ready, signedIn, orgId } = useAuth()
   const [tab, setTab] = useState<TabKey>('command')
 
+  // Tapping a push deep-links to the relevant tab (approval → Inbox, etc.). Wired
+  // whenever mounted; the routing hook itself no-ops when there's no tap to handle.
+  useNotificationRouting((target) => setTab(target))
+
   if (!ready) return <Loading text="Loading…" />
   // Signed in but no org chosen yet → the Connect screen shows the org picker.
   if (!signedIn || !orgId) return <ConnectScreen />
@@ -36,35 +41,37 @@ function Shell() {
   const active = TABS.find((t) => t.key === tab)!
 
   return (
-    <View style={{ flex: 1 }}>
-      <View style={s.header}>
-        <Text style={s.headerTitle}>{active.title}</Text>
-      </View>
+    <PushProvider>
       <View style={{ flex: 1 }}>
-        {tab === 'command' && <CommandCenterScreen />}
-        {tab === 'inbox' && <InboxScreen />}
-        {tab === 'agents' && <AgentsScreen />}
-        {tab === 'status' && <HealthScreen />}
+        <View style={s.header}>
+          <Text style={s.headerTitle}>{active.title}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          {tab === 'command' && <CommandCenterScreen />}
+          {tab === 'inbox' && <InboxScreen />}
+          {tab === 'agents' && <AgentsScreen />}
+          {tab === 'status' && <HealthScreen />}
+        </View>
+        <View style={s.tabbar}>
+          {TABS.map((t) => {
+            const on = t.key === tab
+            return (
+              <Text
+                key={t.key}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                onPress={() => setTab(t.key)}
+                style={[s.tab, on && s.tabOn]}
+              >
+                {t.glyph}
+                {'\n'}
+                <Text style={s.tabLabel}>{t.label}</Text>
+              </Text>
+            )
+          })}
+        </View>
       </View>
-      <View style={s.tabbar}>
-        {TABS.map((t) => {
-          const on = t.key === tab
-          return (
-            <Text
-              key={t.key}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-              onPress={() => setTab(t.key)}
-              style={[s.tab, on && s.tabOn]}
-            >
-              {t.glyph}
-              {'\n'}
-              <Text style={s.tabLabel}>{t.label}</Text>
-            </Text>
-          )
-        })}
-      </View>
-    </View>
+    </PushProvider>
   )
 }
 

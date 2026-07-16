@@ -5,11 +5,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Api, type Health } from '../api'
 import { useAuth } from '../auth'
+import { usePush } from '../notifications'
 import { font, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Loading } from '../ui'
 
 export default function HealthScreen() {
   const { apiUrl, orgName, orgId, signOut, authMode, identityLabel } = useAuth()
+  const { deregister } = usePush()
   const [health, setHealth] = useState<Health | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -82,18 +84,102 @@ export default function HealthScreen() {
             ) : null}
           </Card>
 
+          <NotificationsCard />
+
           <Card style={{ marginTop: space.lg }}>
             <Text style={s.h}>Session</Text>
             <Kv k="Org" v={orgName ?? orgId ?? '—'} />
             <Kv k="Auth" v={authMode === 'clerk' ? 'Clerk (auto-refresh)' : authMode === 'paste' ? 'Pasted token' : '—'} />
             {identityLabel ? <Kv k="Signed in as" v={identityLabel} /> : null}
             <View style={{ marginTop: space.md }}>
-              <Button title={authMode === 'clerk' ? 'Sign out' : 'Disconnect'} onPress={signOut} tone="ghost" />
+              <Button
+                title={authMode === 'clerk' ? 'Sign out' : 'Disconnect'}
+                // De-register the push token while the bearer is still valid, THEN
+                // clear the session — so a signed-out phone stops receiving pushes.
+                onPress={async () => {
+                  await deregister()
+                  await signOut()
+                }}
+                tone="ghost"
+              />
             </View>
           </Card>
         </>
       ) : null}
     </ScrollView>
+  )
+}
+
+// Notifications (MOB-3): shows the push status honestly — permission, whether a
+// remote token was obtained + registered, and a clear "needs a dev build" note
+// when running in Expo Go (no EAS projectId). Lets the operator grant permission
+// and fire a LOCAL test to prove the handler + tap-routing wiring in Expo Go.
+function NotificationsCard() {
+  const { status, enable, sendTest } = usePush()
+  const permTone: 'ok' | 'warn' | 'danger' =
+    status.permission === 'granted' ? 'ok' : status.permission === 'denied' ? 'danger' : 'warn'
+  const permGlyph = status.permission === 'granted' ? '✓' : status.permission === 'denied' ? '⚠' : '•'
+  const permLabel =
+    status.permission === 'granted'
+      ? 'GRANTED'
+      : status.permission === 'denied'
+        ? 'DENIED'
+        : status.permission === 'undetermined'
+          ? 'NOT ASKED'
+          : 'UNKNOWN'
+
+  const remoteLabel = !status.remoteConfigured
+    ? 'Dev build required'
+    : status.registered
+      ? `Registered${status.tokenTail ? ` · …${status.tokenTail}]` : ''}`
+      : status.tokenObtained
+        ? status.userKnown
+          ? 'Token obtained · not registered'
+          : 'Token obtained · no user id'
+        : 'No remote token'
+  const remoteTone: 'ok' | 'warn' = status.registered ? 'ok' : 'warn'
+
+  return (
+    <Card style={{ marginTop: space.lg }}>
+      <View style={s.row}>
+        <Text style={s.h}>Notifications</Text>
+        <Chip label={permLabel} tone={permTone} glyph={permGlyph} />
+      </View>
+
+      <View style={s.kv}>
+        <Kv
+          k="Remote push"
+          v={remoteLabel}
+          tone={remoteTone === 'ok' ? 'ok' : undefined}
+          glyph={status.registered ? '✓' : status.remoteConfigured ? '•' : '⚙'}
+        />
+      </View>
+
+      {!status.remoteConfigured ? (
+        <Text style={[s.dim, { marginTop: space.xs }]}>
+          ⚙ Remote delivery (a real push to this phone) needs an EAS dev build with an
+          Expo project id (EXPO_PUBLIC_EAS_PROJECT_ID). In Expo Go you can still grant
+          permission and fire a local test below to verify the wiring.
+        </Text>
+      ) : null}
+
+      {status.error ? (
+        <Text style={[s.dim, { color: theme.vermillion, marginTop: space.xs }]}>⚠ {status.error}</Text>
+      ) : null}
+
+      <View style={{ marginTop: space.md, gap: space.sm }}>
+        {status.permission !== 'granted' ? (
+          <Button
+            title={status.remoteConfigured ? 'Enable notifications' : 'Allow notifications'}
+            onPress={enable}
+            busy={status.busy}
+          />
+        ) : status.remoteConfigured && !status.registered ? (
+          <Button title="Register for push" onPress={enable} busy={status.busy} />
+        ) : null}
+        <Button title="Send a test notification" onPress={sendTest} tone="ghost" />
+      </View>
+    </Card>
   )
 }
 

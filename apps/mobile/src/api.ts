@@ -136,4 +136,28 @@ export const Api = {
       method: 'POST',
       body: JSON.stringify({ message, history: history.slice(-20), deferAnswer: false }),
     }),
+
+  // ─── Push token registration (MOB-3) ──────────────────────────────────────
+  // The backend register endpoint is USER-scoped, not org-scoped, and takes the
+  // identity from the body `userId` (NOT from the bearer): it stores the token in
+  // an in-memory `pushTokens: Map<userId, Set<expoToken>>` (backend
+  // services/push.ts) and later POSTs to Expo's push service, targeting
+  // `org.ownerId`. So `userId` MUST be the signed-in user's Clerk id (the `sub`
+  // claim) for pushes to actually arrive — which equals `org.ownerId` for the
+  // operator/owner. We still send `Authorization: Bearer` for consistency with
+  // every other call and to be forward-compatible if the endpoint later adds a
+  // gate; the endpoint currently ignores it. NEVER log `expoToken`.
+  registerPush: (base: string, userId: string, expoToken: string, bearer?: string | null) =>
+    api<{ ok: boolean }>(base, '/api/notifications/register', {
+      token: bearer ?? undefined,
+      method: 'POST',
+      body: JSON.stringify({ userId, token: expoToken }),
+    }),
+
+  unregisterPush: (base: string, userId: string, expoToken: string, bearer?: string | null) =>
+    api<{ ok: boolean }>(base, '/api/notifications/register', {
+      token: bearer ?? undefined,
+      method: 'DELETE',
+      body: JSON.stringify({ userId, token: expoToken }),
+    }),
 }

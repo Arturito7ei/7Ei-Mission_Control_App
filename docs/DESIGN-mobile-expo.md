@@ -1,6 +1,7 @@
 # DESIGN — Epic H5 / MOBILE: an Expo iPhone app that remotely controls Mission Control
 
-> **Status:** Full plan **+ phase-1 app (MOB-1) + real Clerk sign-in (MOB-2) BUILT & bootable in Expo Go** (`apps/mobile/`) · **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** Full plan **+ phase-1 app (MOB-1) + real Clerk sign-in (MOB-2) + push client (MOB-3) BUILT & bootable in Expo Go** (`apps/mobile/`) · **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **MOB-3 (this wave):** the *client* push slice — permission, local notifications, tap→deep-link, and backend token registration — ships in Expo Go with **zero backend change** (the register endpoint already existed). **Remote APNs delivery is staged behind an EAS dev build**, flipped on by one env var (`EXPO_PUBLIC_EAS_PROJECT_ID`) with no code change. See **§14**.
 > **Companions:** `docs/DESIGN-packaging.md` §8 (the earlier iPhone-surface stub — this doc **supersedes** its native-app thinking with a hosted-first Expo client; see §10), `docs/SECURITY-posture.md` (the gate chain the phone must not bypass), `docs/RUNBOOK-agent-onboarding.md` (how Mac-mini agents attach to the hosted backend — unchanged by this epic), `web/lib/api.ts` (the API client this mirrors), `apps/mobile/README.md` (run instructions). Verify claims against the repo before acting.
 
 ---
@@ -11,7 +12,7 @@
 - **Auth: recommend `@clerk/clerk-expo`** authenticating to the **same Clerk org** the web app uses — the phone becomes a first-class Clerk client, tokens auto-refresh, and the backend's existing `clerkAuth` + membership gates apply unchanged. A device-pairing token is evaluated as a runner-up and **not recommended** (§2.4).
 - **CORS is a non-issue for the native app.** React Native `fetch` sends **no `Origin` header**, so the backend's `ALLOWED_ORIGINS` allow-list never gates the phone — it reaches the hosted API as-is. (Expo *web* preview at `localhost:8081` is already on the allow-list too.) No backend CORS change needed.
 - **P0 feature surface (control remotely):** **Command Center** (text chat to Arturita) · **Inbox/Approvals** (approve/reject/request-changes — the killer remote feature) · **Agents** list · **Tasks**. **P1:** Memory, Costs, **push notifications** (approval-needed / agent-needs-attention — the true at-a-distance payoff). **Fast-follow:** voice (Expo AV record → hosted converse/Whisper).
-- **Push needs almost nothing new backend-side.** A device-token **register endpoint already exists** (`notificationRoutes`, `push-notifications` feature) and the backend already declares push as a feature; wiring Expo push is a small, additive, **flagged** story (§4), **not built this wave**.
+- **Push needs almost nothing new backend-side.** A device-token **register endpoint already exists** (`notificationRoutes`, `push-notifications` feature) and the backend already POSTs to Expo's push service. The **client push slice (MOB-3) is now built** and wires to that endpoint with **zero backend change** (§14); it runs in Expo Go (permission, local test, tap→deep-link, token registration). **Remote APNs delivery** is staged behind an EAS dev build (one env var, no code change), and emitting a push on *approval-created* is flagged as a separate backend story.
 - **Expo Go vs dev-build:** everything in P0/P1 **except background audio and rich native push** runs in **Expo Go** (managed, no native build). Voice-with-background-audio and production APNs push move to an **EAS dev build** (§5). The phase-1 app is deliberately **Expo-Go-only**.
 - **Phase-1 shipped this wave:** a runnable `apps/mobile` Expo app (SDK 57, TypeScript) that boots in **Expo Go** and proves remote control against the hosted backend — Command Center chat, Inbox approve/reject, Agents list, health/status — with **token-paste auth** as the guaranteed-bootable fallback while **Clerk-Expo is staged as MOB-2** (§11).
 
@@ -212,7 +213,7 @@ One PR per story, squash-merged `--admin`, hosted invariant green each merge (`b
 |---|---|---|---|---|---|
 | **MOB-1** ✅ **BUILT (this wave)** | **Phase-1 Expo app in Expo Go** | Managed TS Expo app at `apps/mobile`; token-paste auth + org resolution; Command Center chat, Inbox approve/reject/request-changes, Agents list, health/status; colorblind-safe. | ✅ **MET (§11):** boots in Expo Go via `npm install && npx expo start`; typecheck clean; Metro bundles (592 modules → Hermes); calls the **live** hosted backend (`/api/health` green, `/api/orgs` 401-gated); additive (own npm root, not in web/desktop builds). | no (no new backend surface; read + existing decide endpoint) | — |
 | **MOB-2** ✅ **BUILT** | **Clerk-Expo real sign-in** | Add `@clerk/clerk-expo` + `<ClerkProvider>` + Keychain `tokenCache`; replace paste with `getToken()`; keep paste as a fallback. Resolve the SDK-57 peer-compat. | ✅ **MET (§13):** `@clerk/clerk-expo@2.19.42` installs **clean** on Expo Go SDK 57 (peer fix: pin `react-dom@19.2.3`); real Clerk email+password / email-code sign-in against the same instance; auto-refreshing `getToken()` (Keychain via `expo-secure-store`, never logged); paste kept as escape hatch; screens use async `getToken()`+`orgId`; hosted backend unchanged (401 gate + no-Origin verified live). | **stage→audit** (auth surface) | MOB-1 |
-| **MOB-3** | **Push notifications** | Client: `expo-notifications` register → send the Expo push token to the backend. Backend (additive, flagged): confirm/extend the existing device-token register endpoint for the Expo token shape; add an Expo-push send path in `push.ts`; emit on approval-created + agent-stale/task-needs-attention (fire-and-forget). | A pending approval / stale agent produces a push on the phone; token stored per user/org; send is off the request critical path; **no push in Expo Go for production** → validated on an EAS dev build. | **stage→audit** (remote-notification surface + device-token storage) | MOB-1; (MOB-2 for per-user targeting) |
+| **MOB-3** ✅ **CLIENT BUILT (this wave); remote delivery staged** | **Push notifications** | Client (**built**): `expo-notifications` — set handler, request permission, `getExpoPushTokenAsync` (guarded/no-op in Expo Go), register the token with the **existing** backend endpoint using the Bearer path, tap→deep-link (approval → Inbox), local test notification, token lifecycle (register on sign-in/grant, de-register on sign-out). **No backend change** — the register endpoint + Expo-push send path in `push.ts` already exist and already emit on task-complete/routine/budget (fire-and-forget). **Staged (dev build):** production remote APNs delivery via `EXPO_PUBLIC_EAS_PROJECT_ID` + an EAS dev build; and (a *separate* backend story, flagged) emitting an Expo push on **approval-created** / agent-stale. | ✅ **CLIENT MET (§14):** handler + permission + local test + tap-routing run in **Expo Go**; token minted + registered only when a projectId is configured (graceful no-op otherwise); `npm install`/typecheck/`expo export` clean; additive. **Remote push on the phone** still needs the EAS dev build (validated there). | **stage→audit** (remote-notification surface + device-token storage) | MOB-1; (MOB-2 for per-user targeting) |
 | **MOB-4** | **Approve dangerous actions (step-up on device)** | Mint an Arturita command-session token on the phone (the step-up the `decide` endpoint requires for `file_destructive`/`wallet_tx`/`email_send`/`machine_exec`) and attach it on approve. | A dangerous approval can be **approved** from the phone with a fresh step-up session; without it, the clear 403 still shows; reject/revision unchanged. | **stage→audit** (approving dangerous actions remotely) | MOB-1 |
 | **MOB-5** | **Voice (dev build)** | Mic capture (`expo-audio`) → POST to hosted Whisper/converse → text + optional TTS playback; mic permission prompt + honest degradation. Ships on an **EAS dev build** (background audio). | Push-to-talk produces a transcribed message + a reply; mic-only permission; degrades to text with no LLM/STT; runs on the dev build. | no (reuses hosted STT/converse; no new backend) | MOB-1; MOB-2 |
 | **MOB-6** | **Tasks + Memory + Costs depth** | Task detail/actions, agent memory read, costs/budget glance. | Read surfaces render live; any write (task nudge/create) is gated + confirmed. | write-gates reviewed | MOB-1 |
@@ -351,3 +352,88 @@ npx expo start              # scan the QR in Expo Go (or: npx expo start --tunne
 - **With the key set:** the app opens a real Clerk **Sign in** screen — the operator's 7Ei email + password (or "Email me a sign-in code"). After sign-in it resolves orgs and (if >1) shows a picker. Tokens auto-refresh; no more 401-on-expiry.
 - **Without the key:** the app falls back to the MOB-1 **paste** screen — unchanged.
 - **Escape hatch:** even with Clerk configured, "Use a token instead" still allows a pasted bearer for a smoke test.
+
+---
+
+## 14. MOB-3 — Push notifications, as built
+
+The **client** push slice ships this wave, running in **Expo Go** with **zero backend change**. Strictly additive — only `apps/mobile/**` + docs (+ `STATUS.md`) changed; no backend/web/desktop/CI touch. The line between what works now and what needs a dev build is drawn deliberately and honestly.
+
+### 14.1 The backend endpoint we wired to (verified live)
+
+The audits were right — a device-token register endpoint **already exists**; MOB-3 needed **no new backend surface**.
+
+| | |
+|---|---|
+| **Path** | `POST /api/notifications/register` (unregister: `DELETE` same path) |
+| **Auth** | **Required.** Registered inside the `secured` scope (`backend/src/index.ts:197`), whose `onRequest` hook is the Clerk (hosted) / loopback (packaged) auth gate. A request with **no** `Authorization: Bearer` gets `401 {"error":"Unauthorized"}` — **verified live** against `7ei-backend.fly.dev`. The path has no `:orgId`, so `requireOrgMembership` no-ops (any authenticated user passes). |
+| **Body** | `{ "userId": string, "token": string }` → `{ "ok": true }` |
+| **Identity nuance** | The handler takes the target **`userId` from the body**, not from the authed session. The backend's push senders (`agent-executor.ts`, `scheduler.ts`) fan out to **`org.ownerId`**. So the phone registers under the **signed-in user's Clerk id** (the JWT `sub`) — which equals `org.ownerId` for the operator/owner, so pushes reach them. |
+| **Storage** | In-memory `Map<userId, Set<expoToken>>` (`backend/src/services/push.ts`) — ephemeral (clears on a Fly restart). The **send path already POSTs to Expo** (`https://exp.host/--/api/v2/push/send`) and already fires on task-complete / routine / budget-warning (fire-and-forget, off the critical path). |
+
+The client always attaches `Authorization: Bearer <jwt>` (Clerk `getToken()`, or the pasted bearer) **and** the body `userId` — so it satisfies the auth gate *and* registers under the correct identity.
+
+### 14.2 What runs in Expo Go **now** vs what's gated behind the dev build
+
+| Capability | Expo Go (now) | EAS dev build (staged) |
+|---|---|---|
+| Foreground notification handler (banner + sound while app open) | ✅ | ✅ |
+| Request notification permission | ✅ | ✅ |
+| **Local / scheduled** notification ("Send a test") | ✅ (proves handler + routing wiring) | ✅ |
+| Tap a notification → **deep-link** to the right tab (approval → Inbox) | ✅ | ✅ |
+| **Remote** Expo push token (`getExpoPushTokenAsync`) | ⛔ no-op (no projectId → skipped gracefully, no throw) | ✅ (projectId set) |
+| Register token with backend | ✅ *when* a token exists (i.e. dev build); no-op otherwise | ✅ |
+| A **real remote push arriving on the phone** | ⛔ | ✅ (APNs via Expo) |
+
+The guard is `pushRemoteConfigured()` (`src/config.ts`): `getExpoPushTokenAsync` is only called when `EXPO_PUBLIC_EAS_PROJECT_ID` is set. In Expo Go it's absent, so the token step is skipped and the Status panel shows **"Dev build required"** — the app never throws.
+
+### 14.3 Client architecture
+
+- **`src/notifications.tsx`** — the whole client slice:
+  - `setNotificationHandler(...)` at module load (foreground banner + sound; no badge).
+  - `PushProvider` / `usePush()` — runs the lifecycle and exposes `{ status, enable, deregister, sendTest }`. On sign-in, if permission is already granted it obtains + registers **silently** (no surprise prompt); the first permission prompt is user-initiated via **Enable**. Tracks the last-registered `{apiUrl, userId, token}` in a ref to de-register exactly.
+  - `useNotificationRouting(onRoute)` — handles both cold-start (`getLastNotificationResponseAsync`) and warm (`addNotificationResponseReceivedListener`) taps; `routeForData()` maps the push `data` payload to a tab (`type:'approval'`/`approvalId` → Inbox, `agentId`/`taskId` → Agents/Command, `budget_warning` → Status).
+- **`src/config.ts`** — `EAS_PROJECT_ID` + `pushRemoteConfigured()` read the projectId from **env** (`EXPO_PUBLIC_EAS_PROJECT_ID`), so flipping remote on is **config-only, no code change**.
+- **`src/api.ts`** — `registerPush` / `unregisterPush` (Bearer + body `{userId, token}`; DELETE carries a body so it doesn't trip Fastify's empty-JSON-body 400).
+- **`src/auth.tsx`** — adds `userId` to the auth context: Clerk mode from `useUser().id`; paste mode via a best-effort `sub` decode of the pasted JWT (unverified, used only as a registration key — never for authz). Null → registration is skipped with a clear reason, never guessed.
+- **`App.tsx`** — wraps the signed-in shell in `<PushProvider>` and wires `useNotificationRouting` to the tab setter.
+- **`src/screens/HealthScreen.tsx`** — a **Notifications** card: permission state, remote-push state (Registered / obtained / "Dev build required"), the last-4 of the token only, **Enable** / **Register** / **Send a test** buttons. The **Sign out / Disconnect** button now calls `deregister()` **before** `signOut()`, while the bearer is still valid (the register endpoint is auth-gated, so a post-sign-out DELETE would 401).
+
+**Token hygiene:** the Expo push token is **never logged**; only its last 4 chars are shown in the UI. Registered on sign-in / permission-grant; de-registered on sign-out (and on token change — the old token is unregistered before the new one is stored).
+
+### 14.4 Verified (this wave)
+
+- `npm install` **clean** (765 pkgs; `expo-notifications@~57.0.5` installed via `expo install`, no `ERESOLVE`).
+- `npm run typecheck` clean.
+- `expo export --platform ios` bundles (**796 modules** → 2.8 MB Hermes) — proves `expo-notifications` **bundles and runs** in Expo Go, not just installs.
+- Live `POST/DELETE /api/notifications/register` on `7ei-backend.fly.dev` → `401 {"error":"Unauthorized"}` **without** a bearer (auth gate + exact path/method/body shape confirmed).
+- **Additive:** all changes under `apps/mobile/**`; repo root has no `workspaces`, so `web`/`backend`/`apps/desktop` installs/builds are untouched.
+- **Honest boundary:** a *real remote push landing on the phone* was **not** exercised here — it requires an Expo project id + an EAS dev build (which the operator has not set up). Everything up to and including the backend registration call is exercised in Expo Go; remote delivery is proven-equivalent (the register/send contract is unchanged and the backend already POSTs to Expo).
+
+### 14.5 Operator: turning on **remote** delivery (the staged dev-build steps)
+
+No code change is needed — only config + a dev build:
+
+1. **Create a free Expo account** and log in: `npx expo login` (or `eas login`). (Open question **H5Q2**.)
+2. **Link the project:** from `apps/mobile`, `npx eas init` — this writes `extra.eas.projectId` into `app.json` and creates the project on Expo's servers.
+3. **Set the env var** so the client mints the remote token in any build (Expo Go included, though Expo Go still can't *deliver* remote push): add to `apps/mobile/.env` —
+   ```bash
+   EXPO_PUBLIC_EAS_PROJECT_ID=<the id eas init wrote to app.json → extra.eas.projectId>
+   ```
+   The code reads `process.env.EXPO_PUBLIC_EAS_PROJECT_ID` — **that env var is the only switch.**
+4. **APNs:** `eas credentials` (or let `eas build` prompt) provisions the iOS push key — Expo brokers APNs, so **no raw `.p8`/cert handling in this repo**. One-time.
+5. **Build + install a dev build:**
+   ```bash
+   npx eas build --profile development --platform ios
+   ```
+   Install it on the device (TestFlight or a direct install — **H5Q5**: TestFlight/dev-build is enough for one operator).
+6. **Result:** the app mints a real `ExponentPushToken[…]`, registers it under the operator's Clerk id, and the backend's existing task-complete / routine / budget pushes arrive on the phone. To also get an **approval-needed** push, schedule the small **backend** follow-up (below).
+
+### 14.6 Flagged for the operator — the remaining **backend** follow-up (not built here)
+
+MOB-3's client is done and needs no backend change to work with the *existing* triggers. Two backend items remain, each a **separate, additive, audited backend story** (out of scope for this mobile-only, builder-only wave):
+
+- **Emit a push on `approval_requests` creation** (and on agent-heartbeat `stale` / task `needs_attention`) — the true at-a-distance payoff. The send plumbing (`sendPushNotification` → Expo) already exists; this is a fire-and-forget `.catch()` call at those state transitions, targeting `org.ownerId`. **Schedule as a backend story.**
+- **Persist push tokens** — today they live in an in-memory `Map` that clears on every Fly restart, so a device must re-register after a backend deploy (the client re-registers on next sign-in/foreground, so it self-heals, but a persisted `push_tokens` table would make delivery durable). **Optional hardening; flag for a backend story.**
+
+Neither is required for the client slice shipped here; both are noted so the operator can schedule them.
