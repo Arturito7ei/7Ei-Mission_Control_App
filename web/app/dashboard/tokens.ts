@@ -60,6 +60,11 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--reactor-core-2': 'rgba(120,168,255,.55)',  // core mid
     '--reactor-core-3': 'rgba(76,120,224,.20)',    // core falloff
     '--reactor-glow': 'rgba(120,168,255,.28)',      // outer bloom behind the assembly
+    // The honeycomb mark sits ON the core, so it cannot share --reactor-core-1
+    // like it did: mark and backdrop were the same icy white-blue and the logo
+    // washed out. Solid black reads against the light core; dark keeps the
+    // luminous treatment (see the dark twin below).
+    '--reactor-logo-fill': '#000000',
   },
   dark: {
     '--s0': '#070707',
@@ -107,6 +112,9 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     '--reactor-core-2': 'rgba(130,178,255,.62)',  // core mid
     '--reactor-core-3': 'rgba(86,132,240,.24)',    // core falloff
     '--reactor-glow': 'rgba(130,178,255,.34)',      // outer bloom
+    // Matches --reactor-core-1 — on the dark field the luminous mark is correct,
+    // so this is the pre-token look held as-is. Only light diverges.
+    '--reactor-logo-fill': 'rgba(232,242,255,.97)',
   },
 }
 
