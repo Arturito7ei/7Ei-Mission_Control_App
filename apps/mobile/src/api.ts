@@ -90,6 +90,18 @@ export type Approval = {
   payload?: any
 }
 
+/**
+ * Prior turns sent with a /converse call — the web's default, mirrored.
+ *
+ * The web's `toConverseRequest` defaults `historyLimit` to 10 and its panel never
+ * overrides it (web/app/dashboard/assistant.logic.ts). The phone used to send 20:
+ * the backend's zod `.max(20)` is the CEILING, not the contract, so both clients
+ * were legal but Arturita remembered twice as far on the phone as on the desk —
+ * the same question, asked from two devices, could get two different answers.
+ * Same conversation, same depth.
+ */
+export const CONVERSE_HISTORY_LIMIT = 10
+
 export type ConverseReply = { text: string; provider?: string; model?: string }
 export type ConverseResult = {
   mode: 'answer' | 'delegate'
@@ -210,7 +222,7 @@ export const Api = {
       method: 'POST',
       body: JSON.stringify({
         message,
-        history: history.slice(-20),
+        history: history.slice(-CONVERSE_HISTORY_LIMIT),
         deferAnswer: false,
         ...(attachment ? { attachment } : {}),
       }),

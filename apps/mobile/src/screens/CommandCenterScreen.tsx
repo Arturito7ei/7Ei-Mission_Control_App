@@ -82,7 +82,14 @@ export default function CommandCenterScreen() {
     }
 
     const token = await getToken()
-    if (!token || !orgId) return
+    // Say so. A silent return here looks identical to a picker that did nothing:
+    // the operator chose a file, no chip appears, and nothing explains why. The
+    // token is refreshed by Clerk in the background, so this is usually a moment,
+    // not a dead end — the wording says which.
+    if (!token || !orgId) {
+      setError('Reconnecting — try attaching that again in a moment.')
+      return
+    }
     setAttaching(true)
     setAttachment({ name: file.name, size: file.size ?? undefined }) // chip shows while parsing
     try {
@@ -114,11 +121,18 @@ export default function CommandCenterScreen() {
 
   const send = useCallback(async () => {
     const text = input.trim()
-    const token = await getToken()
-    if (!token || !orgId) return
     // A document alone is a legitimate turn ("read this") — the same gate the web
-    // applies, and the same one the backend enforces.
+    // applies, and the same one the backend enforces. This runs BEFORE the token
+    // check so an empty Send stays a silent no-op instead of raising an error
+    // about a connection the operator wasn't using yet.
     if (!canSendTurn({ typed: text, attachment, busy: busy || attaching })) return
+    const token = await getToken()
+    // Same reason as pickAttachment: a silent return here is a Send that visibly
+    // does nothing.
+    if (!token || !orgId) {
+      setError('Reconnecting — try sending that again in a moment.')
+      return
+    }
     setError(null)
     setNotice(null)
     setInput('')

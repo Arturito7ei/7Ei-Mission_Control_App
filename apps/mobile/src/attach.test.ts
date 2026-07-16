@@ -20,7 +20,9 @@ import {
   formatFileSize as webFormatFileSize,
   rejectAttachment as webReject,
   canSendTurn as webCanSend,
+  toConverseRequest as webToConverseRequest,
 } from '../../../web/app/dashboard/assistant.logic.ts'
+import { CONVERSE_HISTORY_LIMIT } from './api.ts'
 import {
   ATTACH_EXTS,
   ATTACH_MAX_BYTES,
@@ -74,6 +76,23 @@ test('the send gate matches the web', () => {
   for (const c of cases) {
     assert.equal(canSendTurn(c), webCanSend(c), `send-gate drift on ${JSON.stringify(c)}`)
   }
+})
+
+test('the phone remembers exactly as far back as the desk', () => {
+  // The web's history depth is a DEFAULT inside toConverseRequest (`?? 10`), not
+  // an exported constant, so pin it by behaviour: hand the web 25 turns and see
+  // how many it keeps. The backend's zod .max(20) is the ceiling, not the
+  // contract — the phone sent 20 until this was caught, so the same question
+  // asked from two devices could get two different answers.
+  const history = Array.from({ length: 25 }, (_, i) => ({
+    id: `${i}`, role: (i % 2 ? 'arturita' : 'user') as 'user' | 'arturita', text: `turn ${i}`,
+  }))
+  const webDepth = webToConverseRequest({ message: 'hi', history }).history.length
+  assert.equal(
+    CONVERSE_HISTORY_LIMIT,
+    webDepth,
+    'converse history depth drifted from the web default',
+  )
 })
 
 // ─── Mobile-specific behaviour (no web peer — the picker's unknown size) ─────
