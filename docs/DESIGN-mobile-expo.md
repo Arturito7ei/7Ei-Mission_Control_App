@@ -14,7 +14,7 @@
 - **P0 feature surface (control remotely):** **Command Center** (text chat to Arturita) · **Inbox/Approvals** (approve/reject/request-changes — the killer remote feature) · **Agents** list · **Tasks**. **P1:** Memory, Costs, **push notifications** (approval-needed / agent-needs-attention — the true at-a-distance payoff). **Fast-follow:** voice (Expo AV record → hosted converse/Whisper).
 - **Push needs almost nothing new backend-side.** A device-token **register endpoint already exists** (`notificationRoutes`, `push-notifications` feature) and the backend already POSTs to Expo's push service. The **client push slice (MOB-3) is now built** and wires to that endpoint with **zero backend change** (§14); it runs in Expo Go (permission, local test, tap→deep-link, token registration). **Remote APNs delivery** is staged behind an EAS dev build (one env var, no code change), and emitting a push on *approval-created* is flagged as a separate backend story.
 - **Expo Go vs dev-build:** everything in P0/P1 **except background audio and rich native push** runs in **Expo Go** (managed, no native build). Voice-with-background-audio and production APNs push move to an **EAS dev build** (§5). The phase-1 app is deliberately **Expo-Go-only**.
-- **Phase-1 shipped this wave:** a runnable `apps/mobile` Expo app (SDK 57, TypeScript) that boots in **Expo Go** and proves remote control against the hosted backend — Command Center chat, Inbox approve/reject, Agents list, health/status — with **token-paste auth** as the guaranteed-bootable fallback while **Clerk-Expo is staged as MOB-2** (§11).
+- **Phase-1 shipped this wave:** a runnable `apps/mobile` Expo app (SDK 57 as built — **now pinned to SDK 54, see §16**; TypeScript) that boots in **Expo Go** and proves remote control against the hosted backend — Command Center chat, Inbox approve/reject, Agents list, health/status — with **token-paste auth** as the guaranteed-bootable fallback while **Clerk-Expo is staged as MOB-2** (§11).
 
 ---
 
@@ -232,7 +232,7 @@ One PR per story, squash-merged `--admin`, hosted invariant green each merge (`b
 | **H5Q3** | **Clerk publishable key for mobile** — the app needs `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (same key as web). Which instance — current dev, or wait for the production Clerk instance (`GO-LIVE.md` §1)? | MOB-2 | Use the current dev key to build MOB-2 now; swap to `pk_live_…` when the production Clerk instance lands. |
 | **H5Q4** | **Which features first after P0** — push vs dangerous-approve vs voice? | ordering | **Push first** (the at-a-distance payoff), then dangerous-approve, then voice. |
 | **H5Q5** | **App Store distribution later?** — or stay Expo-Go/dev-build/TestFlight for the single operator? | none now | **TestFlight/dev-build is enough** for one operator; App Store only if it goes multi-user. Not scoped this wave. |
-| **H5Q6** ✅ **RESOLVED (MOB-2)** | **SDK/Clerk version alignment** — SDK 57 vs `@clerk/clerk-expo` peer conflict. | MOB-2 | **Resolved without a dev build.** The conflict was NOT clerk-expo's own peers (its `react ^18‖^19` / `react-native >=0.73` already accept SDK 57). It was transitive: `@clerk/clerk-expo → @clerk/clerk-react` pulls in `react-dom`, which npm floated to `19.2.7` (peer `react ^19.2.7`), clashing with Expo SDK 57's pinned `react@19.2.3`. **Fix: pin `react-dom` to `19.2.3` (exact, matching `react`).** `@clerk/clerk-expo@2.19.42` (the `latest-v5` tag) then installs clean with no `--legacy-peer-deps`, and the metro/Hermes bundle builds (736 modules) → runs in Expo Go. See §13. |
+| **H5Q6** ✅ **RESOLVED (MOB-2)** · ⚠️ **RE-RESOLVED (§16.4)** | **SDK/Clerk version alignment** — SDK 57 vs `@clerk/clerk-expo` peer conflict. | MOB-2 | ⚠️ **The `react-dom@19.2.3` fix below is superseded** — the app moved to SDK 54 (§16), where the conflict recurs differently and resolves to a `react`+`react-dom@19.1.8` pin. Kept as the MOB-2 record. **Resolved without a dev build.** The conflict was NOT clerk-expo's own peers (its `react ^18‖^19` / `react-native >=0.73` already accept SDK 57). It was transitive: `@clerk/clerk-expo → @clerk/clerk-react` pulls in `react-dom`, which npm floated to `19.2.7` (peer `react ^19.2.7`), clashing with Expo SDK 57's pinned `react@19.2.3`. **Fix: pin `react-dom` to `19.2.3` (exact, matching `react`).** `@clerk/clerk-expo@2.19.42` (the `latest-v5` tag) then installs clean with no `--legacy-peer-deps`, and the metro/Hermes bundle builds (736 modules) → runs in Expo Go. See §13. |
 
 ---
 
@@ -248,7 +248,7 @@ One PR per story, squash-merged `--admin`, hosted invariant green each merge (`b
 
 ## 11. Phase-1 (MOB-1) — as built (this wave)
 
-A runnable Expo app at **`apps/mobile/`** (Expo SDK 57, TypeScript, managed) that **boots in Expo Go** and proves remote control against the **live hosted backend**.
+A runnable Expo app at **`apps/mobile/`** (Expo SDK 57 as built — **superseded: pinned to SDK 54 in §16**, since App Store Expo Go cannot open SDK 57; TypeScript, managed) that **boots in Expo Go** and proves remote control against the **live hosted backend**.
 
 **What it does**
 - **Command Center** — text chat to Arturita (`POST …/arturita/converse`), rendering `reply.text` + a **"via" chip** (`provider · model` for an answer, `delegated · workMode` for a delegation, `degraded` when no LLM).
@@ -312,7 +312,7 @@ npm resolves `react-dom` to the newest `19.2.x` (19.2.7), whose `react` peer (`^
 
 **Fix (one line in `package.json`):** pin `react-dom` to **`19.2.3`** (exact, matching `react`). react-dom isn't used at runtime by a native RN app — it's only present to satisfy the `@clerk/clerk-react` peer — so pinning it to the Expo-aligned React version is safe and removes the float. Result: a plain `npm install` is clean (no `--legacy-peer-deps`), and the metro/Hermes bundle builds (**736 modules**, ~2.7 MB) → **runs in Expo Go**. No EAS dev build needed for MOB-2.
 
-**Version combo that works (Expo SDK 57 / RN 0.86 / React 19.2.3):**
+**Version combo that works (Expo SDK 57 / RN 0.86 / React 19.2.3):** — ⚠️ **SUPERSEDED by §16.** This combo bundles fine but **cannot be opened by App Store Expo Go**. The live pin is SDK 54 / RN 0.81.5 / React 19.1.8; the `react-dom@19.2.3` fix below is replaced by a `react`+`react-dom@19.1.8` pin (§16.4). Kept as the MOB-2 historical record.
 
 | Package | Version | Why |
 |---|---|---|
@@ -493,3 +493,89 @@ Both are isolated behind `try/catch` in `src/stepup.ts` (fail-closed: any error 
 - **`source` enum is `{desk, telegram}`** — neither perfectly labels "phone". We mint as `desk` (first-party Clerk client, same as the web desk); it's a cosmetic label on the sessions list with **no** security effect. A future `mobile` enum value is a nicety, **not** a required backend change (per the constraint, we did not touch the backend).
 - **Full green-path 200** is the operator step above (needs a live Clerk owner token).
 - This story is **stage→audit** (it approves dangerous actions remotely): an independent auditor runs next; the builder did **not** self-audit or merge.
+
+---
+
+## 16. MOB-5 — the Expo Go SDK ceiling (SDK 57 → **54**)
+
+### 16.1 Symptom
+
+The operator installed the current App Store Expo Go, scanned the QR, and got:
+
+> *Project is incompatible with this version of Expo Go — The project you requested requires a newer version of Expo Go.*
+
+### 16.2 Root cause — **not** what it looked like
+
+The intuitive read ("SDK 57 must be beta/canary, so released Expo Go rejects it") is **wrong**, and the npm tags say so:
+
+```
+$ npm view expo dist-tags
+latest: '57.0.6'   ← SDK 57 IS the stable, latest release
+```
+
+The real constraint is on the **client** side. Expo Go for iOS is distributed per-SDK, and the App Store build has been **frozen at 54.0.2 since 2025-09-23**:
+
+```
+$ curl -s "https://itunes.apple.com/lookup?id=982107779" | jq -r .results[0].version
+54.0.2                       # identical across the us/gb/es/de/jp storefronts
+```
+
+Expo's own changelog — [Expo Go and the App Store, May 2026](https://expo.dev/changelog/expo-go-and-app-store-may-2026) — confirms the SDK 55 Expo Go has been **stuck in Apple review**, that SDK 54 "remains the latest Expo Go version available through the App Store and Play Store", and that Expo now steers users to `eas go` / dev builds. SDKs 55, 56 and 57 shipped on npm anyway; **none of them can be opened by a stock App Store Expo Go.**
+
+So: the project was on **SDK 57**, the operator's Expo Go tops out at **SDK 54**. Client ceiling, not a project defect.
+
+> ⚠️ **Trap for future readers.** The Expo versions API (`https://exp.host/--/api/v2/versions`) advertises `iosClientVersion: 57.0.5` for SDK 57 — which looks like "App Store Expo Go supports 57". It does not. That field is an internal mapping, and it's demonstrably not the App Store truth: it claims `54.0.7` for SDK 54 while the App Store actually ships `54.0.2`. **Only the iTunes lookup above is ground truth.**
+
+### 16.3 The fix — pin to SDK 54
+
+Downgraded `apps/mobile` to the newest SDK the operator's Expo Go can actually load. **Zero source changes were required** — every API in use (`expo-notifications`' `shouldShowBanner`/`shouldShowList` handler + `SchedulableTriggerInputTypes`, the full `expo-local-authentication` surface) already exists in the SDK 54 generation. All MOB-1…MOB-4 functionality is intact: Clerk sign-in + token-paste fallback, the push client, and the biometric step-up.
+
+| Package | Was (SDK 57) | Now (SDK 54) | Note |
+|---|---|---|---|
+| `expo` | `~57.0.6` | **`~54.0.36`** | → `sdkVersion: 54.0.0` |
+| `react-native` | `0.86.0` | **`0.81.5`** | SDK 54's pin |
+| `react` / `react-dom` | `19.2.3` | **`19.1.8`** | *not* SDK 54's nominal `19.1.0` — see §16.4 |
+| `expo-notifications` | `~57.0.5` | **`~0.32.17`** | SDK 54 predates unified versioning |
+| `expo-local-authentication` | `~57.0.1` | **`~17.0.8`** | bundled in Expo Go 54 |
+| `expo-secure-store` | `~57.0.1` | **`~15.0.8`** | Keychain token cache |
+| `expo-auth-session` | `~57.0.3` | **`~7.0.11`** | Clerk peer |
+| `expo-web-browser` | `~57.0.1` | **`~15.0.11`** | Clerk peer |
+| `expo-crypto` | `~57.0.1` | **`~15.0.9`** | Clerk peer |
+| `expo-status-bar` | `~57.0.1` | **`~3.0.9`** | |
+| `typescript` | `~6.0.3` | **`~5.9.2`** | SDK 54 template |
+| `@types/react` | `~19.2.2` | **`~19.1.0`** | SDK 54 template |
+| `@clerk/clerk-expo` | `^2.19.42` | **`^2.19.42`** | **unchanged** — its own peers (`react ^18‖^19`, `react-native >=0.73`) already accept SDK 54 |
+
+### 16.4 The React pin, re-resolved (supersedes §13.1)
+
+§13.1's fix — pin `react-dom@19.2.3` to match SDK 57's `react` — is **obsolete**; the conflict recurs differently on SDK 54 and resolves to a different number.
+
+SDK 54 nominally pins react/react-dom to `19.1.0`, but `@clerk/clerk-js@5.127.1` floors them at `~19.1.4`:
+
+```
+react peer: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+             react@19.1.0  ✗ below the ~19.1.4 floor
+```
+
+At `19.1.0` the install *succeeds* but leaves Clerk's peers unsatisfied and forces npm to nest a **second copy of React** under `@clerk/clerk-expo/node_modules` — two Reacts in one bundle, which is a real (if latent) hazard.
+
+Since `react-native@0.81.5` peers react at `^19.1.0`, **`19.1.8`** (newest `19.1.x`) satisfies RN and Clerk simultaneously. Evidence it's the right knob: `invalid:` peer markers went **many → 0**, and the tree shrank **1098 → 1041 packages** as Clerk deduped back onto a single hoisted React.
+
+Because this deliberately deviates from SDK 54's patch pin, `react`/`react-dom` are declared in `expo.install.exclude` so `expo install --check` stops reverting them to `19.1.0` and re-breaking Clerk. **Re-evaluate on the next SDK bump.**
+
+### 16.5 Verified
+
+- `npm install` — **clean**, no `ERESOLVE`, **0** `invalid:` peer markers (1041 pkgs).
+- `npm run typecheck` (`tsc --noEmit`) — **clean**, with **no source changes**.
+- `npx expo export --platform ios` — **bundles**, 852 modules → 3 MB Hermes `.hbc`.
+- `npx expo config --type public` → **`sdkVersion: 54.0.0`** — matches App Store Expo Go **54.0.2**.
+- `npx expo-doctor` — **17/18**. The one failure is **pre-existing and unrelated** (see §16.6).
+- Additive: only `apps/mobile/**` + docs. Root has no `workspaces`, so backend/web/desktop/CI are untouched.
+
+### 16.6 Flagged (pre-existing, not introduced here)
+
+- **`android.package` fails Expo's config schema.** `ai.7ei.missioncontrol.mobile` — the `7ei` component starts with a digit, which is invalid for an Android Application ID (each component must start with a lowercase letter). This is **Android-only** (the iOS `bundleIdentifier` is fine, and it's iOS the operator runs), it predates this change, and it's untouched here because **the Android package name is app identity** — renaming it (e.g. `ai.sevenei.missioncontrol.mobile`) is an operator call, not a dependency-realignment side effect. Harmless until an Android/Play build is attempted, at which point it must be fixed.
+
+### 16.7 If the ceiling ever lifts
+
+Re-run the two one-liners in `apps/mobile/README.md` § *Expo Go and the SDK pin*. If the App Store Expo Go major ever exceeds 54, this app can move up. Otherwise SDK 55+ requires a dev build (`eas go` supports SDK 55/56 but **not** 57, and needs a paid Apple Developer account; Expo's public TestFlight group for Expo Go is **at capacity**).

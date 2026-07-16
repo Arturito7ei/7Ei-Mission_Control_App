@@ -34,8 +34,11 @@ Colorblind-safe: every status carries a label + glyph, never hue alone.
 
 ## Run it (≈2 minutes)
 
-1. **Install Expo Go** on your iPhone (App Store) — it must be the current version
-   (this app targets Expo SDK 57).
+1. **Install Expo Go** on your iPhone from the **App Store** — the stock build is all
+   you need. This app is pinned to **Expo SDK 54** precisely because that is the
+   newest SDK the App Store build of Expo Go can open (see
+   [§ Expo Go and the SDK pin](#expo-go-and-the-sdk-pin) — do not "upgrade" the SDK
+   without reading it, or the app stops opening on your phone).
 2. In this repo:
    ```bash
    cd apps/mobile
@@ -98,7 +101,8 @@ EXPO_PUBLIC_EAS_PROJECT_ID=                            # (MOB-3) set once you ha
 ## Scope / limits (honest)
 
 - **Auth: real Clerk sign-in (MOB-2)** with token-paste kept as a fallback. The
-  SDK-57 peer conflict is resolved by pinning `react-dom@19.2.3` (see
+  Clerk/React peer conflict is resolved by pinning `react`+`react-dom` to `19.1.8`
+  (see [§ Expo Go and the SDK pin](#expo-go-and-the-sdk-pin) and
   `docs/DESIGN-mobile-expo.md` §13) — a plain `npm install` is clean, no dev build.
 - **Approving a *dangerous* action** (`file_destructive`, `wallet_tx`,
   `email_send`, `machine_exec`) needs a step-up session token this client doesn't
@@ -122,6 +126,66 @@ EXPO_PUBLIC_EAS_PROJECT_ID=                            # (MOB-3) set once you ha
 `apps/mobile` is its **own npm project** (own `package.json`, own `node_modules`).
 The repo root has no `workspaces` field, so `npm install`/`build` in `web/`,
 `backend/`, or `apps/desktop/` never touch it. Purely additive.
+
+## Expo Go and the SDK pin
+
+**This app is pinned to Expo SDK 54, deliberately. Do not bump it casually.**
+
+Expo Go on the **Apple App Store is stuck at 54.0.2** (released 2025-09-23), and an
+App Store Expo Go only opens projects on the SDK it ships with. Expo SDKs 55, 56 and
+57 all exist and are stable on npm, but **no App Store Expo Go supports them** —
+Expo's own changelog ([Expo Go and the App Store, May 2026][expo-go-changelog])
+explains that the SDK 55 build has been stuck in Apple review, and Expo has since
+steered people toward dev builds instead.
+
+So a project on SDK 55+ scanned into a stock Expo Go fails with:
+
+> *Project is incompatible with this version of Expo Go — The project you requested
+> requires a newer version of Expo Go.*
+
+That is a **client-side ceiling, not a project bug**. `npm view expo dist-tags`
+showing `latest: 57.x` is a red herring: "latest on npm" and "loadable by App Store
+Expo Go" are different questions, and only the second one matters here.
+
+Verify the ceiling yourself (both are one-liners, no auth):
+
+```bash
+# What the App Store actually ships today:
+curl -s "https://itunes.apple.com/lookup?id=982107779" | python3 -c \
+  "import json,sys; print(json.load(sys.stdin)['results'][0]['version'])"
+
+# What SDK this project advertises to Expo Go (must match the major above):
+npx expo config --type public --json | python3 -c \
+  "import json,sys; print(json.load(sys.stdin)['sdkVersion'])"
+```
+
+If the first number's major ever exceeds 54, the ceiling has lifted and this app can
+move up. Until then, **SDK 54 is the only way this opens in stock Expo Go.**
+
+### The react/react-dom 19.1.8 pin
+
+SDK 54 nominally pins `react`/`react-dom` to `19.1.0`, but `@clerk/clerk-js` floors
+them at `~19.1.4`. Leaving React at `19.1.0` installs, but leaves Clerk's peers
+formally unsatisfied and forces npm to nest a **second copy of React** under
+`@clerk/clerk-expo` — two Reacts in one bundle is a real hazard.
+
+`react-native@0.81.5` peers React at `^19.1.0`, so **19.1.8** (newest `19.1.x`)
+satisfies RN and Clerk at once and dedupes Clerk back onto a single React. Because
+this intentionally deviates from SDK 54's patch pin, `react`/`react-dom` are listed
+in `expo.install.exclude` so `expo install --check` stops dragging them back to
+`19.1.0` and re-breaking Clerk. Re-evaluate that pin on the next SDK bump.
+
+### If you ever need SDK 55+
+
+You'd need a **dev build** — a stock App Store Expo Go cannot load it:
+
+- `npx eas go` — builds your own Expo Go via TestFlight; needs a paid Apple Developer
+  account. Supports SDK 55/56 (**not** 57).
+- `npx eas build --profile development --platform ios` — a proper dev build. Also
+  unlocks **remote push delivery** (see the MOB-3 note above), which Expo Go can't do.
+- Expo's public TestFlight group for Expo Go is **at capacity**, so that path is out.
+
+[expo-go-changelog]: https://expo.dev/changelog/expo-go-and-app-store-may-2026
 
 ## Commands
 
