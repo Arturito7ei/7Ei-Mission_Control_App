@@ -32,6 +32,7 @@ import {
   type InviteRecord,
 } from '../services/agent-invites'
 import { buildOnboardingDoc, buildOnboardingPrompt } from '../services/onboarding-doc'
+import { notifyApprovalCreated } from '../services/push'
 import { consumeInviteUse } from '../services/invite-consume'
 import { claimApiKey, generateClaimSecret, claimSecretExpiry } from '../services/claim'
 import { applyJoinDecision, toJoinRecord } from '../services/join-approvals'
@@ -378,6 +379,8 @@ export async function agentJoinRoutes(app: FastifyInstance) {
       payload: card.payload, status: 'pending', requestedByAgentId: null,
       decidedBy: null, decidedAt: null, createdAt: now,
     } as any)
+    // MOB-3B: a new agent wants to join — ping the owner's phone to review the card.
+    notifyApprovalCreated({ id: approvalId, orgId: record.orgId, type: JOIN_APPROVAL_TYPE, summary: card.summary }).catch(() => {})
     record.approvalRequestId = approvalId
 
     await db.insert(schema.agentJoinRequests).values({
