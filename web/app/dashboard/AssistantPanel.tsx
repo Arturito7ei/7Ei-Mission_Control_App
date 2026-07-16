@@ -22,6 +22,8 @@ import AssistantPipelineConfig from './AssistantPipelineConfig'
 import {
   resolveVoiceState, toConverseRequest, toArturitaMessage,
   revealStepFor, routingBadge, type Message, type ConverseResponse,
+  rejectAttachment, attachmentChipLabel, canSendTurn, ATTACH_ACCEPT,
+  type AttachedDoc,
 } from './assistant.logic'
 import { provenanceChip, reactorChips } from './reactor.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
@@ -43,6 +45,11 @@ const nextId = () => `m${Date.now()}-${++msgSeq}`
 export default function AssistantPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [typed, setTyped] = useState('')
+  // CC-ATT — the document attached to the NEXT turn (one at a time). Its text is
+  // extracted server-side on pick, so pressing Send is never blocked on a parse.
+  const [attachment, setAttachment] = useState<AttachedDoc | null>(null)
+  const [attaching, setAttaching] = useState(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
   const [interim, setInterim] = useState('')
   const [supported, setSupported] = useState(false)
   // Built-in Web Speech STT feature-detects as present but can't actually work
@@ -181,16 +188,61 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // Which capture engine push-to-talk uses right now (typing is always available).
   const sttEngine = resolveSttEngine({ sttChain, whisperReachable, webSpeechAvailable: supported && !sttUnavailable })
 
+  // ── CC-ATT: attach a document to the next turn ───────────────────────────────
+  // Extraction happens on PICK, not on send: the operator learns immediately that
+  // a scanned PDF has no text layer, instead of after composing a question about
+  // it. The file itself never leaves this handler — only the extracted text is
+  // held, and only until the turn is sent.
+  const pickAttachment = useCallback(async (file: File) => {
+    setErr(null); setNotice(null)
+    const local = rejectAttachment({ name: file.name, size: file.size })
+    if (local) { setNotice({ tone: 'warn', text: local }); return }
+
+    setAttaching(true)
+    setAttachment({ name: file.name, size: file.size })   // chip shows while parsing
+    try {
+      const form = new FormData()
+      form.append('file', file, file.name)
+      const res = await api<{ attachment: { name: string; text: string; truncated: boolean }; truncated: boolean }>(
+        `/api/orgs/${orgId}/arturita/attachments/extract`,
+        { token: await getToken(), method: 'POST', body: form },
+      )
+      setAttachment({ name: file.name, size: file.size, text: res.attachment.text, truncated: res.truncated })
+      if (res.truncated) {
+        setNotice({ tone: 'info', text: `“${file.name}” is long, so I've attached the first part of it. I'll tell you if an answer needs the rest.` })
+      }
+    } catch (e: any) {
+      // The backend's message is already operator-facing ("I can't read .mp4
+      // files…"), so surface it as-is rather than a generic upload failure.
+      setAttachment(null)
+      const raw = String(e?.message ?? '')
+      const clean = raw.replace(/^HTTP \d+:\s*/, '')
+      setNotice({ tone: 'warn', text: clean || `I couldn't read “${file.name}”.` })
+    } finally {
+      setAttaching(false)
+      if (fileRef.current) fileRef.current.value = ''   // re-picking the same file must re-fire
+    }
+  }, [orgId, getToken])
+
   // ── Send a turn to the conversational front door ─────────────────────────────
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
     const message = bodyText.trim()
-    if (!message || thinking) return
+    // A document alone is a valid turn ("read this"); text alone is the norm.
+    if (!canSendTurn({ typed: message, attachment, busy: thinking || attaching })) return
+    const sentAttachment = attachment
     setErr(null); setNotice(null); setShowConvo(true)
-    const userMsg: Message = { id: nextId(), role: 'user', text: message }
+    // The bubble names the document so the thread stays readable later — but the
+    // document's TEXT is never put in the transcript (it would re-enter the
+    // prompt as history on every later turn, and re-bill, for no benefit).
+    const bubbleText = sentAttachment
+      ? [message, `📎 ${attachmentChipLabel(sentAttachment)}`].filter(Boolean).join('\n\n')
+      : message
+    const userMsg: Message = { id: nextId(), role: 'user', text: bubbleText }
     setMessages(m => [...m, userMsg])
+    setAttachment(null)   // the attachment rides THIS turn only
     setThinking(true)
     const reqHistory = [...messages, userMsg]
-    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory })
+    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory, attachment: sentAttachment })
     const post = async (body: object) => api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
     // When the backend answered but no LLM was reachable (degraded/text_only),
     // surface the actionable fix (enable local Ollama, or add a free cloud key)
@@ -250,7 +302,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     } finally {
       setDelegate(false)   // opt-in is per-turn
     }
-  }, [orgId, getToken, messages, thinking, localLlm, speak])
+  }, [orgId, getToken, messages, thinking, attaching, attachment, localLlm, speak])
 
   // ── Streamed reveal (typewriter) — advances the active message's shown length.
   useEffect(() => {
@@ -367,7 +419,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     else { r.__active = true; try { r.start(); setListening(true) } catch {} }
   }
 
-  const submitTyped = () => { const t = typed.trim(); if (!t || thinking) return; setTyped(''); send(t, delegate) }
+  // A document with no typed message is a valid turn — `send` reads the
+  // attachment from state, so it still has something to work with.
+  const submitTyped = () => { const t = typed.trim(); if (!canSendTurn({ typed: t, attachment, busy: thinking || attaching })) return; setTyped(''); send(t, delegate) }
 
   const provenance = provenanceChip({ local: localLlm })
   const reactorChipRow = reactorChips({ provenance, captureLabel: sttEngine === 'none' ? '' : sttEngineLabel(sttEngine), voiceReplies })
@@ -474,16 +528,51 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             ? <span style={{ color: tk.text }}>{interim}<span style={{ color: tk.muted }}> …</span></span>
             : <span style={{ color: tk.muted }}>{listening ? (wakeWord ? `Listening for “${WAKE_WORD}, …”` : 'Listening — speak your message.') : 'Type a message, or push to talk.'}</span>}
         </div>
+        {/* ── Attached document chip (CC-ATT) — name + size, removable ───────── */}
+        {attachment && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: space.xs, alignSelf: 'flex-start',
+            background: 'var(--info-bg)', border: '1px solid var(--accent-line)',
+            borderRadius: tk.r.md, padding: `${space.xxs}px ${space.sm}px`,
+            fontSize: text.sm.fontSize, maxWidth: '100%',
+          }}>
+            <span aria-hidden>📎</span>
+            <span style={{ color: tk.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {attachmentChipLabel(attachment)}
+            </span>
+            <span style={{ color: tk.muted }}>{attaching ? '· reading…' : ''}</span>
+            <button
+              onClick={() => { setAttachment(null); setNotice(null) }}
+              aria-label={`Remove ${attachment.name}`}
+              style={{ background: 'transparent', border: 'none', color: tk.muted, cursor: 'pointer', padding: 0, fontSize: text.sm.fontSize }}
+            >✕</button>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: space.sm }}>
+          {/* The picker is hidden; the paperclip drives it (a bare file input
+              can't be styled to match the glass composer). */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ATTACH_ACCEPT}
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) pickAttachment(f) }}
+          />
+          <Button
+            onClick={() => fileRef.current?.click()}
+            disabled={attaching}
+            aria-label="Attach a document"
+            title="Attach a document (PDF, Word, Excel, PowerPoint, text…)"
+          >📎</Button>
           <TextInput
             value={typed}
             onChange={e => setTyped(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submitTyped() }}
-            placeholder="Message Arturita…"
+            placeholder={attachment ? 'Ask about the attached document…' : 'Message Arturita…'}
             aria-label="Message Arturita"
             style={{ flex: 1 }}
           />
-          <Button variant="primary" disabled={thinking || !typed.trim()} onClick={submitTyped}>{thinking ? '…' : 'Send'}</Button>
+          <Button variant="primary" disabled={!canSendTurn({ typed, attachment, busy: thinking || attaching })} onClick={submitTyped}>{thinking ? '…' : 'Send'}</Button>
         </div>
         <label style={{ ...s.toggle, alignSelf: 'flex-start' }}>
           <input type="checkbox" checked={delegate} onChange={e => setDelegate(e.target.checked)} />

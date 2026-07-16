@@ -10,7 +10,21 @@ import { streamLLM } from './llm-router'
 // pass could map-reduce instead. Surfaced to the caller via wasClipped.
 export const MAX_SUMMARY_INPUT_CHARS = 60_000
 
-const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json'])
+export const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json'])
+
+// What officeparser v7 can convert from a Buffer. Kept next to `extractText` —
+// the one place that knows which formats the parser actually handles — so the
+// callers that gate on type (knowledge ingest, converse attachments) can't drift
+// from it.
+export const OFFICE_DOC_EXTS = new Set(['pdf', 'docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods'])
+
+/** Every extension `extractText` can read. The source of truth for type gating. */
+export const SUPPORTED_DOC_EXTS: readonly string[] = [...PLAIN_TEXT_EXTS, ...OFFICE_DOC_EXTS].sort()
+
+export function isSupportedDocExt(filename: string): boolean {
+  const ext = fileExtension(filename)
+  return PLAIN_TEXT_EXTS.has(ext) || OFFICE_DOC_EXTS.has(ext)
+}
 
 export function fileExtension(filename: string): string {
   return (filename.split('.').pop() ?? '').toLowerCase()

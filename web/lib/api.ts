@@ -33,12 +33,18 @@ export function transportError(method: string, path: string): string {
  * DELETE is what broke the avatar Remove: Fastify's JSON parser refused the
  * request before the handler ran (FST_ERR_CTP_EMPTY_JSON_BODY → a bare
  * "HTTP 400: Bad Request" that named neither the layer nor the reason).
+ *
+ * A FormData body is the other side of that same coin: it is NOT JSON, and the
+ * browser must set `multipart/form-data` itself because only it knows the part
+ * boundary. Claiming `application/json` over it produces an unparseable request
+ * the server rejects before the handler — so we stay out of the way.
  */
 export function apiHeaders(init?: ApiInit): Record<string, string> {
   const { token, body, headers } = init ?? {}
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+    ...(body != null && !isFormData ? { 'Content-Type': 'application/json' } : {}),
     ...((headers ?? {}) as Record<string, string>),
   }
 }
