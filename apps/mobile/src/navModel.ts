@@ -133,8 +133,9 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'activity',
         label: 'Activity',
         glyph: '📈',
-        status: 'planned',
-        story: 'MOB-6f',
+        // MOB-6d built this (it was pencilled in for MOB-6f): the cost work read
+        // the same task rows the timeline projects, so the feed came with it.
+        status: 'ready',
         blurb: 'The event timeline — what happened, when.',
       },
     ],
@@ -205,17 +206,19 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'costs',
         label: 'Costs',
         glyph: '💰',
-        status: 'planned',
-        story: 'MOB-6d',
+        status: 'ready',
         blurb: 'What the org is spending.',
       },
       {
         id: 'budgets',
         label: 'Budgets',
         glyph: '💵',
-        status: 'planned',
-        story: 'MOB-6d',
-        blurb: 'Budget caps and preflight checks.',
+        status: 'ready',
+        // MOB-6d ships the caps, read-only. Preflight is NOT here: it's a
+        // separate web section (cockpit/PreflightSection) with no nav id of its
+        // own, so the blurb no longer promises it — the phone shouldn't advertise
+        // a surface this row doesn't open.
+        blurb: 'Budget caps and how much of each is used.',
         webHosted: 'costs',
       },
       {

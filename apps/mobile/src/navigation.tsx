@@ -35,9 +35,12 @@ import { Text } from 'react-native'
 import { findNavItem, primaryItems, type NavItem } from './navModel'
 import { useNotificationRouting, type PushRouteTarget } from './notifications'
 import { font, theme } from './theme'
+import ActivityScreen from './screens/ActivityScreen'
 import AgentDetailScreen from './screens/AgentDetailScreen'
 import AgentsScreen from './screens/AgentsScreen'
+import BudgetsScreen from './screens/BudgetsScreen'
 import CommandCenterScreen from './screens/CommandCenterScreen'
+import CostsScreen from './screens/CostsScreen'
 import HealthScreen from './screens/HealthScreen'
 import InboxScreen from './screens/InboxScreen'
 import MoreScreen from './screens/MoreScreen'
@@ -64,6 +67,11 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   // MOB-6b — the Task Log, under the Inbox grouping (P2's fold: Tasks sits with
   // the approvals it feeds).
   tasks: TasksScreen,
+  // MOB-6d — Delivery's cost pair (Budgets is the web's hosted tab under Costs,
+  // so the two stay adjacent), plus the Activity feed.
+  costs: CostsScreen,
+  budgets: BudgetsScreen,
+  activity: ActivityScreen,
 }
 
 /**
