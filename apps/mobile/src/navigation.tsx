@@ -35,29 +35,56 @@ import { Text } from 'react-native'
 import { findNavItem, primaryItems, type NavItem } from './navModel'
 import { useNotificationRouting, type PushRouteTarget } from './notifications'
 import { font, theme } from './theme'
+import AgentDetailScreen from './screens/AgentDetailScreen'
 import AgentsScreen from './screens/AgentsScreen'
 import CommandCenterScreen from './screens/CommandCenterScreen'
 import HealthScreen from './screens/HealthScreen'
 import InboxScreen from './screens/InboxScreen'
 import MoreScreen from './screens/MoreScreen'
 import PlaceholderScreen from './screens/PlaceholderScreen'
+import TasksScreen from './screens/TasksScreen'
 
 /**
  * The built screens, keyed by navModel id. THIS is the registry stage 6b+ grows:
  * add the component here, flip `status: 'ready'` in navModel.ts, done. Anything
  * absent falls through to the placeholder — a missing entry is never a crash.
+ *
+ * NOTE the agent DETAIL screen is deliberately not here: it isn't a navModel
+ * surface. The web reaches it by drilling into the Agents area (a hash route
+ * under the same `agents` tab), not from the rail — so on the phone it's a stack
+ * route pushed from the roster, and `agents` stays the one destination the model
+ * knows. Adding it here would invent an IA the web doesn't have, which is the
+ * thing navModel.test.ts exists to prevent.
  */
-const SCREENS: Record<string, React.ComponentType> = {
+const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   assistant: CommandCenterScreen,
   inbox: InboxScreen,
   agents: AgentsScreen,
   status: HealthScreen,
+  // MOB-6b — the Task Log, under the Inbox grouping (P2's fold: Tasks sits with
+  // the approvals it feeds).
+  tasks: TasksScreen,
+}
+
+/**
+ * The two moves a screen can ask for. Passed to every screen; most ignore them
+ * (a component that declares no props is free to). Props rather than
+ * `useNavigation` on purpose — it's the pattern MoreScreen already uses, and it
+ * keeps the screens free of navigation imports, so they stay renderable in
+ * isolation and their intent ("open the Inbox") is readable at the call site
+ * instead of buried in a hook.
+ */
+export type ScreenNav = {
+  /** Jump to a bottom tab by navModel id (pops any pushed section on the way). */
+  onOpenTab?: (tab: string) => void
+  /** Drill into one agent — MOB-6b's roster → detail push. */
+  onOpenAgent?: (agentId: string, name?: string) => void
 }
 
 /** Render a destination: its real screen if built, otherwise the placeholder. */
-function renderItem(item: NavItem) {
+function renderItem(item: NavItem, nav: ScreenNav) {
   const Screen = SCREENS[item.id]
-  return Screen ? <Screen /> : <PlaceholderScreen item={item} />
+  return Screen ? <Screen {...nav} /> : <PlaceholderScreen item={item} />
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -73,6 +100,12 @@ export type TabParamList = Record<string, undefined>
 export type RootStackParamList = {
   Tabs: NavigatorScreenParams<TabParamList> | undefined
   Section: { id: string }
+  /**
+   * MOB-6b — one agent, pushed from the roster. `name` is carried only so the
+   * header reads right the instant the push lands; the screen re-fetches the
+   * agent itself and never trusts this for anything but the title.
+   */
+  AgentDetail: { agentId: string; name?: string }
 }
 
 export const navRef = createNavigationContainerRef<RootStackParamList>()
@@ -123,7 +156,7 @@ const headerOptions = {
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 
-function TabsNavigator({ onOpenSection }: { onOpenSection: (id: string) => void }) {
+function TabsNavigator({ onOpenSection, nav }: { onOpenSection: (id: string) => void; nav: ScreenNav }) {
   // Stable component identities: a new function on every render would remount the
   // screen (and drop its state) each time the parent re-renders.
   const more = useCallback(() => <MoreScreen onOpen={onOpenSection} />, [onOpenSection])
@@ -153,7 +186,7 @@ function TabsNavigator({ onOpenSection }: { onOpenSection: (id: string) => void 
             tabBarIcon: ({ color }) => <TabGlyph glyph={item.glyph} color={color} />,
           }}
         >
-          {() => renderItem(item)}
+          {() => renderItem(item, nav)}
         </Tab.Screen>
       ))}
       <Tab.Screen
@@ -187,12 +220,12 @@ function TabGlyph({ glyph, color }: { glyph: string; color: string }) {
 
 // ─── Pushed sections ─────────────────────────────────────────────────────────
 
-function SectionScreen({ route }: { route: { params: { id: string } } }) {
+function SectionScreen({ route, nav }: { route: { params: { id: string } }; nav: ScreenNav }) {
   const item = findNavItem(route.params.id)
   // An unknown id can only come from a bad push payload or a stale deep link.
   // Say so plainly instead of rendering a blank screen.
   if (!item) return <PlaceholderScreen item={UNKNOWN} />
-  return renderItem(item)
+  return renderItem(item, nav)
 }
 
 const UNKNOWN: NavItem = {
@@ -223,6 +256,16 @@ export default function RootNavigator() {
     else pending.current = tab
   }, [])
 
+  // MOB-6b — the roster → detail push, and the Task Log's jump to the Inbox.
+  const openAgent = useCallback((agentId: string, name?: string) => {
+    if (navRef.isReady()) navRef.navigate('AgentDetail', { agentId, name })
+  }, [])
+
+  const nav = useMemo<ScreenNav>(
+    () => ({ onOpenTab: goToTab, onOpenAgent: openAgent }),
+    [goToTab, openAgent],
+  )
+
   // MOB-3 deep links: a notification tap lands on its tab. Push targets are all
   // primary tabs today, so this is always a tab jump, never a section push.
   useNotificationRouting((target) => goToTab(PUSH_TARGET_TO_TAB[target]))
@@ -237,15 +280,25 @@ export default function RootNavigator() {
     <NavigationContainer ref={navRef} theme={navTheme} onReady={onReady}>
       <Stack.Navigator screenOptions={headerOptions}>
         <Stack.Screen name="Tabs" options={{ headerShown: false }}>
-          {() => <TabsNavigator onOpenSection={openSection} />}
+          {() => <TabsNavigator onOpenSection={openSection} nav={nav} />}
         </Stack.Screen>
         <Stack.Screen
           name="Section"
-          component={SectionScreen as React.ComponentType}
           options={({ route }) => ({
             title: findNavItem((route.params as { id: string }).id)?.label ?? 'Section',
           })}
-        />
+        >
+          {({ route }) => <SectionScreen route={route as { params: { id: string } }} nav={nav} />}
+        </Stack.Screen>
+        {/* MOB-6b — one agent. Pushed from the roster, so it gets the back button
+            and the iOS swipe-back for free. The header carries the agent's name
+            when the roster knew it; the screen still fetches the agent itself. */}
+        <Stack.Screen
+          name="AgentDetail"
+          options={({ route }) => ({ title: (route.params as { name?: string }).name ?? 'Agent' })}
+        >
+          {({ route }) => <AgentDetailScreen agentId={(route.params as { agentId: string }).agentId} />}
+        </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
   )

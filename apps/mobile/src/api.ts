@@ -79,6 +79,66 @@ export type Agent = {
   trustMode?: string | null
 }
 
+/**
+ * MOB-6b — a task row as the Task Log reads it. The backend returns the whole
+ * `tasks` row; these are the fields the web's log renders, plus the ids it joins
+ * on. Extra columns are ignored rather than typed — the log is read-only.
+ */
+export type Task = {
+  id: string
+  title: string
+  status: string
+  agentId?: string | null
+  projectId?: string | null
+  priority?: string | null
+  costUsd?: number | null
+  tokensUsed?: number | null
+  createdAt?: number | string | null
+}
+
+/**
+ * MOB-6b — the agent Dashboard payload, shaped by the backend's pure
+ * `buildAgentOverview` (backend/src/services/agent-overview.ts). The phone reads
+ * the same three parts the web's DashboardTab does: the latest run, the recent
+ * tasks, and the costs strip. The 14-day chart series (`runActivity`,
+ * `successRate`, `tasksByPriority`, `tasksByStatus`) are in the payload and
+ * typed here, but only the two distributions are rendered — see
+ * AgentDetailScreen for why the day-columns stay on the desk.
+ */
+export type AgentOverview = {
+  agentId: string
+  days: number
+  latestRun: {
+    id: string
+    status: string
+    taskId: string | null
+    summary: string
+    startedAt: number | null
+    endedAt: number | null
+  } | null
+  runActivity: { date: string; total: number; succeeded: number; failed: number }[]
+  successRate: { date: string; pct: number | null; settled: number }[]
+  tasksByPriority: { key: string; count: number }[]
+  tasksByStatus: { key: string; count: number }[]
+  costs: {
+    inputTokens: number
+    outputTokens: number
+    cachedTokens: number
+    totalTokens: number
+    totalCostUsd: number
+    taskCount: number
+    hasSplit: boolean
+  }
+}
+
+export type AgentRecentTask = {
+  id: string
+  title: string
+  status: string
+  priority: string
+  createdAt: number | null
+}
+
 export type Approval = {
   id: string
   type: string
@@ -123,6 +183,33 @@ export const Api = {
     api<{ agents: Agent[] }>(base, `/api/orgs/${orgId}/agents`, { token }).then(
       (r) => r.agents ?? [],
     ),
+
+  // ─── MOB-6b — the agent detail screen ─────────────────────────────────────
+  // Identity, verbatim from the web's AgentDetail: GET /api/agents/:agentId.
+  // This one is NOT org-scoped — a deliberate backend shape, not an oversight on
+  // our side. `requireOrgRole` reads `:orgId` off the path and silently no-ops
+  // without one (backend/src/routes/agent-detail.ts says so at the top), so this
+  // route is gated instead by the top-level membership gate that #264 closed.
+  // The phone only ever asks for an agent it just listed from its own org.
+  agent: (base: string, token: string, agentId: string) =>
+    api<{ agent: Agent }>(base, `/api/agents/${agentId}`, { token }).then((r) => r.agent),
+
+  // The Dashboard-tab payload — the org-scoped route, exactly as the web's
+  // DashboardTab calls it. Same endpoint, same field names: one contract.
+  agentOverview: (base: string, token: string, orgId: string, agentId: string) =>
+    api<{ overview: AgentOverview; recentTasks: AgentRecentTask[] }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/overview`,
+      { token },
+    ),
+
+  // ─── MOB-6b — the Task Log ────────────────────────────────────────────────
+  // The SAME call the web's `tasks` tab makes (web/app/dashboard/page.tsx loads
+  // `/api/orgs/${o.id}/tasks` into the log). The backend caps at 200 rows and
+  // orders newest-first; the log renders the first 100, as the web does
+  // (`taskLog.ts` holds that limit and the tests pin it).
+  tasks: (base: string, token: string, orgId: string) =>
+    api<{ tasks: Task[] }>(base, `/api/orgs/${orgId}/tasks`, { token }).then((r) => r.tasks ?? []),
 
   pendingApprovals: (base: string, token: string, orgId: string) =>
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {

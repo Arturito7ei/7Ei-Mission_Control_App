@@ -114,8 +114,9 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'tasks',
         label: 'Tasks',
         glyph: '📋',
-        status: 'planned',
-        story: 'MOB-6c',
+        // MOB-6b built this (it was pencilled in for MOB-6c): the roster→detail
+        // work needed the task vocabulary anyway, so the log came with it.
+        status: 'ready',
         blurb: 'The task log, beside the approvals it feeds.',
         webHosted: 'inbox',
       },
@@ -147,7 +148,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Agents',
         glyph: '🤖',
         status: 'ready',
-        blurb: 'The agent roster. Detail views arrive in MOB-6b.',
+        blurb: 'The agent roster — tap an agent for its detail.',
         primary: true,
       },
       {

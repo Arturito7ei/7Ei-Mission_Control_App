@@ -119,12 +119,18 @@ test('every destination is reachable: tab bar ∪ More covers the model', () => 
   )
 })
 
-test("'ready' is exactly what MOB-1..4 shipped", () => {
+test("'ready' is exactly the set of screens that exist", () => {
   // A tripwire for stages 6b+: flipping a status to 'ready' without adding the
   // component to SCREENS in navigation.tsx renders the placeholder forever. That
   // registry imports react-native and can't load here, so this list is the guard.
+  //
+  // MOB-1..4 shipped assistant/inbox/agents/status; MOB-6b added `tasks` (the
+  // Task Log). The agent DETAIL screen is deliberately absent — it is not a
+  // navModel surface on either client (the web reaches it by drilling into the
+  // Agents area, not from the rail), so it is a stack route pushed from the
+  // roster rather than a destination the model knows.
   assert.deepEqual(
     allNavItems().filter((i) => i.status === 'ready').map((i) => i.id).sort(),
-    ['agents', 'assistant', 'inbox', 'status'],
+    ['agents', 'assistant', 'inbox', 'status', 'tasks'],
   )
 })
