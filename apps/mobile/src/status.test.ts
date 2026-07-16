@@ -143,6 +143,39 @@ test('no screen glyphs a raw heartbeat with the task-status table', async () => 
   }
 })
 
+// AUDIT (MOB-6b → fixed in MOB-6d): the sibling defect, and the same shape of
+// mistake as the one above — a correct helper that the call site simply didn't
+// call. AgentsScreen carried its OWN `heartbeatTone` and its own ●/○ glyph
+// ternary, so the roster disagreed with the detail screen about the very same
+// agent: `running` fell through the literal `=== 'active'` test to the idle chip,
+// the invented ● never matched the table's ⬡, and the local tone painted an
+// active heartbeat green — undoing the one DESIGN_SYSTEM v2 rule (active is the
+// accent, never green) that the colorblind operator depends on.
+//
+// A local copy of a canonical mapping is drift with a delay built in: it is right
+// on the day it is written and wrong the first time the table changes. status.ts
+// is the only place that vocabulary may live, so a screen re-declaring one of its
+// helpers is the defect, regardless of whether today's copy happens to agree.
+test('no screen re-declares a canonical status helper of its own', async () => {
+  const CANON = ['canonicalStatus', 'statusIcon', 'statusTone', 'heartbeatStatus', 'heartbeatIcon', 'heartbeatTone']
+  const dir = new URL('./screens/', import.meta.url)
+  for (const file of await readdir(dir)) {
+    if (!file.endsWith('.tsx')) continue
+    const src = await readFile(new URL(file, dir), 'utf8')
+    for (const name of CANON) {
+      // A local `function heartbeatTone(...)` / `const statusTone = (...)` — i.e.
+      // the helper shadowed rather than imported.
+      const re = new RegExp(`(?:function\\s+${name}\\s*\\(|(?:const|let)\\s+${name}\\s*=)`)
+      assert.ok(
+        !re.test(src),
+        `${file}: declares its own ${name}(). status.ts owns that mapping — ` +
+          'import it instead. A local copy agrees with the table exactly until ' +
+          'the table changes, and then lies quietly (roster vs detail drift).',
+      )
+    }
+  }
+})
+
 test('every canonical row has a tone and a glyph', () => {
   for (const s of STATUSES) {
     assert.ok(statusIcon(s), `no glyph for ${JSON.stringify(s)}`)

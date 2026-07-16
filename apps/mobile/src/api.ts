@@ -4,6 +4,15 @@
 // differently from a dead backend). The bearer is a Clerk JWT (or, in phase-1
 // token-paste mode, a Clerk session token the operator pasted).
 
+// MOB-6d — the wire shapes for the timeline and budgets are DEFINED in the pure
+// modules that read them (activity.ts / costs.ts) and imported here, rather than
+// re-declared. Both are React-free by design (their tests load them under
+// `node --test`), so importing them costs this module nothing — and one
+// definition per wire shape means a field rename can't leave the client agreeing
+// with itself while disagreeing with the backend.
+import type { TimelineLite } from './activity'
+import type { BudgetLite } from './costs'
+
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
 export function transportError(method: string, path: string): string {
@@ -210,6 +219,28 @@ export const Api = {
   // (`taskLog.ts` holds that limit and the tests pin it).
   tasks: (base: string, token: string, orgId: string) =>
     api<{ tasks: Task[] }>(base, `/api/orgs/${orgId}/tasks`, { token }).then((r) => r.tasks ?? []),
+
+  // ─── MOB-6d — Activity ────────────────────────────────────────────────────
+  // The SAME call the web's Activity section makes: CockpitPanel loads
+  // `/api/orgs/${orgId}/timeline` and hands it to TimelineSection. The payload is
+  // a 24h swimlane (one lane per agent); the phone flattens it into a feed rather
+  // than drawing lanes — see activity.ts for why the chart stays on the desk.
+  timeline: (base: string, token: string, orgId: string) =>
+    api<{ timeline: TimelineLite }>(base, `/api/orgs/${orgId}/timeline`, { token }).then(
+      (r) => r.timeline,
+    ),
+
+  // ─── MOB-6d — Budgets (the web's hosted tab under Costs) ───────────────────
+  // The SAME call the web's BudgetsSection is fed by. The backend evaluates each
+  // policy server-side and returns `spend`, `state` and `pct` alongside it, so
+  // both clients render one verdict rather than each deriving their own.
+  //
+  // Read-only here: the web's section can also POST a new policy and DELETE one,
+  // and the phone deliberately does neither — see BudgetsScreen.
+  budgets: (base: string, token: string, orgId: string) =>
+    api<{ budgets: BudgetLite[] }>(base, `/api/orgs/${orgId}/budgets`, { token }).then(
+      (r) => r.budgets ?? [],
+    ),
 
   pendingApprovals: (base: string, token: string, orgId: string) =>
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {

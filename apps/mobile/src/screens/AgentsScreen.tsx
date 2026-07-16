@@ -6,20 +6,38 @@
 // has always done from its roster — until this story the phone's roster was a
 // dead end. The push itself is the navigator's (`onOpenAgent`), so this screen
 // still knows nothing about routing.
+//
+// MOB-6d: both chips below now go through status.ts, like every other surface.
+// They used to hand-roll their own mapping here, and it had drifted from the
+// canonical table in three ways at once — the roster and the detail screen were
+// describing the same agent differently:
+//
+//   * STATUS compared `=== 'active'` literally, so the aliases the table exists
+//     to collapse never landed: a `running` agent fell through to the ○/neutral
+//     "idle" chip on the roster while the detail screen (via statusIcon) showed
+//     it as ⬡/active. Same agent, two states, depending on which screen you were
+//     looking at. `failed`/`stopped`/`terminated` all read as plain idle too —
+//     the roster could not show you a dead agent.
+//   * The GLYPHS were invented here (●/○), so even where the two agreed on the
+//     state they disagreed on the mark. ● vs ⬡ is not a style difference when the
+//     glyph IS the signal that survives colorblindness.
+//   * The local `heartbeatTone` mapped green→'ok' (green chip), but the web maps
+//     an active heartbeat to the ACCENT, not green — a deliberate DESIGN_SYSTEM
+//     v2 rule, since green/red is the pair the operator can't see. status.ts's
+//     `heartbeatTone` carries that rule; this one quietly undid it.
+//
+// Heartbeats keep their own helpers (`heartbeatIcon`/`heartbeatTone`) rather than
+// being passed to `statusIcon`/`statusTone`: green/amber/stale is a SEPARATE
+// vocabulary, and only HEARTBEAT_STATUS bridges the two. status.ts spells out why
+// mixing them silently turns a healthy agent into an idle one.
 
 import React, { useCallback, useEffect, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Api, type Agent } from '../api'
 import { useAuth } from '../auth'
+import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
 import { font, space, theme } from '../theme'
 import { Banner, Card, Chip, Empty, Loading } from '../ui'
-
-function heartbeatTone(h?: string | null): 'ok' | 'warn' | 'danger' | 'neutral' {
-  if (h === 'green') return 'ok'
-  if (h === 'amber') return 'warn'
-  if (h === 'stale') return 'danger'
-  return 'neutral'
-}
 
 export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: string, name?: string) => void }) {
   const { apiUrl, getToken, orgId } = useAuth()
@@ -77,8 +95,8 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
                 </View>
                 <Chip
                   label={(a.status || 'unknown').toUpperCase()}
-                  tone={a.status === 'active' ? 'ok' : a.status === 'paused' ? 'warn' : 'neutral'}
-                  glyph={a.status === 'active' ? '●' : '○'}
+                  tone={statusTone(a.status)}
+                  glyph={statusIcon(a.status)}
                 />
                 {/* The affordance a phone list needs: a row that opens something
                     says so. Hidden from the a11y tree — the row's own label
@@ -98,7 +116,7 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
                 <Chip
                   label={`heartbeat: ${a.heartbeatStatus || 'unknown'}`}
                   tone={heartbeatTone(a.heartbeatStatus)}
-                  glyph={a.heartbeatStatus === 'green' ? '✓' : '•'}
+                  glyph={heartbeatIcon(a.heartbeatStatus)}
                 />
               </View>
             </Card>

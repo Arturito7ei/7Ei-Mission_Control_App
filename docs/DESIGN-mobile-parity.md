@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends) + **MOB-6d shipped** (Costs · Budgets · Activity — §6.5; Delivery's cost pair and the event feed, all read-only). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -238,7 +238,7 @@ Do **not** pixel-port these.
 | **MOB-6a** | ✅ **SHIPPED** (`mob-6a-nav-shell`) — **Nav shell.** See §6.1 for the as-built. | — | **M** | No |
 | **MOB-6b** | ✅ **SHIPPED** (`mob-6b-agent-detail-tasks`) — **Agent detail + the Task Log.** The roster no longer dead-ends, and `tasks` is a real screen. Read-only; Runs/Budget/Instructions/Skills/Config tabs and the write actions deferred to **MOB-6b2**. As-built: **§6.4**. | `/api/agents/:aid`, `…/agents/:aid/overview`, `…/tasks`, `…/approvals` | **M** | No |
 | **MOB-6c** | **Task detail** — the read-only drawer behind a log row (the web's `TaskDrawer`). The Tasks *list* shipped in 6b (§6.4); this is what a row opens. | `/api/tasks/:id`, `…/timeline` | **S** | No |
-| **MOB-6d** | **Costs + Budgets** — spend at a glance. Pure numbers, no viz needed. | `…/usage`, `…/budgets`, `…/preflight` | **S** | No |
+| **MOB-6d** | ✅ **SHIPPED** (`mob-6d-costs-activity`) — **Costs + Budgets + Activity.** Spend at a glance, the caps beside it, and the event feed. All read-only. Also fixed the roster-glyph drift the 6b audit flagged. As-built: **§6.5**. | `…/tasks`, `…/agents`, `…/budgets`, `…/timeline` (**not** `…/usage` / `…/preflight` — this row guessed wrong; see §6.5) | **S** | No |
 | **MOB-6e** | **Memory** — vault **tree + note reader** (§5). Not the graph. | `…/memory/tree`, `…/memory/file` | **M** | No |
 | **MOB-6f** | **Activity + Overview** — timeline + the summary cards. | `…/timeline`, `…/cockpit` | **S** | No |
 | **MOB-6g** | **Org chart** — indented native tree (§5). | `…/orgchart` | **S** | No |
@@ -411,6 +411,61 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 **The lesson is about where the test pointed, not how hard it tested.** `heartbeatStatus()` was already written, already exported, and already covered — the call site simply never called it. Testing the helper harder would not have caught this. The fix adds `heartbeatIcon()` / `heartbeatTone()` (the only correct way to glyph a heartbeat), points the screen at them, and adds a **source-level guard**: the screens import react-native and can't load under `node --test` — the same constraint `navModel.test.ts` works around with a hand-kept list — so the guard greps the screen sources and fails if a raw heartbeat is ever handed back to the status table. *Verified by reintroducing the defect and watching it go red*, not assumed. This is the colorblind rule's own failure mode: the glyph **is** the signal, so a heartbeat that glyphs wrong is precisely what this vocabulary exists to prevent.
 
 **Verified:** `npm test` 37/37 · `npm run typecheck` clean · `npm run export` bundles (3.54 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only.
+
+---
+
+### 6.5 MOB-6d — Costs · Budgets · Activity (as built)
+
+**Three screens, zero backend change, no new dependency.** Every endpoint below already served the web.
+
+| Screen | Endpoints (identical to the web's) | Mirrors |
+|---|---|---|
+| **Costs** (`CostsScreen.tsx`) | `GET /api/orgs/:orgId/tasks` (**every figure**) · `GET /api/orgs/:orgId/agents` (the roster the breakdown iterates) | `web/app/dashboard/page.tsx` `{tab === 'costs'}` — the same four stats, the same 4dp, the same roster-ordered breakdown. |
+| **Budgets** (`BudgetsScreen.tsx`) — the web's hosted tab under Costs | `GET /api/orgs/:orgId/budgets` (policies + the server's own `spend`/`state`/`pct`) | `web/app/dashboard/cockpit/BudgetsSection.tsx` — the same rows, the same verdict, minus the create/delete. |
+| **Activity** (`ActivityScreen.tsx`) | `GET /api/orgs/:orgId/timeline` (the 24h swimlane) | `web/app/dashboard/CockpitPanel.tsx` → `cockpit/TimelineSection.tsx` — the same payload, flattened into a feed. |
+
+**The §6 plan row above guessed the endpoints wrong, in three ways.** Worth recording, because each guess was reasonable and each was false:
+
+- **`…/usage` is not Costs.** It's the *Usage & Limits* tab — rate limits and quotas, its own nav surface (`usage`, still `planned`, MOB-6i). Not spend.
+- **`…/preflight` is not Budgets.** It's a separate cockpit section with no nav id of its own. The `budgets` blurb had been promising "Budget caps **and preflight checks**"; the row opens caps, so the blurb now says caps. A row shouldn't advertise a surface it doesn't open.
+- **`…/costs` exists — and the web never calls it.** `backend/src/routes/costs.ts` serves a purpose-built, server-aggregated `/api/orgs/:orgId/costs` (`groupBy=agent|day`, `period=7d|30d|90d`) plus `/costs/summary` and `/costs/export`. It is dead code as far as both clients are concerned.
+
+**The one deliberate divergence, and why it went the way it did.** That unused `/costs` endpoint is exactly what you'd want on a phone: aggregation server-side, a few rows over cellular instead of 200 task objects. We call `/tasks` anyway. The reason is that `/costs` is **windowed** (30d by default) and the web's sum **isn't**, so the same org would report a different total depending on which device you picked up — the operator reading `$0.4213` on the desk and `$0.3887` on the phone has been told two stories about one number. Mirroring the web's *contract* beats optimising the phone's *transport*: the parity rule's whole point is that a surface means one thing on both clients. If the windowed aggregate is the better product answer, that's a **web** change first, and the phone follows it — which is the direction this rule always runs.
+
+**A capped total is not a lifetime total, and the phone says so.** `/tasks` is capped at **200 rows server-side** (`backend/src/routes/tasks.ts` `.limit(200)`), so "Total Spend" means *across the 200 most recent tasks* — on **both** clients. The web presents it unqualified, which quietly reads as all-time. Rather than copy that, the phone prints the scope under the figure (`SPEND_SCOPE_NOTE`). This is the one place the phone is *more* honest than the desk, and it's additive: same number, more truth. **The web should do the same** — logged below as a web-side follow-up, not fixed here (this PR is additive to `apps/mobile/**` by scope).
+
+**"Activity" is not an audit log — and the obvious source would have rendered empty forever.** The name invites an actor/action/target feed, and there **is** an `audit_logs` table. It is also **a no-op**: the plugin that writes it records nothing. A feed built on the obvious source would have looked deliberate, shipped, and shown an empty list permanently. The web's Activity is instead a **24h heartbeat swimlane** — lanes per agent, blocks per run/task. That's where the data lives, so that's what the phone reads.
+
+**What the phone keeps and what it drops.** A swimlane is a chart, and 24h across ~340 usable points makes a 20-minute run about four pixels wide. So the feed keeps the **data** and drops the **projection**: `startPct`/`widthPct` are ignored (they're the only part of the payload that assumes a wide canvas), the lanes are flattened back into the event list they were built from, and it's sorted newest-first — the left edge of a chart is the bottom of a list. Each row still carries who · what · which · when, plus the cost the web puts in the block's tooltip.
+
+**Two tripwires, both of which earned it.** `costs.ts` and `activity.ts` are pure modules with the rules lifted out of the web's inline JSX (the `taskLog.ts` pattern):
+
+- **`activity.test.ts` imports the backend's real `buildHeartbeatTimeline`/`mergeActivity`** and feeds our reader a payload built by the code that actually serves it — a hand-written fixture would pass forever while the wire drifted. **It caught a real trap on first run:** a run block's cost comes from the **run** row (`run.costUsd`), *not* the task it points at, so a run can report `0` while its task cost real money. The screen therefore **omits** a zero rather than printing `$0.00000` — a zero there means "not recorded here", not "free". Both facts are now pinned.
+- **`costs.test.ts`** pins the precision split the two web views genuinely have — the Cost Centre renders **4dp**, the Task Log **5dp** — so the mirror can't get "tidied" into one and silently change a number on one screen. It also pins roster ordering (not spend-ranked: re-ranking would make one org read as a different league table on each client), the `?? 0`-in-a-sum vs em-dash-for-one-task split, and that no budget state can collapse into another without colour.
+
+**Budgets is read-only on purpose.** The web's section can also create a policy and delete one. A hard-stop that can halt the org's spending is a desk decision — it wants the dialog, the scope picker, and the second look that a 390pt screen makes worse. The phone answers *"am I near the cap?"*, which is the question you have when you're away from the desk. The empty state drops the web's "add one" call to action rather than promising an affordance that isn't there.
+
+**`state` is a third vocabulary.** Budget states (`ok`/`warn`/`breach`) are in neither the status table nor the heartbeat map, so feeding them to `statusTone` would collapse all three onto `idle` — a **BREACH** rendering identically to a healthy budget. This is the same trap the 6b audit found in heartbeats, so it got the same treatment: an explicit mapping (`budgetChip`), label + glyph, and a test asserting no two states share a glyph. An unknown state degrades to neutral and **never** to `ok` — a state we don't recognise must not claim the budget is fine.
+
+**⚠️ The 6b audit's roster nit — fixed, and it was three bugs, not one.** `AgentsScreen` hand-rolled its own status mapping, and every part of it had drifted from `status.ts`:
+
+1. **Status compared `=== 'active'` literally**, so the aliases the table exists to collapse never landed: a `running` agent fell through to the ○/neutral *idle* chip on the roster while the detail screen showed ⬡/active — one agent, two states, depending on the screen. `failed`/`stopped`/`terminated` all read as plain idle too: **the roster could not show you a dead agent.**
+2. **The glyphs were invented locally** (`●`/`○`), so even where the two agreed on the state they disagreed on the mark. ●-vs-⬡ isn't a style difference when the glyph *is* the signal that survives colorblindness.
+3. **A local `heartbeatTone` painted an active heartbeat green** — undoing DESIGN_SYSTEM v2's rule that active is the **accent**, never green, precisely because green/red is the pair the operator cannot see.
+
+Both chips now route through `status.ts` (`statusIcon`/`statusTone`, and `heartbeatIcon`/`heartbeatTone` for the separate heartbeat vocabulary). **The generalisation matters more than the fix:** this is the *second* time a correct, well-tested helper was simply not called — the same shape as the 6b heartbeat defect. So `status.test.ts` gains a sibling **source-level guard**: no screen may re-declare a canonical helper of its own. A local copy of a mapping is drift with a delay built in — right the day it's written, wrong the first time the table changes. *Verified by reintroducing the original defect and watching it go red*, then restoring.
+
+**Deferred, each a deferral rather than a gap:**
+
+- **The per-agent proportional bars** — the web draws each agent's share as a bar; at phone width a 3% bar is ~10 points, indistinguishable from 1% and from zero. The share is **printed as a number** instead: same fact, legible, readable to a screen reader, and not leaning on hue. **No data lost.** (Note the web floors its bar width at 1% so a hairline stays visible — `formatShare` deliberately does *not* copy that floor, since printing it would round a real 0.2% up to "1%": a rendering hack turned into a lie.)
+- **The swimlane itself** — see above. The feed is the phone's form of it.
+- **Cost period/groupBy controls and CSV export** (`/costs`, `/costs/export`) — the web has no period control either, so building one here would invent a surface the desk lacks. Export is a desk action (a file download).
+- **Creating or deleting a budget** — desk work, as above.
+- **A task detail from an Activity row** — a row doesn't open yet; that's `TaskDrawer`'s mirror. → **MOB-6c**, the same drawer the Task Log rows want.
+
+**Follow-up logged (web-side, not this PR):** the web's Cost Centre presents a 200-task-capped "Total Spend" as if it were all-time. Either qualify it as the phone now does, or have it call the `/costs` endpoint that already exists — at which point the phone follows the web, in that order.
+
+**Verified:** `npm test` **62/62** · `npm run typecheck` clean · `npm run export` bundles (3.56 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
 
 ---
 
