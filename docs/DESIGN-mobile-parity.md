@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -24,9 +24,9 @@
 | Surface | What it does | Endpoints | Heavy? | Browser-only? |
 |---|---|---|---|---|
 | `overview` — Dashboard | Org summary: agent/task/project cards | `/api/orgs`, `…/agents`, `…/tasks`, `…/projects`, `…/notifications`, `…/usage`, `/api/skills`, `…/jira/status`, `/api/models` | No | — |
-| `assistant` — **Command Center** | Arturita chat + voice + pipeline config (`AssistantPanel.tsx`, 31KB) | `POST …/arturita/converse`, `GET/PUT …/arturita/pipeline` | **Yes** | **Yes — the app's whole browser-only risk.** See §3 |
+| `assistant` — **Command Center** | Arturita chat + voice + **document attach (CC-ATT)** + pipeline config (`AssistantPanel.tsx`, 31KB) | `POST …/arturita/converse`, `POST …/arturita/attachments/extract`, `GET/PUT …/arturita/pipeline` | **Yes** | **Yes — the app's whole browser-only risk.** See §3 |
 | `cockpit` — Operations | Live ops shell hosting the section components | `…/cockpit`, `…/inbox`, `…/timeline`, `…/orgchart`, `…/goals`, `…/budgets`, `…/secrets`, `…/plugins`, `…/workspaces`, `…/preflight`, `/api/agents/:id/:verb`, `/api/approvals/:id/decide` | Yes | — |
-| `inbox` — **Inbox / Comms** | Approvals + notification triage (hosts tab `comms`) | `…/inbox`, `…/inbox/dismiss`, `/api/approvals/:id/decide` | No | — |
+| `inbox` — **Inbox** | Approvals + notification triage (hosts tabs `tasks` + `comms` — **P2/#286**) | `…/inbox`, `…/inbox/dismiss`, `/api/approvals/:id/decide` | No | — |
 | `activity` — Activity | Event timeline | `…/timeline` | No | — |
 
 ### Workspace
@@ -75,14 +75,15 @@
 
 | Surface | What it does | Endpoints |
 |---|---|---|
-| `tasks` — Issues | Task table + 22KB `TaskDrawer.tsx` | `/api/tasks/:id/{comments,attachments,subtasks,timeline,runs,execute,recovery,watchdogs}` |
 | `goals` | Goals | `…/goals` |
 | `workspaces` | Workspaces | `…/workspaces`, `/api/workspaces/:id` |
 | `search`, `pipelines`, `artifacts` | **Placeholders** | — |
 
-**Count:** **29** routable surfaces = 18 rail + **5** hosted tabs + 6 hidden. **7 are placeholders** (`routines`, `review-queue`, `members`, `adapters`, `search`, `pipelines`, `artifacts`) — nothing to port. **Evals has no web surface at all** (zero matches in `web/`); it's a backend/CI harness only.
+> **`tasks` left this table in P2 (#286).** It was hidden-but-routable (a Task Log reachable only via ⌘K); it is now a hosted tab of Inbox, labelled **Tasks** — see the Overview table. Its endpoints are unchanged: `/api/tasks/:id/{comments,attachments,subtasks,timeline,runs,execute,recovery,watchdogs}` + the 22KB `TaskDrawer.tsx`.
 
-> **Corrected during MOB-6a (was: "30 = 18 + 6 + 6").** The hosted tabs are **5**, not 6 — `comms` (under Inbox), `budgets` (Costs), `plugins` (Connectors), `adapters` + `secrets` (Settings). Verified against the model rather than the prose: `allNavItems()` → 18, `hostedTabItems()` → 5, `HIDDEN_ITEMS` → 6, `allSurfaces()` → **29**. The "~12 real screens to port" conclusion is unchanged. The mobile port covers all 29 (+ phone-only Status = **30 mobile destinations**), and `apps/mobile/src/navModel.test.ts` now asserts that equality against the live web model, so this count can't silently drift again.
+**Count:** **29** routable surfaces = 18 rail + **6** hosted tabs + 5 hidden. **7 are placeholders** (`routines`, `review-queue`, `members`, `adapters`, `search`, `pipelines`, `artifacts`) — nothing to port. **Evals has no web surface at all** (zero matches in `web/`); it's a backend/CI harness only.
+
+> **Corrected during MOB-6a (was: "30 = 18 + 6 + 6"), re-verified at P2.** Verified against the model rather than the prose: `allNavItems()` → 18, `hostedTabItems()` → **6** (`tasks`, `comms`, `budgets`, `plugins`, `adapters`, `secrets`), `HIDDEN_ITEMS` → **5**, `allSurfaces()` → **29**. P2 moved `tasks` from hidden → hosted, so the split shifted but the **total did not** — the "~12 real screens to port" conclusion and the **30 mobile destinations** (29 + phone-only Status) are unchanged. `apps/mobile/src/navModel.test.ts` asserts that equality against the live web model, so this count can't silently drift again.
 
 ---
 
@@ -94,7 +95,7 @@
 
 | Tab | Screen | Endpoints | Web peer |
 |---|---|---|---|
-| **Command** | `CommandCenterScreen.tsx` — text chat + "via" chip | `POST …/arturita/converse` | `assistant` (text only — **no voice**) |
+| **Command** | `CommandCenterScreen.tsx` — text chat + "via" chip + **document attach (MOB-PAR-1, §6.2)** | `POST …/arturita/converse`, `POST …/arturita/attachments/extract` | `assistant` (text + attach — **no voice**) |
 | **Inbox** | `InboxScreen.tsx` + `StepUpModal.tsx` — approve/reject/request-changes with on-device step-up (MOB-4) | `GET …/approvals?status=pending`, `POST /api/approvals/:id/decide`, `POST …/arturita/session` | `inbox` |
 | **Agents** | `AgentsScreen.tsx` — roster, **read-only, no detail** | `GET …/agents` | `agents` (grid only) |
 | **Status** | `HealthScreen.tsx` — connection/health | `GET /api/health` | — (no web peer) |
@@ -236,7 +237,7 @@ Do **not** pixel-port these.
 |---|---|---|---|---|
 | **MOB-6a** | ✅ **SHIPPED** (`mob-6a-nav-shell`) — **Nav shell.** See §6.1 for the as-built. | — | **M** | No |
 | **MOB-6b** | **Agent detail** — the biggest gap next to voice; Agents is already there but dead-ends. Dashboard + Runs + Budget, read-only. | `…/agents/:aid/overview`, `…/runs`, `…/budget` | **M** | No |
-| **MOB-6c** | **Tasks / Issues** — list + read-only detail. | `…/tasks`, `/api/tasks/:id`, `…/timeline` | **M** | No |
+| **MOB-6c** | **Tasks** — list + read-only detail. Its nav home is already folded under Inbox (§6.2); this story builds the screen behind it. | `…/tasks`, `/api/tasks/:id`, `…/timeline` | **M** | No |
 | **MOB-6d** | **Costs + Budgets** — spend at a glance. Pure numbers, no viz needed. | `…/usage`, `…/budgets`, `…/preflight` | **S** | No |
 | **MOB-6e** | **Memory** — vault **tree + note reader** (§5). Not the graph. | `…/memory/tree`, `…/memory/file` | **M** | No |
 | **MOB-6f** | **Activity + Overview** — timeline + the summary cards. | `…/timeline`, `…/cockpit` | **S** | No |
@@ -315,6 +316,35 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 - **No `linking` config.** Push taps route in-process; sections aren't URL-addressable. Worth doing if a push ever needs to open a non-tab section.
 - **Nav state isn't persisted** across reloads — matching the web, which loses its tab on reload.
 - **CI doesn't run `apps/mobile`** (no workflow references it), so `npm test` here is a local/audit gate, not a merge gate. Wiring it in would mean touching `.github/workflows/`, which is out of scope by the root guide.
+
+### 6.2 MOB-PAR-1 — the first parity mirror (web #284/#285/#286 → phone)
+
+**The first application of the standing parity rule** (root `CLAUDE.md` § *Web ⇄ mobile parity*): three web changes landed, and this story carries them to the phone rather than letting the gap age.
+
+| Web change | Mirrored? | What shipped on the phone |
+|---|---|---|
+| **#285 — CC-ATT document attach** | ✅ **Mirrored** | 📎 in the Command Center composer → `expo-document-picker` → the **same two-step contract the web uses**: `POST …/arturita/attachments/extract` (multipart, field `file`) on **pick**, then the extracted text rides `POST …/arturita/converse` as `attachment`. Removable chip (name · size · truncated). |
+| **#286 — Tasks folded under Inbox** | ✅ **Mirrored (nav model only)** | `tasks` moved to the **Overview** group beside `inbox`/`comms`, relabelled **Issues → Tasks**, `webHosted: 'inbox'`, `webHidden` dropped. **The screen itself stays MOB-6c** — see *Deferred*. |
+| **#284 — black light-theme honeycomb** | ⛔ **N/A — nothing to mirror** | That fix is the *web reactor's* honeycomb fill on the light theme. The phone has **no reactor, no honeycomb, and no 7Ei logo anywhere** (zero matches for `logo`/`honeycomb`/`7Ei` in `apps/mobile/src`; `assets/` holds only the launcher icon + splash), and its theme is dark-surface only — there is no light theme for a fill to disappear into. **Inventing a reactor to have something to fix would be the bug.** Re-mirror only if the phone ever grows a logo surface. |
+
+**How the attach mirror matches the web, precisely** — the contract is the web's, not a re-interpretation:
+- **Extract on PICK, not on send** (the web's deliberate choice): an unreadable file — a scan with no text layer — is reported while the operator is still choosing it, not after they've typed a question. On a phone that also means the upload happens before Send, not during it.
+- **The document itself never reaches `/converse`** and is never stored; only extracted text, fenced by the backend into that one turn (never into history, so it can't re-enter or re-bill later turns).
+- **Limits are the web's** (10 MB, the 14 parser-readable extensions) — and not on trust: `apps/mobile/src/attach.ts` is hand-copied (Metro can't reach outside `apps/mobile`), but **`attach.test.ts` imports `web/app/dashboard/assistant.logic.ts` directly and asserts the two agree** on the type list, the byte cap, the size wording, the rejection message, and the send gate. Drift fails the build. Same tripwire shape as `navModel.test.ts`.
+- **Nothing logs document content** — client or server (the route logs name + byte count only, because officeparser errors can carry file content).
+
+**Two platform deviations, both forced and both narrow:**
+- **The picker opens `type: '*/*'`** where the web sets an `accept` filter. iOS filters by MIME/UTI, and several readable types (`.md`, `.log`, `.tsv`) have no reliable MIME there — a filter would grey out files the office reads fine. The **type gate is unchanged**, just applied a moment later, with the web's wording.
+- **iOS doesn't always report a file size.** Unknown size **skips the size check** (the server is the enforcer and answers with the same 413 wording) and drops the size from the chip rather than inventing one. The type gate never skips.
+
+**One trap worth recording:** `api.ts`'s `headers()` set `Content-Type: application/json` for **any** non-null body. A `FormData` body must *not* carry a hand-set content type — the runtime writes `multipart/form-data; boundary=…`, and the boundary is the only thing making the parts parseable. Left alone, every extract would have failed as a malformed multipart against a perfectly healthy endpoint. Same family as the empty-JSON-body 400.
+
+**Deferred (deliberately, not forgotten):**
+- **The Tasks screen** — `tasks` stays `status: 'planned'`, `story: 'MOB-6c'`, so tapping it opens the honest placeholder naming MOB-6c. The fold is a **grouping/labelling** change; building a screen here would have smuggled MOB-6c into a parity PR. Nothing contradicts itself in the meantime: the row reads *Tasks*, sits under Inbox, and says it isn't built yet.
+- **Attachments on a delegated turn.** The backend already tells the operator the doc stays with the conversation and isn't attached to the task; the phone inherits that reply verbatim. Persisting an attachment onto a task is its own story, on both clients.
+- **Voice + attach together** — voice isn't on the phone yet (MOB-5c).
+
+> **`apps/mobile` still isn't in CI** (§6.1). That is exactly how the #286 nav drift reached `main` unnoticed: `navModel.test.ts` was **already failing on `main`** before this PR (`label drift on "tasks"` + `webHosted wrong on "tasks"`) — the tripwire worked, but nothing was watching it. **The parity rule is only as strong as someone running `npm test` in `apps/mobile`.** Wiring it into CI means touching `.github/workflows/`, out of scope by the root guide — **recommend it as its own operator-approved story.**
 
 ---
 
