@@ -22,7 +22,7 @@ export default function AgentsScreen() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const token = getToken()
+    const token = await getToken()
     if (!token || !orgId) return
     setError(null)
     try {

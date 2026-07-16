@@ -9,7 +9,7 @@ import { font, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Loading } from '../ui'
 
 export default function HealthScreen() {
-  const { apiUrl, orgName, orgId, signOut } = useAuth()
+  const { apiUrl, orgName, orgId, signOut, authMode, identityLabel } = useAuth()
   const [health, setHealth] = useState<Health | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -85,8 +85,10 @@ export default function HealthScreen() {
           <Card style={{ marginTop: space.lg }}>
             <Text style={s.h}>Session</Text>
             <Kv k="Org" v={orgName ?? orgId ?? '—'} />
+            <Kv k="Auth" v={authMode === 'clerk' ? 'Clerk (auto-refresh)' : authMode === 'paste' ? 'Pasted token' : '—'} />
+            {identityLabel ? <Kv k="Signed in as" v={identityLabel} /> : null}
             <View style={{ marginTop: space.md }}>
-              <Button title="Disconnect" onPress={signOut} tone="ghost" />
+              <Button title={authMode === 'clerk' ? 'Sign out' : 'Disconnect'} onPress={signOut} tone="ghost" />
             </View>
           </Card>
         </>

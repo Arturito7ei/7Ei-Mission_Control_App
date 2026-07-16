@@ -37,46 +37,55 @@ Colorblind-safe: every status carries a label + glyph, never hue alone.
    ```bash
    npx expo start --tunnel      # or: npm run start:tunnel
    ```
-4. In the app, **Connect**:
-   - **Bearer token** — paste a Clerk session token from the web dashboard
-     (`app.7ei.ai`). In the browser devtools console on the dashboard:
+4. In the app, **sign in** — two paths:
+   - **Clerk (recommended, MOB-2)** — set `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` (below)
+     and the app shows a real **Sign in** screen: your 7Ei email + password, or
+     "Email me a sign-in code". Same account as the web dashboard; tokens
+     auto-refresh, so no more 401-on-expiry. After sign-in, pick your org if you
+     belong to more than one.
+   - **Token paste (fallback / escape hatch)** — with no Clerk key set, the app
+     shows a paste screen; or tap **"Use a token instead"** under the Clerk form.
+     Paste a Clerk session token from the web dashboard (`app.7ei.ai`) — in the
+     browser devtools console:
      ```js
      await window.Clerk.session.getToken()
      ```
-     Copy the printed string into the app.
-   - **API URL** — leave as `https://7ei-backend.fly.dev` (the default).
-   - Tap **Connect**. If you belong to more than one org, pick one.
+     Leave **API URL** as `https://7ei-backend.fly.dev` (the default).
 
 You're now driving the hosted backend from your phone.
 
-> **Token lifetime.** A raw Clerk session token is short-lived (~1 min). That's
-> fine for a smoke test; re-paste if a call 401s. Real, auto-refreshing sign-in is
-> **Clerk-Expo** (story MOB-2) — see the design doc.
+> **Token lifetime.** A *pasted* Clerk session token is short-lived (~1 min) — fine
+> for a smoke test; re-paste if a call 401s. **Clerk sign-in avoids this entirely**
+> (auto-refresh). Prefer it.
 
-## Configuration (optional env)
+## Configuration (env)
 
-`EXPO_PUBLIC_*` vars are read at bundle time. Create `apps/mobile/.env` (gitignored)
-to override defaults:
+`EXPO_PUBLIC_*` vars are read at bundle time. Create `apps/mobile/.env` (gitignored):
 
 ```bash
-EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev        # backend base URL
-EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…            # only needed once MOB-2 lands
+EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…            # SAME key as the web app → enables Clerk sign-in
+EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev        # backend base URL (default)
 ```
 
-Nothing here is a secret — `EXPO_PUBLIC_*` values are inlined into the JS bundle.
-The bearer token is stored in the iOS Keychain via `expo-secure-store`, never in the
-bundle.
+- **`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`** — the same publishable key the web app
+  uses (`pk_test_…` on the dev instance, `pk_live_…` once production Clerk lands).
+  Publishable keys are **non-secret** (they ship in the web bundle already), so
+  it's fine to inline into the Expo bundle. When present, Clerk becomes the primary
+  sign-in; when absent, the app falls back to token-paste and still boots.
+- Nothing here is a secret. The session token is stored in the iOS Keychain via
+  `expo-secure-store` (Clerk's token cache in Clerk mode; the pasted bearer in
+  paste mode) — never in the bundle, never logged.
 
-## Scope / phase-1 limits (honest)
+## Scope / limits (honest)
 
-- **Auth is token-paste**, not Clerk-Expo — deferred to MOB-2 because
-  `@clerk/clerk-expo` does not yet install cleanly against the current Expo Go SDK
-  (57 / RN 0.86 / React 19.2). Screens depend only on `getToken()` + `orgId`, so
-  Clerk slots in without touching them.
+- **Auth: real Clerk sign-in (MOB-2)** with token-paste kept as a fallback. The
+  SDK-57 peer conflict is resolved by pinning `react-dom@19.2.3` (see
+  `docs/DESIGN-mobile-expo.md` §13) — a plain `npm install` is clean, no dev build.
 - **Approving a *dangerous* action** (`file_destructive`, `wallet_tx`,
   `email_send`, `machine_exec`) needs a step-up session token this client doesn't
-  mint yet → **approve may 403 with a clear message**. **Reject / request-changes
-  always work**, so the remote *stop* is reliable. Step-up on mobile = MOB-4.
+  mint yet → the **Approve button is disabled** on those with a clear "needs
+  step-up (MOB-4)" note. **Reject / request-changes always work**, so the remote
+  *stop* is reliable. On-device step-up = MOB-4.
 - **No push notifications** yet (P1 / MOB-3). **No voice** yet (MOB-5, needs a dev
   build for background audio). Both are designed in the doc.
 - **Expo Go only** — no native modules that would require an EAS dev build.

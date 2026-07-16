@@ -35,7 +35,7 @@ export default function CommandCenterScreen() {
 
   const send = useCallback(async () => {
     const text = input.trim()
-    const token = getToken()
+    const token = await getToken()
     if (!text || !token || !orgId) return
     setError(null)
     setInput('')
