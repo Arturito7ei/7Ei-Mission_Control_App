@@ -31,3 +31,51 @@ jobs:
         # Typecheck is a real gate: TS errors fail the job. All three
         # workspaces (backend, web, app) currently typecheck clean.
         run: npx tsc --noEmit --skipLibCheck
+
+  mobile:
+    # `apps/mobile` is the SHIPPING iPhone remote and is deliberately NOT in the
+    # `check` matrix above: that matrix installs with `npm install
+    # --legacy-peer-deps`, which would defeat this app's exact react/react-dom
+    # pins (see apps/mobile/package.json → expo.install.exclude), and it has no
+    # test step. This app is its own npm root, so it installs in-place from its
+    # own committed lockfile.
+    #
+    # This job is what enforces the web ⇄ mobile parity rule in CLAUDE.md: the
+    # tripwire tests import the WEB modules directly and fail on drift. Before
+    # this job existed, that tripwire fired into the void — a web nav change
+    # (#286) landed red on `main` and nobody saw it.
+    name: Mobile (apps/mobile)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+
+      - name: Install dependencies
+        # `npm ci` (clean, off the committed lockfile) — NOT `npm install`, and
+        # NOT `--legacy-peer-deps`: the react/react-dom pins resolve cleanly on
+        # their own, and papering over peers here is what would let a real
+        # ERESOLVE regression through.
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        # 22 tests, incl. the web-parity tripwires (src/navModel.test.ts,
+        # src/attach.test.ts). They import `../../../web/**` by relative path;
+        # those web modules are pure data with no imports of their own, so no
+        # web install is needed here — only the repo checkout.
+        run: npm test
+
+      - name: Export (Metro/Hermes bundle)
+        # Build gate: proves the app still bundles. Pure JS — Metro + Hermes,
+        # no Xcode and no native toolchain, ~7s locally.
+        run: npm run export

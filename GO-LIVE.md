@@ -33,8 +33,9 @@ Owner: Arturito · Last updated: 2026-07-15 (Epic ONB Stage 7 — consolidated; 
 | 15 | Audit trail — **ON** (tuning only) | — | ✅ done | — | — |
 | 16 | Multi-tenant membership — **ENFORCED** (no action) | — | ✅ done | — | — |
 | 17 | **Packaged desktop app — Apple Developer ID** (sign + notarize the `.dmg`) | Vendor console + build env | ⚪ optional (Epic H) | The `.dmg` opens only via right-click→Open (Gatekeeper warns "cannot check for malware") | ~30 min + $99/yr |
+| 18 | **Branch protection on `main`** — make the CI checks actually block | Vendor console (GitHub) | ⏳ **pending** | **Every check is advisory today**: a red build — incl. the mobile parity tripwires — can be merged straight past | ~5 min |
 
-**Legend:** ⏳ pending · ⚪ optional · ✅ done. Items 1–12 + 14 are the real pending
+**Legend:** ⏳ pending · ⚪ optional · ✅ done. Items 1–12 + 14 + 18 are the real pending
 list; 13 + 17 are optional (17 only matters once you distribute the desktop app); 15–16
 are shipped and here only for completeness.
 
@@ -445,6 +446,46 @@ packaged app is no longer an unauthenticated bypass — it enforces an authentic
 operator that gates the same write routes Clerk gates on hosted. **No operator action is
 required for H6** — the shell generates the keys on first boot; the only packaged
 operator step remains the Apple Developer ID above (for a Gatekeeper-clean download).
+
+---
+
+## 18. Branch protection on `main` — make the CI checks actually block
+
+**Status today: there is none.** Verified against the live repo:
+
+```bash
+gh api repos/Arturito7ei/7Ei-Mission_Control_App/branches/main/protection   # → 404 "Branch not protected"
+gh api repos/Arturito7ei/7Ei-Mission_Control_App/rulesets                   # → []
+```
+
+**So every check in this repo is advisory.** CI runs, CI reports, CI goes red — and the
+merge proceeds anyway. `CI-MOB-1` (2026-07-16) added the **`Mobile (apps/mobile)`** job so
+that mobile parity drift finally *shows up* (before it, the tripwires never ran and #286's
+nav drift sat red on `main` unseen). But **visible ≠ blocked**: that job is only a true gate
+once `main` is protected and the check is marked required.
+
+**The steps (GitHub Settings — yours, not mine):**
+
+1. **Settings → Branches → Add branch protection rule**, branch name pattern `main`.
+2. Tick **Require status checks to pass before merging** (+ *Require branches to be up to date*).
+3. In the search box, add these as **required** — the names must match the job names exactly:
+   - `Mobile (apps/mobile)` ← the parity tripwires
+   - `Install check (backend)` · `Install check (web)` · `Install check (app)`
+   - `Backend unit tests`
+4. Save.
+
+> ### ⚠️ Do NOT require `npm audit`
+> The **`npm audit`** check (`security.yml`) **fails on essentially every PR** and is
+> knowingly non-blocking — that's why the merge convention here is `--squash --admin`.
+> Requiring it would wedge every merge in the repo. Same for `Outdated dependencies`
+> (informational, `|| true`). Require only the five functional checks above.
+
+**Note on `--admin`:** the house convention squash-merges with `gh pr merge --admin`, which
+*bypasses* protection by design. Protection still earns its keep — it makes the bypass a
+**deliberate, logged act** rather than the silent default, which is exactly the difference
+between "we chose to ship past a red mobile check" and "nobody noticed it was red."
+
+**Risk if skipped:** the state we're in now — the parity rule is enforced by attentiveness.
 
 ---
 
