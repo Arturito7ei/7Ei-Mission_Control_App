@@ -17,9 +17,20 @@ not connect to your Mac mini.**
 - **Inbox / Approvals** — lists pending dangerous-action approvals and lets you
   **approve / reject / request-changes** from the phone (the killer remote feature).
 - **Agents** — the roster with status + heartbeat (read-only).
-- **Status** — live connection + backend health.
+- **Status** — live connection + backend health, **plus a Notifications panel**
+  (MOB-3): grant notification permission, fire a **local test notification** (proves
+  the handler + tap-routing wiring in Expo Go), and see whether a remote push token
+  was obtained + registered. Tapping a notification deep-links to the right tab
+  (e.g. an approval → **Inbox**).
 
 Colorblind-safe: every status carries a label + glyph, never hue alone.
+
+> **Push (MOB-3):** *local* notifications and the whole token/registration flow work
+> in Expo Go, but **remote delivery** (a real push arriving on your phone from the
+> backend) needs an **EAS dev build** with an Expo project id — set
+> `EXPO_PUBLIC_EAS_PROJECT_ID` (below) and it flips on with **no code change**. Until
+> then the Status panel clearly says "Dev build required". See
+> [`docs/DESIGN-mobile-expo.md`](../../docs/DESIGN-mobile-expo.md) §4 / §14.
 
 ## Run it (≈2 minutes)
 
@@ -65,6 +76,7 @@ You're now driving the hosted backend from your phone.
 ```bash
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_…            # SAME key as the web app → enables Clerk sign-in
 EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev        # backend base URL (default)
+EXPO_PUBLIC_EAS_PROJECT_ID=                            # (MOB-3) set once you have an EAS dev build → enables REMOTE push
 ```
 
 - **`EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`** — the same publishable key the web app
@@ -72,9 +84,16 @@ EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev        # backend base URL (defau
   Publishable keys are **non-secret** (they ship in the web bundle already), so
   it's fine to inline into the Expo bundle. When present, Clerk becomes the primary
   sign-in; when absent, the app falls back to token-paste and still boots.
+- **`EXPO_PUBLIC_EAS_PROJECT_ID`** (MOB-3) — your Expo project id. **Absent (the
+  Expo Go default):** local notifications + the full permission/registration flow
+  still run, but no *remote* Expo push token is minted and the Status panel says
+  "Dev build required". **Present (once you've run `eas init` + an EAS dev build):**
+  the app mints a remote Expo push token and registers it with the backend, so real
+  pushes arrive — **no code change, just this env + a dev build.** Non-secret.
 - Nothing here is a secret. The session token is stored in the iOS Keychain via
   `expo-secure-store` (Clerk's token cache in Clerk mode; the pasted bearer in
-  paste mode) — never in the bundle, never logged.
+  paste mode) — never in the bundle, never logged. The **Expo push token is never
+  logged** either.
 
 ## Scope / limits (honest)
 
@@ -86,9 +105,17 @@ EXPO_PUBLIC_API_URL=https://7ei-backend.fly.dev        # backend base URL (defau
   mint yet → the **Approve button is disabled** on those with a clear "needs
   step-up (MOB-4)" note. **Reject / request-changes always work**, so the remote
   *stop* is reliable. On-device step-up = MOB-4.
-- **No push notifications** yet (P1 / MOB-3). **No voice** yet (MOB-5, needs a dev
-  build for background audio). Both are designed in the doc.
-- **Expo Go only** — no native modules that would require an EAS dev build.
+- **Push (MOB-3): local + registration flow work in Expo Go; remote delivery is
+  staged behind a dev build.** The notification handler, permission request, local
+  test notification, tap→deep-link routing, and the backend token-registration call
+  all run in Expo Go. Minting a *remote* Expo push token needs an Expo project id
+  (`EXPO_PUBLIC_EAS_PROJECT_ID`) + an EAS dev build for real APNs delivery — a
+  config/build step, not a code change (§14). **No backend change** — the register
+  endpoint (`POST /api/notifications/register`) already exists.
+- **No voice** yet (MOB-5, needs a dev build for background audio). Designed in the doc.
+- **Expo Go only** — no native modules that would require an EAS dev build. (The
+  `expo-notifications` config plugin is declared for the eventual dev build but is
+  inert in Expo Go.)
 
 ## Stays out of the other builds
 

@@ -36,6 +36,12 @@ type AuthState = {
   signedIn: boolean // has a usable token source (Clerk session OR pasted token)
   authMode: AuthMode | null
   identityLabel: string | null // e.g. the signed-in Clerk user's email, for Status
+  // The signed-in user's Clerk id (the JWT `sub`). Used by push registration:
+  // the backend targets pushes at `org.ownerId`, so the phone must register its
+  // Expo token under this id. In Clerk mode it comes from useUser(); in paste
+  // mode we best-effort decode the `sub` claim of the pasted JWT. Null if unknown
+  // (→ push registration is skipped with a clear reason, never guessed).
+  userId: string | null
   apiUrl: string
   token: string | null // paste-mode bearer (null in Clerk mode — token comes from getToken)
   orgId: string | null
@@ -53,6 +59,29 @@ type AuthState = {
 }
 
 const Ctx = createContext<AuthState | null>(null)
+
+// Best-effort extraction of the Clerk user id (`sub`) from a session JWT, for
+// paste mode (Clerk mode gets the id from useUser()). Pure client-side decode of
+// the *unverified* payload — we only use it as a push-registration key, never for
+// an authz decision (the backend validates the real token). Returns null on any
+// malformed input rather than throwing. Uses the Hermes global `atob` when
+// present; if base64 decoding isn't available, we simply skip (userId stays null,
+// push registration is skipped honestly). NEVER logs the token.
+function decodeJwtSub(jwt: string | null | undefined): string | null {
+  if (!jwt) return null
+  const parts = jwt.split('.')
+  if (parts.length < 2) return null
+  const g = globalThis as unknown as { atob?: (s: string) => string }
+  if (typeof g.atob !== 'function') return null
+  try {
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (b64.length % 4) b64 += '='
+    const payload = JSON.parse(g.atob(b64)) as { sub?: unknown }
+    return typeof payload.sub === 'string' && payload.sub ? payload.sub : null
+  } catch {
+    return null
+  }
+}
 
 // ─── Shared persisted-session state + mode-agnostic operations ──────────────────
 
@@ -117,6 +146,7 @@ function PasteAuthProvider({ children }: { children: React.ReactNode }) {
       signedIn: !!session?.token,
       authMode: session?.authMode ?? null,
       identityLabel: null,
+      userId: decodeJwtSub(session?.token),
       apiUrl: session?.apiUrl || defaultApiUrl(),
       token: session?.token ?? null,
       orgId: session?.orgId ?? null,
@@ -240,6 +270,8 @@ function ClerkAuthBridge({ children }: { children: React.ReactNode }) {
       authMode: clerkSignedIn ? 'clerk' : (session?.authMode ?? null),
       identityLabel:
         user?.primaryEmailAddress?.emailAddress ?? user?.username ?? null,
+      // Clerk id from the signed-in user; else the pasted token's sub (escape hatch).
+      userId: clerkSignedIn ? (user?.id ?? null) : decodeJwtSub(session?.token),
       apiUrl: effectiveSession?.apiUrl || defaultApiUrl(),
       token: clerkSignedIn ? null : (session?.token ?? null),
       orgId: effectiveSession?.orgId ?? null,
