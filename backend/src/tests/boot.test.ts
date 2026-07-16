@@ -31,6 +31,7 @@ import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { customModelRoutes } from '../routes/custom-models'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from '../routes/agent-invites'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
+import { arturitaSttRoutes } from '../routes/arturita-stt'
 import { agentApiRoutes } from '../routes/agent-api'
 
 test('app boots: all route groups register without collision', async () => {
@@ -62,6 +63,7 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(arturitaWalletRoutes)
     await secured.register(customModelRoutes)
     await secured.register(arturitaVoiceRoutes)
+    await secured.register(arturitaSttRoutes)   // MOB-5a — hosted STT
     await secured.register(agentInviteRoutes)
   })
 

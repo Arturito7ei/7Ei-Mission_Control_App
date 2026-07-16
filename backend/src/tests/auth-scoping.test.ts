@@ -35,6 +35,7 @@ import { telegramWebhookRoutes } from '../routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
+import { arturitaSttRoutes } from '../routes/arturita-stt'
 import { agentApiRoutes } from '../routes/agent-api'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from '../routes/agent-invites'
 import { auditLogPlugin, auditLogQueryRoutes } from '../middleware/audit-log'
@@ -95,6 +96,7 @@ async function bootLikeIndex() {
     await secured.register(arturitaRoutes)
     await secured.register(arturitaWalletRoutes)
     await secured.register(arturitaVoiceRoutes)
+    await secured.register(arturitaSttRoutes)   // MOB-5a — hosted STT
     await secured.register(agentInviteRoutes)   // Epic ONB — owner-gated invites
     // ONB2 audit H-2 — the audit-log + trace READ routes. They were registered
     // inside the hook plugins, in the public block, and this guard never booted
