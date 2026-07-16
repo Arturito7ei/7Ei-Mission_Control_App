@@ -12,6 +12,10 @@
 // with itself while disagreeing with the backend.
 import type { TimelineLite } from './activity'
 import type { BudgetLite } from './costs'
+// MOB-6e — same rule: the vault and org-chart wire shapes are defined in the
+// pure modules that read them (memory.ts / org.ts) and imported here.
+import type { VaultCfgLite, VaultEntryLite } from './memory'
+import type { OrgAgentLite } from './org'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -241,6 +245,41 @@ export const Api = {
     api<{ budgets: BudgetLite[] }>(base, `/api/orgs/${orgId}/budgets`, { token }).then(
       (r) => r.budgets ?? [],
     ),
+
+  // ─── MOB-6e — Memory (the Obsidian vault reader) ──────────────────────────
+  // The SAME two calls the web's MemoryPanel makes, with the same query param.
+  //
+  // `tree` lists ONE directory (it's a GitHub Contents call per folder, backend
+  // services/vault-connector.ts) — there is no whole-vault endpoint, so the
+  // phone's collapsible tree fetches per expand. The response echoes the vault
+  // that answered (`repo`/`root`/`branch`), which is how the screen labels itself
+  // without also calling `…/connectors/obsidian/config` the way the web does —
+  // that endpoint backs the web's vault EDITOR, and the phone is read-only.
+  memoryTree: (base: string, token: string, orgId: string, path: string) =>
+    api<{ path: string; entries: VaultEntryLite[] } & VaultCfgLite>(
+      base,
+      `/api/orgs/${orgId}/memory/tree?path=${encodeURIComponent(path)}`,
+      { token },
+    ),
+
+  // One note's markdown. The backend 400s a non-markdown path, so the screen
+  // only ever calls this for a path `isNotePath` already accepted.
+  memoryFile: (base: string, token: string, orgId: string, path: string) =>
+    api<{ path: string; markdown: string }>(
+      base,
+      `/api/orgs/${orgId}/memory/file?path=${encodeURIComponent(path)}`,
+      { token },
+    ),
+
+  // ─── MOB-6e — the Org chart ───────────────────────────────────────────────
+  // The SAME call the web's CockpitPanel makes to feed OrgChart.tsx. The payload
+  // is `{ tree, agents, count }`; we read `agents` — the FLAT roster — and derive
+  // the tree client-side exactly as the web does (web/lib/orgLayout), so neither
+  // client can drift onto a second answer for "who reports to whom".
+  orgchart: (base: string, token: string, orgId: string) =>
+    api<{ agents: OrgAgentLite[]; count: number }>(base, `/api/orgs/${orgId}/orgchart`, {
+      token,
+    }).then((r) => r.agents ?? []),
 
   pendingApprovals: (base: string, token: string, orgId: string) =>
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {

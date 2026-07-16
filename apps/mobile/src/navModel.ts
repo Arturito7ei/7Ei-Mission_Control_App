@@ -164,8 +164,10 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'org',
         label: 'Org',
         glyph: '🗂️',
-        status: 'planned',
-        story: 'MOB-6g',
+        // MOB-6e built this (it was pencilled in for MOB-6g): the Memory tree and
+        // the org tree are the same problem — a heavy web view whose value is a
+        // hierarchy, not its canvas — so they shipped as one story.
+        status: 'ready',
         blurb: 'Who reports to whom — an indented tree, not the desktop canvas.',
       },
       {
@@ -233,8 +235,9 @@ export const NAV_GROUPS: NavGroup[] = [
         id: 'memory',
         label: 'Memory',
         glyph: '🧠',
-        status: 'planned',
-        story: 'MOB-6e',
+        status: 'ready',
+        // The blurb was already honest about the graph staying on the desk, and
+        // MOB-6e kept that promise rather than quietly widening it.
         blurb: 'Browse the vault and read a note. The force graph stays on desktop.',
       },
       {

@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends) + **MOB-6d shipped** (Costs · Budgets · Activity — §6.5; Delivery's cost pair and the event feed, all read-only). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends) + **MOB-6d shipped** (Costs · Budgets · Activity — §6.5; Delivery's cost pair and the event feed, all read-only) + **MOB-6e shipped** (Memory + Org — §6.6; the two *heavy* web views as native trees: the vault reader without the d3 graph, the reporting tree without the canvas. Absorbed MOB-6g). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -239,9 +239,9 @@ Do **not** pixel-port these.
 | **MOB-6b** | ✅ **SHIPPED** (`mob-6b-agent-detail-tasks`) — **Agent detail + the Task Log.** The roster no longer dead-ends, and `tasks` is a real screen. Read-only; Runs/Budget/Instructions/Skills/Config tabs and the write actions deferred to **MOB-6b2**. As-built: **§6.4**. | `/api/agents/:aid`, `…/agents/:aid/overview`, `…/tasks`, `…/approvals` | **M** | No |
 | **MOB-6c** | **Task detail** — the read-only drawer behind a log row (the web's `TaskDrawer`). The Tasks *list* shipped in 6b (§6.4); this is what a row opens. | `/api/tasks/:id`, `…/timeline` | **S** | No |
 | **MOB-6d** | ✅ **SHIPPED** (`mob-6d-costs-activity`) — **Costs + Budgets + Activity.** Spend at a glance, the caps beside it, and the event feed. All read-only. Also fixed the roster-glyph drift the 6b audit flagged. As-built: **§6.5**. | `…/tasks`, `…/agents`, `…/budgets`, `…/timeline` (**not** `…/usage` / `…/preflight` — this row guessed wrong; see §6.5) | **S** | No |
-| **MOB-6e** | **Memory** — vault **tree + note reader** (§5). Not the graph. | `…/memory/tree`, `…/memory/file` | **M** | No |
-| **MOB-6f** | **Activity + Overview** — timeline + the summary cards. | `…/timeline`, `…/cockpit` | **S** | No |
-| **MOB-6g** | **Org chart** — indented native tree (§5). | `…/orgchart` | **S** | No |
+| **MOB-6e** | ✅ **SHIPPED** (`mob-6e-memory-org`) — **Memory + Org.** The vault **tree + note reader** (not the graph) and the **indented org tree** (not the canvas). Both read-only. **Absorbed MOB-6g**: the two are the same problem — a heavy web view whose value is a hierarchy rather than its canvas — so they shipped as one story. As-built: **§6.6**. | `…/memory/tree`, `…/memory/file`, `…/orgchart` | **M** | No |
+| **MOB-6f** | **Overview** — the summary cards. (Activity shipped early, in 6d — §6.5.) | `…/cockpit` | **S** | No |
+| ~~**MOB-6g**~~ | ✅ **Org chart** — **shipped inside MOB-6e** (§6.6). Row kept so the id doesn't dangle in older plans/links. | `…/orgchart` | — | — |
 | **MOB-6h** | **Governance** — read-only policies/trust/revisions. Writes stay on desktop. | `…/policies`, `…/agents/:aid/trust`, `…/revisions` | **M** | No |
 | **MOB-6i** | **Projects, Skills, Goals, Workspaces, Usage** — five thin read-only lists; batch them. | `…/projects`, `/api/skills`, `…/goals`, `…/workspaces`, `…/usage` | **S** | No |
 | **MOB-6j** | **Settings + Secrets** — read-only org info + secret *refs* (never values). | `/api/orgs/:id`, `…/secrets` | **S** | No |
@@ -466,6 +466,57 @@ Both chips now route through `status.ts` (`statusIcon`/`statusTone`, and `heartb
 **Follow-up logged (web-side, not this PR):** the web's Cost Centre presents a 200-task-capped "Total Spend" as if it were all-time. Either qualify it as the phone now does, or have it call the `/costs` endpoint that already exists — at which point the phone follows the web, in that order.
 
 **Verified:** `npm test` **62/62** · `npm run typecheck` clean · `npm run export` bundles (3.56 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
+
+---
+
+### 6.6 MOB-6e — Memory + Org: the two heavy views, as native trees (as built)
+
+**Two screens, zero backend change, no new dependency.** Both endpoints already served the web. This is the story where the parity rule's "mirror the decision, don't re-invent it" meets its hardest case: **both** of these web surfaces are listed *Heavy* in §1, and both are heavy for the same reason — a canvas. Neither canvas came. Both hierarchies did.
+
+| Screen | Endpoints (identical to the web's) | Mirrors |
+|---|---|---|
+| **Memory** (`MemoryScreen.tsx`) | `GET …/memory/tree?path=` (**one directory**) · `GET …/memory/file?path=` (one note's markdown) | `web/app/dashboard/MemoryPanel.tsx` — the same two calls, the same entries, the same markdown subset. |
+| **Org** (`OrgScreen.tsx`) | `GET …/orgchart` → we read `agents`, the flat roster | `web/app/dashboard/cockpit/OrgChart.tsx` — the same roster, the same tree derivation (`web/lib/orgLayout`), minus the geometry. |
+
+**The §6 plan row guessed the endpoints exactly right — and the *shape* of one of them wrong.** `…/memory/tree` is **not** a vault tree. It lists **one directory**: it's a GitHub Contents call per folder (`backend/src/services/vault-connector.ts`), and there is no whole-vault endpoint at any depth. The plan's phrase "vault tree + note reader" reads like one fetch renders a tree; it can't. So the collapsible tree **fetches per expand**, and `memory.ts` models the vault as a map of `path → children` that fills in as the operator opens folders. That turned out to be the right shape anyway — the phone never fetches the vault it isn't looking at, which on cellular is the difference between a screen and a stall — but it was a correction, not a plan.
+
+**What each screen keeps, and what it drops.**
+
+- **Memory keeps the vault and drops the graph.** The web's ⬡ Graph view (`VaultGraph.tsx`) is a `d3-force` simulation over `…/memory/graph` — the app's only npm dep beyond Next/React/Clerk. A force-directed map of a whole vault is a canvas-and-pointer artefact; at 390pt it's a hairball you can't hit-test. **Dropped, not deferred**, and the screen says so itself (`MEMORY_GRAPH_NOTE`) rather than leaving the operator hunting for a view that isn't coming.
+- **Memory's tree is collapsible, where the web's is a *browser*.** The web's left pane shows **one** directory at a time: clicking a folder **replaces** the list and a breadcrumb walks you back. That's fine for a 280px column beside a reader; on a phone, replacing the whole screen to peek inside a folder costs you the context you opened it for. So expanding **splices children in beneath their folder** and the rest of the vault stays put. Same endpoint, same entries, same order — a different traversal, which is the trade this rule exists to license.
+- **Org keeps the hierarchy and drops the canvas.** `layoutOrgTree`/`fitToView`/`zoomAbout`/`NODE_W` answer *"where on a 2000px canvas does this card sit"* — a question a 390pt column never asks. Indentation says the same thing about depth. So `org.ts` is deliberately **half** of `web/lib/orgLayout.ts`: the half that is about the org, not about the canvas. **Dropped, not deferred** (`ORG_CANVAS_NOTE`).
+- **Both are read-only, and both drop a write the web has.** Memory drops the vault **picker** ("Change vault…", a `PUT …/connectors/obsidian/config`): repointing the org's shared vault is a config change with an org-wide blast radius, and it isn't a phone gesture. Org drops **Import/Export company**: import creates a whole organisation from a JSON file. The vault is still *labelled* — from the tree response, so the label cannot disagree with the tree it's labelling.
+
+**Neither client reads the backend's org `tree`.** `…/orgchart` returns `{ tree, agents, count }` — a pre-nested tree **and** the flat roster. The web ignores `tree` and derives its own from `agents` so the cycle-breaking is testable client-side. The phone does the same. Leaving `tree` unread on **both** clients is what stops a second answer to "who reports to whom" from existing.
+
+**Three tripwires, and the one place there isn't one.**
+
+- **`org.test.ts` imports the web's real `buildOrgTree`** and diffs our tree against it — orphans, self-references, and a genuine `a → b → a` cycle. This is the tripwire that most earns its keep: a cycle reaching a hand-rolled walk is an **infinite loop**, and an infinite loop on a phone is a hang with no console to explain it. (If that rule ever regresses, the test doesn't fail — it hangs, which is exactly the symptom.)
+- **`memory.test.ts` imports the backend's real `isMarkdownPath`/`isSafeVaultPath`** and diffs `isNotePath` extension-for-extension. `isNotePath` decides what the tree offers as **tappable**; drift means the phone either hides notes the desk reads, or offers ones the server 400s on. It also pins `VAULT_DEFAULT` against the backend's `defaultVaultConfig()`, since the phone prints that label before the first response lands.
+- **`navModel.test.ts`'s ready-set** caught the flip honestly: both ids were added to its expected list only after the screens were registered in `SCREENS`.
+- **⚠️ `RUNTIME_BADGE` is the one web-copied constant here with no import tripwire.** `web/app/dashboard/cockpit/shared.tsx` contains JSX, so `node --test --experimental-strip-types` **cannot** load it — there is no way to import it from a test that runs outside Metro. (`orgLayout.ts` and `vault-connector.ts` are plain `.ts`, which is why the tree rules and the path rules *are* pinned.) `org.test.ts` pins the **shape** instead — the fallback, the `internal` special case, the model suffix — so only the map's **values** can drift, which is cosmetic when they do: a wrong glyph beside a correct word, on a line whose meaning the word already carries. **This is not hypothetical: the first draft of this file guessed all five badges wrong** (`🔌`/`⚙️`/`🖱️` vs the real `📎`/`🧠`/`⌨️`) and invented an `external` key that doesn't exist. A hand-check against `shared.tsx:41` caught it. If you change the web's map, change this copy — the check is a grep, not a test.
+
+**The markdown reader is a parser, not an HTML pipe — and that's a security improvement, not just a port.** The web's `mdToHtml` escapes the note and hands the string to `dangerouslySetInnerHTML`. React Native has no innerHTML and no DOM, so the **same subset** (h1–h4, list item, fenced code, rule, paragraph, and the inline run: code/bold/italic/link/`[[wikilink]]`) is parsed into a **block tree** and rendered with `<Text>`. Note content is **untrusted** — any agent with a vault token can write to the vault — and the web has to escape first and get it right. The phone has nowhere for a `<script>` to *go*: it can only ever become a Text string. Pinned by a test. The subset is deliberately the web's, including its limits: `#####` is a **paragraph** on both, because the web matches `#{1,4}` only — a note must not grow a heading level on the phone that the desk doesn't have.
+
+**Both trees are flattened, never nested.** `flattenTree`/`flattenOrg` produce a flat row array with `depth` as a **number**, fed to one `FlatList`. Depth becomes indentation, not component nesting. A nested render would build one React subtree per folder and re-render the lot on every toggle; flat means FlatList recycles rows and only mounts what's on screen — a 2,000-note vault scrolls like a 20-note one. Memory's walk only visits **expanded** folders, so rows are `O(visible)`, not `O(vault)`. Pinned by tests, including that a row's payload carries no `children` key (which would ship a whole subtree to every list item and defeat the point).
+
+**The defaults are opposite, on purpose.** Memory tracks **expanded** (a vault opens closed — you're looking for one note); Org tracks **collapsed** (an org chart opens *open* — you're looking at the shape). Same flattening, inverted default, because the question each screen answers is different.
+
+**Failure states got the attention they usually don't.**
+- **A folder that fails to load must not blank the tree you're standing in.** One `loadDir` rejection reports itself, leaves that folder closed, and **keeps everything already fetched**.
+- **"Still fetching" and "this folder is empty" are different facts**, and showing the second during the first is a lie that resolves. `flattenTree` takes the in-flight set and rows report `loading` distinctly from empty. Pinned.
+- **A pull-to-refresh re-reads what's *open***, not the whole vault — collapsing the tree under someone who pulled to refresh would lose their place.
+
+**Colorblind rule held, twice.** Org's status is `statusIcon` + `statusTone` from `status.ts` (never a local mapping — that's the drift `status.test.ts`'s source-guard now forbids after 6d found it twice). Memory's rows are `▸`/`▾`/`📄`/`📎`: a folder's open state and a note's readability are **glyphs**, never hue. A non-note (`.png`) is visibly a different thing *and* isn't tappable, so the tree never offers a tap the backend would reject.
+
+**Deferred, each a deferral rather than a gap:**
+- **The vault graph** and **the org canvas** — see above. Dropped, not deferred: there is no phone form of either worth building.
+- **Editing a note.** `PUT …/memory/file` exists (it's how agents write to the vault) and both clients decline it — the *web* has no editor either, so building one here would invent a surface the desk lacks.
+- **Tappable `[[wikilinks]]`.** Resolving one means searching the vault for a title; the web renders a plain `<span>` too. Styled, not tappable — a link that looks tappable and isn't is worse than one that doesn't pretend.
+- **Opening an external link from a note.** Read-only screen; opening a URL from untrusted note content is a different decision than reading it. The label is shown in link colour and the note stays put.
+- **The vault picker** and **Import/Export company** — desk writes, above.
+
+**Verified:** `npm test` **103/103** · `npm run typecheck` clean · `npm run export` bundles (3.6 MB, 1131 modules) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
 
 ---
 

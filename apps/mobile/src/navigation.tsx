@@ -43,7 +43,9 @@ import CommandCenterScreen from './screens/CommandCenterScreen'
 import CostsScreen from './screens/CostsScreen'
 import HealthScreen from './screens/HealthScreen'
 import InboxScreen from './screens/InboxScreen'
+import MemoryScreen from './screens/MemoryScreen'
 import MoreScreen from './screens/MoreScreen'
+import OrgScreen from './screens/OrgScreen'
 import PlaceholderScreen from './screens/PlaceholderScreen'
 import TasksScreen from './screens/TasksScreen'
 
@@ -72,6 +74,12 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   costs: CostsScreen,
   budgets: BudgetsScreen,
   activity: ActivityScreen,
+  // MOB-6e — the two heavy web views that survive as native trees: the vault
+  // reader (the d3 graph stays on the desk) and the reporting tree (the pan/zoom
+  // canvas stays on the desk). Org pushes AgentDetail via onOpenAgent, exactly as
+  // the roster does — the web's card opens the agent too.
+  memory: MemoryScreen,
+  org: OrgScreen,
 }
 
 /**
