@@ -371,7 +371,7 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 |---|---|---|
 | Install | `npm ci` | **Not `npm install --legacy-peer-deps`** (what the `check` matrix uses). This app's react/react-dom **exact pins** resolve cleanly on their own; `--legacy-peer-deps` would paper over exactly the ERESOLVE regression we want CI to catch, and `install` (vs `ci`) would ignore the committed lockfile. |
 | Typecheck | `npm run typecheck` | The app's own `tsc --noEmit` — **not** the matrix's `npx tsc --noEmit --skipLibCheck`, which would silently skip the RN/Expo type surface. |
-| Test | `npm test` | **33 tests, incl. the three parity tripwires** (nav model · attach · status — MOB-6b added the third). This is the gate the story exists for. |
+| Test | `npm test` | **37 tests, incl. the three parity tripwires** (nav model · attach · status — MOB-6b added the third) **and the heartbeat call-site guard** (§6.4). This is the gate the story exists for. |
 | Export | `npm run export` | `expo export --platform ios` — proves the app still **bundles**. Pure Metro/Hermes JS: **no Xcode, no native toolchain**, ~7s. Cheap enough to be non-negotiable. |
 
 **Added alongside the legacy `app`, not in place of it.** The root guide calls `app/` "LEGACY/frozen; do not build new features here" — but **frozen ≠ dead**, and no doc anywhere says it's safe to stop building. Dropping it from CI would be a silent coverage cut smuggled into a story about *adding* coverage. `check`'s matrix is still exactly `[backend, web, app]`.
@@ -406,7 +406,11 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 
 **Graceful degradation is per-call, not per-screen.** Both screens use `Promise.allSettled`: a failed *overview* must not blank the identity the operator navigated to see, and a failed *agents* fetch must not cost them the task log (an unnamed agent still shows its task). A failed **approvals** fetch drops the affordance entirely rather than claiming "0 pending" — a false all-clear is worse than no claim.
 
-**Verified:** `npm test` 33/33 · `npm run typecheck` clean · `npm run export` bundles (3.54 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only.
+**⚠️ Caught by the independent audit — the heartbeat had its own vocabulary and the screen ignored it.** `AgentDetailScreen` passed the raw `heartbeatStatus` field into `statusIcon`/`statusTone`. Those resolve the **task/run** table, where `green` and `amber` appear in neither `ICON` nor `ALIAS` — so both collapsed onto `idle` and rendered **○ / neutral**: a healthy agent looked identical to one that had never checked in, and amber lost its warning entirely. `stale` survived only by coincidence (it happens to be an `ALIAS` key), which is exactly why the chip read as working.
+
+**The lesson is about where the test pointed, not how hard it tested.** `heartbeatStatus()` was already written, already exported, and already covered — the call site simply never called it. Testing the helper harder would not have caught this. The fix adds `heartbeatIcon()` / `heartbeatTone()` (the only correct way to glyph a heartbeat), points the screen at them, and adds a **source-level guard**: the screens import react-native and can't load under `node --test` — the same constraint `navModel.test.ts` works around with a hand-kept list — so the guard greps the screen sources and fails if a raw heartbeat is ever handed back to the status table. *Verified by reintroducing the defect and watching it go red*, not assumed. This is the colorblind rule's own failure mode: the glyph **is** the signal, so a heartbeat that glyphs wrong is precisely what this vocabulary exists to prevent.
+
+**Verified:** `npm test` 37/37 · `npm run typecheck` clean · `npm run export` bundles (3.54 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only.
 
 ---
 
