@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { requireOrgRole } from '../middleware/rbac'
 import { upsertDocument } from '../services/vector-search'
+import { toPublicOrg } from '../services/org-public'
 
 // ─── ORGS ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,10 @@ export async function orgRoutes(app: FastifyInstance) {
     // req.userId is set by the Clerk auth pre-handler (MCA-14).
     const userId = (req as any).userId
     if (!userId) return reply.code(401).send({ error: 'Unauthorized' })
-    return { orgs: await db.select().from(schema.organisations).where(eq(schema.organisations.ownerId, userId)) }
+    // Explicit projection, not `select *`: this row carries `telegramBotToken`
+    // and the `deployConfig` LLM-key blob. See services/org-public.ts.
+    const rows = await db.select().from(schema.organisations).where(eq(schema.organisations.ownerId, userId))
+    return { orgs: rows.map(toPublicOrg) }
   })
   app.post('/api/orgs', async (req, reply) => {
     // req.userId is set by the Clerk auth pre-handler (MCA-14). Never fall back to "anon".
@@ -135,14 +139,17 @@ export async function orgRoutes(app: FastifyInstance) {
     }
 
     // 4. Return org + arturitoId
+    // `org.deployConfig` holds the plaintext `llmApiKey` this request just wrote.
+    // Echoing it back would hand the key to every future reader of this response
+    // (and its caches/logs) — project it away even though the caller sent it.
     reply.code(201)
-    return { org, arturitoId }
+    return { org: toPublicOrg(org), arturitoId }
   })
   app.get('/api/orgs/:orgId', async (req, reply) => {
     const { orgId } = req.params as any
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
     if (!org) return reply.code(404).send({ error: 'Not found' })
-    return { org }
+    return { org: toPublicOrg(org) }
   })
   app.patch('/api/orgs/:orgId', async (req) => {
     const { orgId } = req.params as any

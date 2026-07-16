@@ -228,6 +228,23 @@ itself is untouched.
   so the lists cannot drift.
 - **Secrets never travel in the config bundle or the package** — `assertNoSecrets()`
   throws; they stay in the encrypted store and are re-supplied per machine.
+- **The org row is projected, never returned raw** — `organisations` carries two
+  credentials (`telegramBotToken`, and `deployConfig`, a blob of LLM API keys, some
+  **plaintext**). Every route that returns an org goes through the single
+  `toPublicOrg()` projection (`services/org-public.ts`); routes never return the row.
+  It is an **allow-list** (`PUBLIC_ORG_FIELDS`), so a newly added column is invisible
+  to clients until classified on purpose — and `org-public.test.ts` fails until it is.
+
+### 9a. The `select *` leak (fixed)
+
+`GET /api/orgs` was `db.select().from(organisations)` — the **whole row** — so both
+credentials crossed the wire to every authenticated client (web, desktop, and the phone
+since MOB-1) and sat in client JS memory. Four read routes plus `POST /api/orgs` (which
+echoed back the plaintext `llmApiKey` the caller had just sent) were affected. All five
+now project. The lesson generalises and is why the fix is one helper, not five
+allow-lists: **`select *` ships whatever the table grows next**, and the column that
+leaked worst — `deployConfig` — is a credential *without being named like one*, so no
+name-based redaction would ever have caught it.
 
 ---
 

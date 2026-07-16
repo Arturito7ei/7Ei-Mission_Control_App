@@ -3,6 +3,7 @@ import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { enforceOrgRole } from '../middleware/rbac'
+import { toPublicOrg } from '../services/org-public'
 
 export async function multiOrgRoutes(app: FastifyInstance) {
   // List orgs for a user via membership table.
@@ -18,7 +19,8 @@ export async function multiOrgRoutes(app: FastifyInstance) {
     const memberships = await db.select().from(schema.orgMembers).where(eq(schema.orgMembers.userId, userId))
     const orgs = await Promise.all(memberships.map(async (m) => {
       const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, m.orgId) })
-      return org ? { ...org, memberRole: m.role } : null
+      // Never spread the raw row — it carries credentials (services/org-public.ts).
+      return org ? { ...toPublicOrg(org), memberRole: m.role } : null
     }))
     return { orgs: orgs.filter(Boolean) }
   })
@@ -32,7 +34,7 @@ export async function multiOrgRoutes(app: FastifyInstance) {
         db.select({ id: schema.tasks.id, status: schema.tasks.status }).from(schema.tasks).where(eq(schema.tasks.orgId, org.id)),
       ])
       return {
-        ...org,
+        ...toPublicOrg(org),
         agentCount: agents.length,
         activeAgents: agents.filter(a => a.status === 'active').length,
         taskCount: tasks.length,
