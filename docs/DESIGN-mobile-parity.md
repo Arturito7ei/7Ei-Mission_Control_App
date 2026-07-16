@@ -1,6 +1,6 @@
 # DESIGN — Mobile parity: bringing the full web Mission Control to `apps/mobile/`
 
-> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
+> **Status:** PLAN + **MOB-6a shipped** (the nav shell — §6.1) + **MOB-5a shipped** (hosted STT — §3.4/§3.5) + **MOB-PAR-1 shipped** (the first parity mirror: document attach + the Tasks fold — §6.2) + **CI-MOB-1 shipped** (the parity tripwires now RUN on every PR and go red on drift — §6.3; becoming a *blocking* gate needs an operator action, see there) + **MOB-6b shipped** (agent detail + the Task Log — §6.4; the roster no longer dead-ends). Everything else below is still plan. **Date:** 2026-07-16 · **Owner:** operator (arturito@7ei.ai)
 > **Companions:** `docs/DESIGN-mobile-expo.md` (the H5/MOB epic — this doc **corrects its §6 voice claim**, see §3.1; MOB-5a has since **built** the leg that claim assumed — §3.4), `web/lib/navModel.ts` (the nav source of truth this inventories), `apps/mobile/README.md`.
 > Scope: enumerate every web surface, measure the mobile gap, resolve the voice Expo-Go-vs-dev-build split against the actual code, and stage the remaining work as MOB-5 (voice) + MOB-6 (menus).
 
@@ -236,8 +236,8 @@ Do **not** pixel-port these.
 | Story | Screen | Endpoints | Effort | Dev build? |
 |---|---|---|---|---|
 | **MOB-6a** | ✅ **SHIPPED** (`mob-6a-nav-shell`) — **Nav shell.** See §6.1 for the as-built. | — | **M** | No |
-| **MOB-6b** | **Agent detail** — the biggest gap next to voice; Agents is already there but dead-ends. Dashboard + Runs + Budget, read-only. | `…/agents/:aid/overview`, `…/runs`, `…/budget` | **M** | No |
-| **MOB-6c** | **Tasks** — list + read-only detail. Its nav home is already folded under Inbox (§6.2); this story builds the screen behind it. | `…/tasks`, `/api/tasks/:id`, `…/timeline` | **M** | No |
+| **MOB-6b** | ✅ **SHIPPED** (`mob-6b-agent-detail-tasks`) — **Agent detail + the Task Log.** The roster no longer dead-ends, and `tasks` is a real screen. Read-only; Runs/Budget/Instructions/Skills/Config tabs and the write actions deferred to **MOB-6b2**. As-built: **§6.4**. | `/api/agents/:aid`, `…/agents/:aid/overview`, `…/tasks`, `…/approvals` | **M** | No |
+| **MOB-6c** | **Task detail** — the read-only drawer behind a log row (the web's `TaskDrawer`). The Tasks *list* shipped in 6b (§6.4); this is what a row opens. | `/api/tasks/:id`, `…/timeline` | **S** | No |
 | **MOB-6d** | **Costs + Budgets** — spend at a glance. Pure numbers, no viz needed. | `…/usage`, `…/budgets`, `…/preflight` | **S** | No |
 | **MOB-6e** | **Memory** — vault **tree + note reader** (§5). Not the graph. | `…/memory/tree`, `…/memory/file` | **M** | No |
 | **MOB-6f** | **Activity + Overview** — timeline + the summary cards. | `…/timeline`, `…/cockpit` | **S** | No |
@@ -324,7 +324,7 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 | Web change | Mirrored? | What shipped on the phone |
 |---|---|---|
 | **#285 — CC-ATT document attach** | ✅ **Mirrored** | 📎 in the Command Center composer → `expo-document-picker` → the **same two-step contract the web uses**: `POST …/arturita/attachments/extract` (multipart, field `file`) on **pick**, then the extracted text rides `POST …/arturita/converse` as `attachment`. Removable chip (name · size · truncated). |
-| **#286 — Tasks folded under Inbox** | ✅ **Mirrored (nav model only)** | `tasks` moved to the **Overview** group beside `inbox`/`comms`, relabelled **Issues → Tasks**, `webHosted: 'inbox'`, `webHidden` dropped. **The screen itself stays MOB-6c** — see *Deferred*. |
+| **#286 — Tasks folded under Inbox** | ✅ **Mirrored (nav model only)** | `tasks` moved to the **Overview** group beside `inbox`/`comms`, relabelled **Issues → Tasks**, `webHosted: 'inbox'`, `webHidden` dropped. **The screen itself was deferred** — see *Deferred*; **MOB-6b has since built it** (§6.4). |
 | **#284 — black light-theme honeycomb** | ⛔ **N/A — nothing to mirror** | That fix is the *web reactor's* honeycomb fill on the light theme. The phone has **no reactor, no honeycomb, and no 7Ei logo anywhere** (zero matches for `logo`/`honeycomb`/`7Ei` in `apps/mobile/src`; `assets/` holds only the launcher icon + splash), and its theme is dark-surface only — there is no light theme for a fill to disappear into. **Inventing a reactor to have something to fix would be the bug.** Re-mirror only if the phone ever grows a logo surface. |
 
 **How the attach mirror matches the web, precisely** — the contract is the web's, not a re-interpretation:
@@ -340,7 +340,7 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 **One trap worth recording:** `api.ts`'s `headers()` set `Content-Type: application/json` for **any** non-null body. A `FormData` body must *not* carry a hand-set content type — the runtime writes `multipart/form-data; boundary=…`, and the boundary is the only thing making the parts parseable. Left alone, every extract would have failed as a malformed multipart against a perfectly healthy endpoint. Same family as the empty-JSON-body 400.
 
 **Deferred (deliberately, not forgotten):**
-- **The Tasks screen** — `tasks` stays `status: 'planned'`, `story: 'MOB-6c'`, so tapping it opens the honest placeholder naming MOB-6c. The fold is a **grouping/labelling** change; building a screen here would have smuggled MOB-6c into a parity PR. Nothing contradicts itself in the meantime: the row reads *Tasks*, sits under Inbox, and says it isn't built yet.
+- **The Tasks screen** — `tasks` stayed `status: 'planned'` here, so tapping it opened an honest placeholder naming the story. The fold was a **grouping/labelling** change; building a screen would have smuggled a separate story into a parity PR. Nothing contradicted itself in the meantime: the row read *Tasks*, sat under Inbox, and said it wasn't built yet. **Closed by MOB-6b** (§6.4), which flipped it to `ready` and put the real log behind it.
 - **Attachments on a delegated turn.** The backend already tells the operator the doc stays with the conversation and isn't attached to the task; the phone inherits that reply verbatim. Persisting an attachment onto a task is its own story, on both clients.
 - **Voice + attach together** — voice isn't on the phone yet (MOB-5c).
 
@@ -371,16 +371,46 @@ console.log({ total: m.allNavItems().length, ready: n('ready'), planned: n('plan
 |---|---|---|
 | Install | `npm ci` | **Not `npm install --legacy-peer-deps`** (what the `check` matrix uses). This app's react/react-dom **exact pins** resolve cleanly on their own; `--legacy-peer-deps` would paper over exactly the ERESOLVE regression we want CI to catch, and `install` (vs `ci`) would ignore the committed lockfile. |
 | Typecheck | `npm run typecheck` | The app's own `tsc --noEmit` — **not** the matrix's `npx tsc --noEmit --skipLibCheck`, which would silently skip the RN/Expo type surface. |
-| Test | `npm test` | **22 tests, incl. the two parity tripwires.** This is the gate the story exists for. |
+| Test | `npm test` | **37 tests, incl. the three parity tripwires** (nav model · attach · status — MOB-6b added the third) **and the heartbeat call-site guard** (§6.4). This is the gate the story exists for. |
 | Export | `npm run export` | `expo export --platform ios` — proves the app still **bundles**. Pure Metro/Hermes JS: **no Xcode, no native toolchain**, ~7s. Cheap enough to be non-negotiable. |
 
 **Added alongside the legacy `app`, not in place of it.** The root guide calls `app/` "LEGACY/frozen; do not build new features here" — but **frozen ≠ dead**, and no doc anywhere says it's safe to stop building. Dropping it from CI would be a silent coverage cut smuggled into a story about *adding* coverage. `check`'s matrix is still exactly `[backend, web, app]`.
 
 **Why a separate job rather than a fourth matrix entry** (`workspace: [backend, web, app, apps/mobile]`): the matrix's shape is wrong for this app in three ways at once — its install command defeats the pins, its typecheck command is the wrong one, and it has **no test or build step at all**. Bending the matrix around one member with conditionals would have put the other three jobs at risk to save a few lines. A standalone job touches nothing that already works.
 
-**The tripwires need no `web/` install.** They import `../../../web/lib/navModel.ts` and `../../../web/app/dashboard/assistant.logic.ts` **by relative path**, and both of those modules are pure data with **zero imports of their own** — so `node --test --experimental-strip-types` loads them straight from the checkout. The mobile job installs `apps/mobile` only. *(This is load-bearing: if either web module ever grows an import, this job breaks and the fix is to keep the module pure, not to install web here.)*
+**The tripwires need no `web/` install.** They import `../../../web/lib/navModel.ts`, `../../../web/app/dashboard/assistant.logic.ts`, and `../../../web/app/dashboard/status.ts` (MOB-6b) **by relative path**, and all three of those modules are pure data with **zero imports of their own** — so `node --test --experimental-strip-types` loads them straight from the checkout. The mobile job installs `apps/mobile` only. *(This is load-bearing: if any of those web modules ever grows an import, this job breaks and the fix is to keep the module pure, not to install web here.)*
 
 **Untouched on purpose:** the `check` matrix, `test.yml`, `deploy.yml`, and **`security.yml` — the known-noisy `npm audit` job keeps its exact semantics** and stays non-blocking. This story adds a gate; it doesn't renegotiate existing ones.
+
+### 6.4 MOB-6b — agent detail + the Task Log (as built)
+
+**Two screens, three placeholders' worth of promise kept, zero backend change.** The phone is a thin REST client to the same hosted backend, so both screens are client work only — every endpoint below already served the web.
+
+| Screen | Endpoints (identical to the web's) | Mirrors |
+|---|---|---|
+| **Agent detail** (`AgentDetailScreen.tsx`) — pushed from a roster row | `GET /api/agents/:agentId` (identity/status/config) · `GET /api/orgs/:orgId/agents/:agentId/overview` (latest run, recent tasks, distributions, costs) | `web/app/dashboard/agent/AgentDetail.tsx` + its `DashboardTab.tsx` — the same two calls, in the same order, reading the same fields. |
+| **Tasks** (`TasksScreen.tsx`) — the `tasks` destination, under the Inbox grouping | `GET /api/orgs/:orgId/tasks` · `GET /api/orgs/:orgId/agents` (the names it joins) · `GET /api/orgs/:orgId/approvals?status=pending` (the affordance) | `web/app/dashboard/page.tsx` `{tab === 'tasks'}` — the same log, the same 100-row cap, the same approvals link. |
+
+**Roster → detail.** `AgentsScreen` rows became `Pressable` and call `onOpenAgent`, a new `AgentDetail` **stack route** (`{ agentId, name }`) pushed above the tabs — back button and iOS swipe-back for free. `name` is carried for the header only; the screen re-fetches the agent and trusts nothing from the params.
+
+**Why the agent detail is NOT in `navModel.ts`.** It isn't a surface on either client: the web reaches it by drilling into the Agents area (a hash route under the same `agents` tab), not from the rail. Registering it as a destination would have invented an IA the web doesn't have — which is the exact failure `navModel.test.ts` exists to catch. `agents` stays one destination; the detail is a route beneath it. **Only `tasks` flipped `planned → ready`.**
+
+**The third tripwire (`status.test.ts`).** `status.ts` ports the web's status table — the synonym map (`in_progress → active`, `stale → failed`, …) and the glyphs. Metro can't import from `web/`, so it's a hand-copy, and a hand-copy without a tripwire is silent drift: teach the web a new synonym and the phone quietly files it under `idle`, showing a ○ where the desk shows ✕ — *"nothing happening"* on a failed run. The test imports **both** modules and asserts the canonicalisation and every glyph agree. `statusColor()` is deliberately **not** compared: it returns CSS `var()` strings, the one part of the table that cannot cross into react-native, so the tone is resolved against our own palette instead. The **glyph** is what the colorblind rule rests on, and the glyph is pinned. `taskLog.ts` has no web module to compare against (the web renders those rules inline in JSX) — which makes them *easier* to drift, so its tests assert the web's literal behaviour (5dp cost, the 60-char cut, the em-dash-not-zero rule) with the mirrored web expression named in each test.
+
+**Deferred, and why each is a deferral rather than a gap:**
+
+- **Editing / the write actions** (Assign Task, Run Heartbeat, Pause/Resume) — the story is read-only by scope. The phone shows state; the desk changes it. → **MOB-6b2**.
+- **The web's five other agent tabs** (Instructions, Skills, Configuration, Runs, Budget) — Instructions is owner-gated markdown editing and Configuration is the agent's editable surface: desk work. Runs + Budget are read-only and are the natural next slice. → **MOB-6b2**.
+- **Task detail** — a log row doesn't open yet (the web has `TaskDrawer`). → **MOB-6c**, rescoped from "the Tasks screen" to "what a row opens", since the list shipped here.
+- **The four 14-day day-column charts** — the only place this screen is deliberately not pixel-parity. Run Activity and Success Rate are 68px of 14 unlabelled bars; at 390pt that's a smudge that reads as decoration. The two **distributions** (by status, by priority) survive because they're label + count + bar. **No data is lost** — the same numbers are on the Costs strip and the task rows.
+
+**Graceful degradation is per-call, not per-screen.** Both screens use `Promise.allSettled`: a failed *overview* must not blank the identity the operator navigated to see, and a failed *agents* fetch must not cost them the task log (an unnamed agent still shows its task). A failed **approvals** fetch drops the affordance entirely rather than claiming "0 pending" — a false all-clear is worse than no claim.
+
+**⚠️ Caught by the independent audit — the heartbeat had its own vocabulary and the screen ignored it.** `AgentDetailScreen` passed the raw `heartbeatStatus` field into `statusIcon`/`statusTone`. Those resolve the **task/run** table, where `green` and `amber` appear in neither `ICON` nor `ALIAS` — so both collapsed onto `idle` and rendered **○ / neutral**: a healthy agent looked identical to one that had never checked in, and amber lost its warning entirely. `stale` survived only by coincidence (it happens to be an `ALIAS` key), which is exactly why the chip read as working.
+
+**The lesson is about where the test pointed, not how hard it tested.** `heartbeatStatus()` was already written, already exported, and already covered — the call site simply never called it. Testing the helper harder would not have caught this. The fix adds `heartbeatIcon()` / `heartbeatTone()` (the only correct way to glyph a heartbeat), points the screen at them, and adds a **source-level guard**: the screens import react-native and can't load under `node --test` — the same constraint `navModel.test.ts` works around with a hand-kept list — so the guard greps the screen sources and fails if a raw heartbeat is ever handed back to the status table. *Verified by reintroducing the defect and watching it go red*, not assumed. This is the colorblind rule's own failure mode: the glyph **is** the signal, so a heartbeat that glyphs wrong is precisely what this vocabulary exists to prevent.
+
+**Verified:** `npm test` 37/37 · `npm run typecheck` clean · `npm run export` bundles (3.54 MB) · `npm install` clean, no ERESOLVE, react/react-dom pins and **SDK 54 untouched** (no dependency added). Additive: `apps/mobile/**` + docs only.
 
 ---
 
