@@ -462,7 +462,7 @@ Both are isolated behind `try/catch` in `src/stepup.ts` (fail-closed: any error 
 
 ### 15.3 Client flow (`src/screens/StepUpModal.tsx` + `src/api.ts`)
 
-1. Operator taps **Approve** on a dangerous card → `InboxScreen` opens `StepUpModal` (safe types keep the lightweight one-tap confirm).
+1. Operator taps **Approve** on a step-up card → `InboxScreen` opens `StepUpModal` (truly safe types keep the lightweight one-tap confirm). "Needs step-up" mirrors the backend gate exactly — `approvalNeedsStepUp()` = a dangerous type **OR** `payload.requiresStepUp === true` (e.g. a `low_trust_review` wrapping a dangerous action, whose *outer* type isn't itself dangerous), so a wrapped case routes through the modal instead of dead-ending on a one-tap 403. If `orgId` is momentarily null (reconnecting), the tap surfaces "Reconnecting — try again in a moment" rather than a silent no-op.
 2. The modal shows the danger **clearly**: type + the backend's **machine-rendered** summary + every `payload.warnings` flag (never model prose).
 3. **Local gate** runs (biometric or typed).
 4. Only on pass: `Api.mintArturitaSession()` mints a **fresh** session (`source:'desk'` — the phone authenticates first-party via Clerk exactly like the web desk), held only in a local `const`.

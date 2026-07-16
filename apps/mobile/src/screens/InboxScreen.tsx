@@ -20,7 +20,7 @@ import {
 } from 'react-native'
 import { Api, type Approval } from '../api'
 import { useAuth } from '../auth'
-import { isDangerousApprovalType } from '../constants'
+import { approvalNeedsStepUp } from '../constants'
 import { font, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Empty, Loading } from '../ui'
 import StepUpModal from './StepUpModal'
@@ -67,10 +67,19 @@ export default function InboxScreen() {
     [apiUrl, getToken],
   )
 
-  // Approve. Dangerous types route through the on-device step-up modal (MOB-4);
-  // safe types keep the lightweight one-tap confirm (no step-up needed server-side).
+  // Approve. Anything the backend would step-up-gate (a dangerous type OR a
+  // non-dangerous outer type carrying payload.requiresStepUp, e.g. a low-trust
+  // review wrapping a dangerous action) routes through the on-device step-up modal
+  // (MOB-4); truly safe types keep the lightweight one-tap confirm.
   function onApprove(a: Approval) {
-    if (isDangerousApprovalType(a.type)) {
+    if (approvalNeedsStepUp(a)) {
+      // The modal can't mint a session without an org scope. If orgId is briefly
+      // null (reconnecting / org not yet resolved), surface it instead of a silent
+      // no-op that makes the button look inert.
+      if (!orgId) {
+        setError('Reconnecting — try again in a moment.')
+        return
+      }
       setStepUp(a)
       return
     }
@@ -120,7 +129,10 @@ export default function InboxScreen() {
         <Empty text="No pending approvals. You're all caught up." />
       ) : (
         items.map((a) => {
-          const dangerous = isDangerousApprovalType(a.type)
+          // "dangerous" here = the backend would step-up-gate approving it (a
+          // dangerous type OR payload.requiresStepUp) — so the chip, the "step-up"
+          // Approve label, and the note all read honestly for a wrapped case too.
+          const dangerous = approvalNeedsStepUp(a)
           const busy = busyId === a.id
           return (
             <Card key={a.id} style={{ marginBottom: space.lg }}>
