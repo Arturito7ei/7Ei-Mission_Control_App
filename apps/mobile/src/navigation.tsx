@@ -50,7 +50,8 @@ import MoreScreen from './screens/MoreScreen'
 import OrgScreen from './screens/OrgScreen'
 import PlaceholderScreen from './screens/PlaceholderScreen'
 import SettingsScreen from './screens/SettingsScreen'
-import TasksScreen from './screens/TasksScreen'
+// TasksScreen is no longer imported here: MOB-7a folded the Task Log into the
+// Inbox screen, which hosts it on the Tasks segment. See TasksEntry below.
 
 /**
  * The built screens, keyed by navModel id. THIS is the registry stage 6b+ grows:
@@ -69,9 +70,14 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   inbox: InboxScreen,
   agents: AgentsScreen,
   status: HealthScreen,
-  // MOB-6b — the Task Log, under the Inbox grouping (P2's fold: Tasks sits with
-  // the approvals it feeds).
-  tasks: TasksScreen,
+  // MOB-7a — Tasks renders INSIDE the Inbox now, on its segment. P2 (web #286)
+  // made Inbox a tabbed section (Inbox | Tasks | Comms) because the queue of work
+  // and the approvals waiting on it are one area; the phone had them as two
+  // separate screens. `tasks` stays a destination — the nav model needs one for
+  // every web surface, and More still lists it — but it opens the combined screen
+  // with the Tasks segment selected, which is what the web's Tasks tab does too.
+  // The Task Log component itself is unchanged; InboxScreen hosts it.
+  tasks: TasksEntry,
   // MOB-6d — Delivery's cost pair (Budgets is the web's hosted tab under Costs,
   // so the two stay adjacent), plus the Activity feed.
   costs: CostsScreen,
@@ -90,6 +96,16 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   governance: GovernanceScreen,
   settings: SettingsScreen,
   connectors: ConnectorsScreen,
+}
+
+/**
+ * MOB-7a — the `tasks` destination, which is the Inbox screen opened on its Tasks
+ * segment. A named component rather than an inline arrow: SCREENS is read on every
+ * render, and a fresh function identity there would remount the screen (and drop
+ * the segment the operator just picked) each time the navigator re-renders.
+ */
+function TasksEntry(nav: ScreenNav) {
+  return <InboxScreen {...nav} initialSegment="tasks" />
 }
 
 /**

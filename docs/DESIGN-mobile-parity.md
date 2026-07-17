@@ -580,6 +580,72 @@ Three new pure modules (`governance.ts`, `connectors.ts`, `settings.ts`) — Rea
 
 ---
 
+### 6.8 MOB-7a — the Command Center becomes the desk's, and Tasks moves into the Inbox (as built)
+
+Two mirrors in one story: the **reactor** (the web's J7 Command Center hero, which the phone never had) and the **Inbox fold** (P2/web #286, which the phone had only half-done).
+
+#### The reactor
+
+`apps/mobile/src/screens/Reactor.tsx` draws the brushed-silver arc-reactor with `react-native-svg` (**15.12.1**, the SDK 54 bundled pin), mirroring `web/app/dashboard/Reactor.tsx`: same 200×200 view box, same radii (96 · 93 · 83 · 70 · 66.5 · 58 · 50), same dash patterns, same counter-rotation, the same 7-hexagon mark, and the same icy core.
+
+**The decisions are a PORT, and the port is pinned.** `src/reactor.ts` hand-copies `web/app/dashboard/reactor.logic.ts` (Metro can't import out of `apps/mobile/`), and `src/reactor.test.ts` imports the **web module** and deep-equals every voice state's visual, field for field. The metal is not a second palette: the silver ramp, the core stops and every state accent are asserted **equal to `web/app/dashboard/tokens.ts` `themes.dark`**. The motion numbers live in CSS, which RN cannot consume — so the test **reads `web/app/globals.css`** and asserts each ported period against the real keyframes.
+
+| Web | Phone | Why |
+|---|---|---|
+| Four `<g>` groups in one `<svg>`, spun by CSS | One `<Svg>` per ring inside an `Animated.View` | RN has no CSS, and react-native-svg elements aren't Animated-driveable. Same geometry, same periods, rotation on the **native driver**. |
+| `prefers-reduced-motion` | `AccessibilityInfo.isReduceMotionEnabled()` + `reduceMotionChanged` | Same contract: motion stops, ripples hide, the state still reads from the caption's icon + label. |
+| `backdrop-filter` frosted disc behind the mark | *(none)* | No RN peer without a native blur dep. The mark leans on its own contrast instead — which is why the logo fill diverges, below. |
+| `filter: blur(8px)` on the bloom | Gradient falloff only | Same reason. The bloom reads slightly crisper. |
+| Dark logo fill = `rgba(232,242,255,.97)` | **`#000000`** — the web's **light** token | ⚠️ **The one deliberate token divergence.** The mark sits on the core, and `--reactor-core-1` is near-white in **both** themes; the web's dark token paints the mark that *same* value. Black is what the light theme's own token comment says it fixed, for the same reason, and it is what an operator can read at arm's length. Pinned to `themes.light['--reactor-logo-fill']` by the test — not a stray hex. |
+
+#### Voice — what is live, and what only renders
+
+The controls are the web's row, in the web's arrangement, with the web's wording (`🎙 Push to talk` · `■ Stop` · `◐ Transcribing…` · `Wake word "arturita"` · `🔊 Spoken replies` · `▸ Delegate this to the office`).
+
+| Leg | State | Detail |
+|---|---|---|
+| **Spoken replies (TTS)** | ✅ **LIVE** | `expo-speech` (~14.0.8), on-device, in stock Expo Go. Exactly what §3.2 called "the cheapest voice win in the epic", and §3.3's recommendation followed: the inert backend TTS is ignored. |
+| **Push to talk (STT)** | ✅ **LIVE — once the deployment has a key** | `expo-av` (~16.0.8) records m4a → `POST …/arturita/transcribe` (§3.4). With no key the route answers **503 `not_configured`** (§3.5) and the UI says so, **names the fix**, latches the chip to "voice not configured", and keeps typing available. It never crashes and never pretends. **The recorded clip is deleted after the turn** — see *Audio residue* below. |
+| **Wake word** | ⚠️ **RENDERS, GATED** | Per §3.2 this needs a dev build. The toggle is rendered (the desk's arrangement is mirrored) but **disabled**, and tapping it explains why. A toggle that flipped and silently never listened would be worse than none. |
+
+**§3.2's "bonus finding" was not ported.** The web's Whisper path sends the transcript straight to `send()`, bypassing `decideSubmit`, so wake-word mode in Brave silently does nothing. The phone has only push-to-talk, whose correct behaviour *is* submit-verbatim — so the phone reaches the same place by the right road, not by copying the bug.
+
+**The chips are honest, which means they don't all match the desk's strings.** `reactorChips` is the web's function, but two inputs genuinely differ on a handset:
+
+- **STT chip** — the web says `🔒 Local Whisper (free, on-device)`; it can, because on the desk it *is*. The phone says **`hosted Whisper`**: the clip leaves the handset for the org's backend. A "local" chip here would misstate where the operator's audio goes, which is the one thing a voice UI must not get wrong. `voice.test.ts` asserts the label never claims local.
+- **LLM chip** — the web probes Ollama on `127.0.0.1` and streams from it. `127.0.0.1` on a phone is the *handset*, so that probe is meaningless here; the phone claims `🔒 local · <model>` **only** when the hosted backend reports a local runtime on the reply itself. Anything else reads cloud.
+
+#### The Inbox fold
+
+The web's Inbox is one tabbed page (`navPageTabs('inbox')` → `Inbox | Tasks | Comms`). The phone had `inbox` and `tasks` as two separate screens — the same product read as two shapes. Now `InboxScreen.tsx` is a segmented shell: **Inbox → approvals · Tasks → the Task Log**.
+
+- **The MOB-4 step-up path is untouched.** The old `InboxScreen` moved to `ApprovalsPane.tsx` **verbatim** — `load`, `decide`, `onApprove`, `confirmReject`, the step-up routing and the `StepUpModal` wiring are the same code, byte for byte from the first import to EOF; only the component's name differs. A layout change must not reach into the gate that approves dangerous actions from a phone.
+- **`tasks` is not orphaned.** It is still a web surface, so the nav model still owes it a destination (`navModel.test.ts` enforces exactly that) and More still lists it — `navigation.tsx` routes it to `TasksEntry`, the same screen opened on its Tasks segment. The fold changed *where Tasks renders*, not whether it exists.
+- **The Task Log's approvals link now switches the segment** instead of navigating. It calls `onOpenTab('inbox')` (the web's `selectTab('inbox')`); post-fold that destination *is* this screen, so navigating would land back here having visibly done nothing.
+- **Comms is left out on purpose** — `beyond: true` on the web, `planned` (MOB-6i) here. A segment opening a placeholder would be a permanent dead end beside two live ones. `inboxSegments.test.ts` derives the expected segments from the web's tabs ∩ the phone's `ready` screens, so **the day Comms ships on the phone, that test fails until the control grows a segment.** The fold cannot silently drift back apart.
+
+#### Boot safety
+
+Three native packages joined the app, so the white-screen class of #296/#297 got three new ways to come back. **`react-native-svg`, `expo-av` and `expo-speech` are all reached through `lazyNativeModule` at the point of use**, imported only as `import type` (erased) at module scope. A host without one loses that leg, not the app — no `Svg` renders the caption + chips alone, which still carry the state (icon + label).
+
+`src/bootSafety.test.ts` is the new standing guard: it **scans every source file** and fails if any native package is imported for its value, or `require`d outside the loader. It was verified to actually bite (a planted module-scope `import * as Speech from 'expo-speech'` fails it by name), because a guard that can't fail is worse than none.
+
+> ⚠️ **The guard's own blind spot, found by audit (#300, folded in).** The scan first rooted at `src/` — so it never looked at **`App.tsx` or `index.ts`**, which are the boot path's *first two frames* (`index.ts` registers `App.tsx`, which imports `navigation.tsx`) and live outside `src/`. The two files a bad value-import is most likely to be added to were exactly the two it couldn't see, and a mutation planted in `App.tsx` passed. It now roots at the **package** (skipping `node_modules`/`dist`/`.expo`/`assets`/`android`/`ios`), and two assertions require `App.tsx` and `index.ts` to be in the scanned set — so re-rooting at `src/` fails loudly instead of letting the blind spot return quietly. Re-verified by planting `import * as Speech from 'expo-speech'` **in `App.tsx`**: red, named by file, green again on revert.
+
+#### Audio residue
+
+`expo-av` writes each recording to the app's cache and never cleans up after itself, so before this every push-to-talk left an m4a of the operator's voice on the device indefinitely. The backend already refuses to persist audio (in memory for the provider call only — AUDIO_RETENTION, PRD §7.8); the phone now holds itself to the same line rather than accumulating the clips the server declined to keep.
+
+`deleteClip()` runs in a **`finally` around the whole send**, so the clip goes on *every* path — upload succeeded, upload failed, **and the "Reconnecting…" branch that returns before uploading at all**. (Cleanup placed only after a successful upload would leak the clip on every transcription failure; after upload-or-error would still leak it on the reconnecting branch.) Unmounting mid-recording also takes its clip with it — that path never uploads, so the file would be pure residue. Deletion never throws: a clip we couldn't remove is housekeeping, not a reason to fail a turn the operator already spoke, and nothing about it is logged (the URI names a file holding their voice).
+
+Uses the **SDK 54** API — `new File(uri).delete()`, guarded by `exists` — rather than the legacy `deleteAsync(uri, { idempotent: true })`: on `expo-file-system`'s main entry the legacy methods are deprecated and now **throw at runtime** by design, and the `expo-file-system/legacy` subpath is on its way out. `exists` buys what `{ idempotent: true }` did. `expo-file-system` (~19.0.23, the bundled pin) goes through `lazyNativeModule` like the rest, and is in the guard's `NATIVE_PACKAGES` list.
+
+**Verified:** `npm test` **215/215** (+58) · `npm run typecheck` clean · `npm run export` bundles (**4 MB, 1283 modules**) · `npm install` clean, **react/react-dom still pinned exactly 19.1.0** with overrides untouched (`reactVersion.test.ts` green), **SDK 54 untouched** — all **four** new deps (`react-native-svg` 15.12.1, `expo-speech` ~14.0.8, `expo-av` ~16.0.8, `expo-file-system` ~19.0.23) taken **verbatim from `bundledNativeModules.json`**, so they ship inside stock Expo Go. Additive: `apps/mobile/**` + docs only — no backend, web, or desktop file touched.
+
+**Follow-up noted, not fixed here:** the ring-multiplier tripwire asserts `RING_MULT` against literals and only checks that `--rk-mult` still *appears* in `globals.css` — it can't read the per-group values, which the web sets inline in `Reactor.tsx` (JSX, unloadable under `node --test`). If someone retunes a multiplier in that JSX, the phone drifts silently. The periods, keyframes and ripple timings *are* pinned to the stylesheet; this one axis isn't.
+
+---
+
 ## 7. Expo Go now vs operator-gated
 
 **Doable in Expo Go today — no Expo/EAS account, no operator action:** **every MOB-6 story (6a–6k)** and **MOB-5b, 5c, 5d** (5c gated on the *backend* story 5a, not on a dev build).

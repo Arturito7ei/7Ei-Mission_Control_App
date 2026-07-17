@@ -112,10 +112,14 @@ export const NAV_GROUPS: NavGroup[] = [
       // P2 (web #286) — Tasks folds in under Inbox: the operator's queue of work
       // and the approvals waiting on them are ONE area, so Tasks sits beside
       // Inbox and Comms here exactly as it does in the web's tab bar
-      // (Inbox | Tasks | Comms). The phone has no rail to fold, so the fold shows
-      // up as adjacency + a shared group — but the id, the label, and the
-      // neighbours are the web's, which is what keeps the two clients readable as
-      // one product.
+      // (Inbox | Tasks | Comms).
+      //
+      // MOB-7a completed that fold. It used to be adjacency ONLY — a shared group
+      // here, but two separate screens — which is the web's one tabbed page read
+      // as two destinations. Now `tasks` opens the SAME screen `inbox` does, on
+      // its Tasks segment (navigation.tsx `TasksEntry` → InboxScreen). The entry
+      // stays: it is a web surface, so the model owes it a destination and More
+      // still lists it. What changed is where it renders, not whether it exists.
       {
         id: 'tasks',
         label: 'Tasks',
@@ -123,7 +127,7 @@ export const NAV_GROUPS: NavGroup[] = [
         // MOB-6b built this (it was pencilled in for MOB-6c): the roster→detail
         // work needed the task vocabulary anyway, so the log came with it.
         status: 'ready',
-        blurb: 'The task log, beside the approvals it feeds.',
+        blurb: 'The task log, in the Inbox beside the approvals it feeds.',
         webHosted: 'inbox',
       },
       {

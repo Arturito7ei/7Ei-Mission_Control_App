@@ -1,216 +1,113 @@
-// Inbox / Approvals — the killer remote feature. Lists pending dangerous-action
-// approvals and lets the operator approve / reject / request-changes from the
-// phone. POST /api/approvals/:id/decide.
+// MOB-7a — the Inbox: approvals and the Task Log, in ONE place.
 //
-// MOB-4: approving a *dangerous* type (file_destructive | wallet_tx | email_send
-// | machine_exec) is now fully supported from the phone via an on-device STEP-UP
-// (StepUpModal): a local biometric/typed gate, then a fresh Arturita command
-// session sent in the `x-arturita-session` header exactly as the backend gate
-// requires. Reject / request-changes never need step-up and remain one-tap, so
-// the remote *stop* action always works.
+// THE FOLD. P2 (web #286) made Inbox a section that hosts tabs — the web rail has
+// a single "Inbox" entry and the page shows `Inbox | Tasks | Comms`, because the
+// operator's queue of work and the approvals waiting on them are one area. The
+// phone had shipped them as two separate destinations: same product, two shapes.
+// This screen is the phone's peer of that tabbed page — one screen, an in-screen
+// segmented control, approvals under Inbox and the Task Log under Tasks.
+//
+// The panes themselves are untouched:
+//   * Inbox → ApprovalsPane — the pre-fold InboxScreen, carried across verbatim.
+//     THE MOB-4 STEP-UP FLOW IS UNCHANGED, deliberately: approve/reject/
+//     request-changes and the on-device step-up gate are the same code they were,
+//     because a layout change must not reach into the gate that gets dangerous
+//     actions approved from a phone.
+//   * Tasks → TasksScreen — the MOB-6b Task Log, unchanged.
+//
+// `tasks` is still a destination in its own right (the nav model must keep one for
+// every web surface, and More still lists it) — navigation.tsx routes it HERE, on
+// the Tasks segment. The fold is about where Tasks renders, not whether it exists.
+//
+// The segments themselves are ../inboxSegments, pinned to the web's
+// `navPageTabs('inbox')` by its test — including a tripwire that fails the day
+// Comms becomes renderable on the phone and this control hasn't grown a segment.
 
-import React, { useCallback, useEffect, useState } from 'react'
-import {
-  Alert,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native'
-import { Api, type Approval } from '../api'
-import { useAuth } from '../auth'
-import { approvalNeedsStepUp } from '../constants'
+import React, { useCallback, useState } from 'react'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { INBOX_SEGMENTS, isInboxSegment, resolveInboxSegment } from '../inboxSegments'
 import { font, space, theme } from '../theme'
-import { Banner, Button, Card, Chip, Empty, Loading } from '../ui'
-import StepUpModal from './StepUpModal'
+import type { ScreenNav } from '../navigation'
+import ApprovalsPane from './ApprovalsPane'
+import TasksScreen from './TasksScreen'
 
-export default function InboxScreen() {
-  const { apiUrl, getToken, orgId } = useAuth()
-  const [items, setItems] = useState<Approval[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
-  // The dangerous approval currently mid-step-up (null = modal closed). MOB-4.
-  const [stepUp, setStepUp] = useState<Approval | null>(null)
+export default function InboxScreen({
+  initialSegment,
+  onOpenTab,
+}: ScreenNav & { initialSegment?: string }) {
+  const [segment, setSegment] = useState(() => resolveInboxSegment(initialSegment))
 
-  const load = useCallback(async () => {
-    const token = await getToken()
-    if (!token || !orgId) return
-    setError(null)
-    try {
-      setItems(await Api.pendingApprovals(apiUrl, token, orgId))
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load approvals.')
-      setItems([])
-    }
-  }, [apiUrl, getToken, orgId])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const decide = useCallback(
-    async (a: Approval, decision: 'approved' | 'rejected' | 'revision_requested', note?: string) => {
-      const token = await getToken()
-      if (!token) return
-      setBusyId(a.id)
-      setError(null)
-      try {
-        await Api.decideApproval(apiUrl, token, a.id, decision, note)
-        setItems((cur) => (cur ?? []).filter((x) => x.id !== a.id))
-      } catch (e: any) {
-        setError(e?.message ?? 'Decision failed.')
-      } finally {
-        setBusyId(null)
-      }
+  /**
+   * The Task Log's approvals affordance calls `onOpenTab('inbox')` — the web's
+   * `selectTab('inbox')`. Before the fold that was a tab jump; now Inbox is a
+   * SEGMENT of this very screen, so it must switch the control rather than
+   * navigate (navigating would land right back here, on the Tasks segment, having
+   * visibly done nothing). Anything that isn't one of our segments is a real
+   * destination and still goes to the navigator.
+   */
+  const openTab = useCallback(
+    (tab: string) => {
+      if (isInboxSegment(tab)) setSegment(tab)
+      else onOpenTab?.(tab)
     },
-    [apiUrl, getToken],
+    [onOpenTab],
   )
-
-  // Approve. Anything the backend would step-up-gate (a dangerous type OR a
-  // non-dangerous outer type carrying payload.requiresStepUp, e.g. a low-trust
-  // review wrapping a dangerous action) routes through the on-device step-up modal
-  // (MOB-4); truly safe types keep the lightweight one-tap confirm.
-  function onApprove(a: Approval) {
-    if (approvalNeedsStepUp(a)) {
-      // The modal can't mint a session without an org scope. If orgId is briefly
-      // null (reconnecting / org not yet resolved), surface it instead of a silent
-      // no-op that makes the button look inert.
-      if (!orgId) {
-        setError('Reconnecting — try again in a moment.')
-        return
-      }
-      setStepUp(a)
-      return
-    }
-    Alert.alert('Approve?', a.summary || a.type, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Approve', onPress: () => decide(a, 'approved') },
-    ])
-  }
-
-  function confirmReject(a: Approval) {
-    Alert.alert('Reject?', a.summary || a.type, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reject', style: 'destructive', onPress: () => decide(a, 'rejected') },
-    ])
-  }
 
   return (
-    <>
-    {stepUp && orgId ? (
-      <StepUpModal
-        approval={stepUp}
-        apiUrl={apiUrl}
-        orgId={orgId}
-        getToken={getToken}
-        onCancel={() => setStepUp(null)}
-        onApproved={(id) => {
-          setStepUp(null)
-          setItems((cur) => (cur ?? []).filter((x) => x.id !== id))
-        }}
-      />
-    ) : null}
-    <ScrollView
-      contentContainerStyle={s.wrap}
-      refreshControl={
-        <RefreshControl refreshing={items === null} onRefresh={load} tintColor={theme.blue} />
-      }
-    >
-      {error ? (
-        <View style={{ marginBottom: space.lg }}>
-          <Banner kind="error">{error}</Banner>
-        </View>
-      ) : null}
-
-      {items === null ? (
-        <Loading text="Loading approvals…" />
-      ) : items.length === 0 ? (
-        <Empty text="No pending approvals. You're all caught up." />
-      ) : (
-        items.map((a) => {
-          // "dangerous" here = the backend would step-up-gate approving it (a
-          // dangerous type OR payload.requiresStepUp) — so the chip, the "step-up"
-          // Approve label, and the note all read honestly for a wrapped case too.
-          const dangerous = approvalNeedsStepUp(a)
-          const busy = busyId === a.id
+    <View style={s.wrap}>
+      {/* The web's Inbox|Tasks tab bar, as a native segmented control. */}
+      <View style={s.segments} accessibilityRole="tablist">
+        {INBOX_SEGMENTS.map((seg) => {
+          const active = seg.id === segment
           return (
-            <Card key={a.id} style={{ marginBottom: space.lg }}>
-              <View style={s.head}>
-                <Chip
-                  label={a.type.replace(/_/g, ' ')}
-                  tone={dangerous ? 'danger' : 'warn'}
-                  glyph={dangerous ? '⚠' : '•'}
-                />
-                {a.createdAt ? <Text style={s.when}>{ago(a.createdAt)}</Text> : null}
-              </View>
-              <Text style={s.summary}>{a.summary || '(no summary provided)'}</Text>
-              {a.requestedByAgentId ? (
-                <Text style={s.meta}>from agent {a.requestedByAgentId.slice(0, 8)}…</Text>
-              ) : null}
-
-              <View style={s.actions}>
-                <View style={s.actionBtn}>
-                  {/* MOB-4: dangerous approvals are now approvable from the phone —
-                      the tap opens the on-device step-up modal (biometric/typed gate
-                      → fresh session → x-arturita-session header). Safe types keep the
-                      one-tap confirm. Reject/revision never step up. */}
-                  <Button
-                    title={dangerous ? 'Approve — step-up' : 'Approve'}
-                    onPress={() => onApprove(a)}
-                    tone="ok"
-                    busy={busy}
-                  />
-                </View>
-                <View style={s.actionBtn}>
-                  <Button title="Reject" onPress={() => confirmReject(a)} tone="danger" busy={busy} />
-                </View>
-              </View>
-              {dangerous ? (
-                <Text style={s.stepup}>
-                  ⚠ Approving this dangerous action requires an on-device step-up (Face ID / Touch ID,
-                  or a typed confirmation). Reject or request changes here without it.
-                </Text>
-              ) : null}
-              <View style={{ marginTop: space.sm }}>
-                <Button
-                  title="Request changes"
-                  onPress={() => decide(a, 'revision_requested', 'Please revise (sent from mobile).')}
-                  tone="ghost"
-                  busy={busy}
-                />
-              </View>
-            </Card>
+            <Pressable
+              key={seg.id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={seg.label}
+              onPress={() => setSegment(seg.id)}
+              style={({ pressed }) => [s.segment, active && s.segmentOn, pressed && { opacity: 0.7 }]}
+            >
+              {/* Selection reads from weight + the underline + the a11y state, not
+                  from hue alone — the same colorblind rule as everything else here. */}
+              <Text style={[s.segmentText, active && s.segmentTextOn]}>{seg.label}</Text>
+            </Pressable>
           )
-        })
-      )}
-    </ScrollView>
-    </>
-  )
-}
+        })}
+      </View>
 
-function ago(ms: number): string {
-  const d = Date.now() - ms
-  const m = Math.floor(d / 60000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
+      <View style={s.pane}>
+        {/* The Task Log is read-only and takes only `onOpenTab` — it drills into
+            no agent, so there is no onOpenAgent to forward. */}
+        {segment === 'tasks' ? (
+          <TasksScreen onOpenTab={openTab} />
+        ) : (
+          <ApprovalsPane />
+        )}
+      </View>
+    </View>
+  )
 }
 
 const s = StyleSheet.create({
-  wrap: { padding: space.lg },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  when: { color: theme.textFaint, fontSize: font.sm },
-  summary: { color: theme.text, fontSize: font.base, lineHeight: 21, marginTop: space.md },
-  meta: { color: theme.textDim, fontSize: font.sm, marginTop: space.xs },
-  actions: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
-  actionBtn: { flex: 1 },
-  stepup: {
-    color: theme.orange,
-    fontSize: font.sm,
-    lineHeight: 18,
-    marginTop: space.sm,
+  wrap: { flex: 1, backgroundColor: theme.bg },
+  segments: {
+    flexDirection: 'row',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.s3,
   },
+  segment: {
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    marginBottom: -1,
+  },
+  segmentOn: { borderBottomColor: theme.blue },
+  segmentText: { color: theme.textDim, fontSize: font.base, fontWeight: '600' },
+  segmentTextOn: { color: theme.text, fontWeight: '800' },
+  pane: { flex: 1 },
 })
