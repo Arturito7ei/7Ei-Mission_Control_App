@@ -20,7 +20,10 @@ import {
   TextInput,
   View,
 } from 'react-native'
-import * as DocumentPicker from 'expo-document-picker'
+// TYPE-ONLY: `import type` is erased at compile time, so this does NOT pull the
+// native module into the boot path. The value is required lazily in
+// pickAttachment() — see the comment there.
+import type * as DocumentPickerNS from 'expo-document-picker'
 import { Api } from '../api'
 import { useAuth } from '../auth'
 import { attachmentChipLabel, canSendTurn, rejectAttachment, toConverseAttachment, type AttachedDoc } from '../attach'
@@ -60,8 +63,17 @@ export default function CommandCenterScreen() {
   const pickAttachment = useCallback(async () => {
     setError(null)
     setNotice(null)
-    let picked: DocumentPicker.DocumentPickerResult
+    let picked: DocumentPickerNS.DocumentPickerResult
     try {
+      // Required HERE, not at module scope, on purpose. expo-document-picker runs
+      // `requireNativeModule('ExpoDocumentPicker')` in its own module body, which
+      // THROWS if the native module is absent from the host (e.g. a client that
+      // doesn't bundle it). A static import puts that throw in this screen's module
+      // body — and since navigation.tsx imports every screen, and App.tsx imports
+      // navigation.tsx, it would land in the BOOT path and blank the whole app
+      // before React ever mounts. Deferring it to the tap means an absent picker
+      // costs you the attach button, not the app; the catch below already says so.
+      const DocumentPicker: typeof DocumentPickerNS = require('expo-document-picker')
       picked = await DocumentPicker.getDocumentAsync({
         type: '*/*',
         multiple: false,
