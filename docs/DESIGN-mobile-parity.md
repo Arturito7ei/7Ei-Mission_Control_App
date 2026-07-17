@@ -699,6 +699,48 @@ Uses the **SDK 54** API — `new File(uri).delete()`, guarded by `exists` — ra
 
 ---
 
+### 6.9 MOB-7c — agent pictures everywhere, and the Activity feed reads as a log (as built)
+
+**Branch `mob-7c-avatars-activity-log`.** Two display mirrors, both read-only, both additive to `apps/mobile/**`.
+
+#### Agent avatars — the phone shows the same picture the web does
+
+**How the web serves an avatar.** An agent row carries two fields: `avatarEmoji` (default `🤖`) and `avatarUrl`. `avatarUrl` is **not a URL to an asset** — it's a base64 **data URI** the backend builds from an uploaded image and stores in `agents.avatar_url` (`backend/src/services/agent-avatar.ts`; capped at 256 KB, PNG/JPEG/WebP/GIF only). It rides the existing Clerk-authenticated JSON, so **there is no image endpoint and no auth header to attach** — the bytes are inline. The web's single `AgentAvatar` (`web/app/dashboard/agent/shared.tsx:39-51`) renders `avatarUrl` in an `<img>` when present, else the emoji in a matching rounded box. Built-in/seeded agents ship emoji-only; a picture appears only where an org **owner** uploaded one (owner-gated `POST …/agents/:id/avatar`).
+
+**Which endpoints actually carry `avatarUrl`** (decisive, because this is an `apps/mobile`-only story — no backend change, so the phone can only show a picture where the wire already has one): the roster `…/agents` (`SELECT *`), the detail `/api/agents/:id` (whole row), and `…/orgchart` (selects it explicitly) **do**. The `…/timeline` lanes carry only `avatarEmoji` — **as does the web's own swimlane** — so the Activity feed stays emoji by data, matching web.
+
+**What shipped on the phone:**
+
+| Piece | File | Note |
+|---|---|---|
+| The picture-or-emoji decision, pure | `src/avatar.ts` | `avatarImageUri` (mirrors the web's `avatarUrl ? img : emoji`) **+ a safety gate**: `isSafeAvatarValue`, a byte-for-byte mirror of the backend's read-path guard — only a base64 data URI of an allowed type reaches `<Image>`, so a `javascript:`, remote-tracker, or `data:image/svg+xml` value can never render. Import-free, so it (and the backend guard) load under `node --test`. |
+| The component | `src/AgentAvatar.tsx` | `<Image>` from RN core (no new dep; already used for the photo-attach thumbnail) with an **`onError` fallback to the emoji** — the web's `<img>` would show a broken box; the phone shows a face. Same rounded-square frame as the web. |
+| Wiring | `AgentsScreen` (40) · `AgentDetailScreen` (52) · `OrgScreen` (32) | Exactly the three surfaces where the web uses `AgentAvatar` **and** the endpoint carries `avatarUrl`. Status glyphs untouched. |
+| Actor framing on the log | `ActivityScreen` | the feed's actor now sits in the same `AgentAvatar` frame (emoji-mode — the timeline has no `avatarUrl`, per above). |
+
+**Where the phone keeps emoji, on purpose:** the Costs bars, Governance rows, and the Activity feed. The web renders **emoji** in all three (its cost bars, `GovernancePanel` rows, and timeline lanes are `avatarEmoji`-only), so mirroring the decision means keeping emoji here — putting a picture where the web doesn't would be inventing, not mirroring.
+
+**`avatarUrl` added to the wire types** (`Agent` in `api.ts`, `OrgAgentLite` in `org.ts`) — superset-tolerant, so the field simply surfaces from the `SELECT *`/whole-row responses that already carried it.
+
+#### Activity — the existing MOB-6d feed, made to read as a log
+
+**Data source, confirmed:** the web's "Activity" is the **`…/timeline`** heartbeat swimlane (`CockpitPanel` → `TimelineSection`). It does **not** read `audit_logs` — the entire `web/` tree has no consumer of `…/audit-log`, that route is owner-gated, and its writer has a no-op history. So the real activity log the web renders is the timeline, and the phone uses the same endpoint (MOB-6d already did). **`audit_logs` was not used, and shouldn't be, because the web doesn't** — reported, not silently substituted.
+
+**The MOB-7c delta** (MOB-6d already shipped the flattened newest-first feed with actor/target/status/when + cost): a pure **`actionVerb(status, ongoing)`** so each row reads as a log line — *"Dev **completed** …"*, *"Maya **is running** …"* — instead of a wall of status chips, plus the shared-avatar actor frame. Kept import-free (an inlined verb map, not a `status.ts` import: a runtime cross-module import forces a `.ts` extension that `tsc` rejects outside the excluded test files — a real trap this story hit and recorded).
+
+**No segmented Timeline | Log control:** the phone deliberately has no swimlane (a 24h chart at 390 pt is a smudge — MOB-6d, §6.5), so there is no second view to segment against. The brief's fallback — "a clean scrollable log list" — is what's right, and it's what the screen is.
+
+**Parity tripwires** (the rule: a web-copied constant/logic gets a test): `avatar.test.ts` imports the backend's real `isSafeAvatarValue` / `ALLOWED_AVATAR_TYPES` / `isAllowedAvatarType` and asserts the phone's mirror agrees value-for-value (SVG/`javascript:`/remote/empty all rejected on both) — a change to the server's allow-list fails the phone. The backend module is pure (global `Buffer` only), so Mobile CI (which installs `apps/mobile` only) runs it. `activity.test.ts` pins `actionVerb`.
+
+**Verified:** mobile **228/228** (+12) · typecheck clean · `expo export` bundles (1289 modules). **SDK 54 untouched, react/react-dom still exactly 19.1.0** (`reactVersion.test.ts` green), **boot-safe** (`bootSafety.test.ts` green — `<Image>` is RN core, no native module added). Strictly additive; no backend/web/desktop source touched.
+
+**Deferred / not done (deliberately):**
+- **Pictures in the Costs / Governance / Activity actor** — emoji there mirrors the web; a picture would diverge. Revisit only if the web adds pictures there first.
+- **Avatars in the Task Log cell** — that cell is a single text projection (`taskLog.ts`), and the web's task rows don't show a picture either. Left as the emoji-in-text it is.
+- **Enriching the Activity feed with real pictures** by joining the roster — possible (the roster carries `avatarUrl`), but it diverges from the web's emoji-only timeline and adds a fetch; not done.
+
+---
+
 ## 7. Expo Go now vs operator-gated
 
 **Doable in Expo Go today — no Expo/EAS account, no operator action:** **every MOB-6 story (6a–6k)** and **MOB-5b, 5c, 5d** (5c gated on the *backend* story 5a, not on a dev build).

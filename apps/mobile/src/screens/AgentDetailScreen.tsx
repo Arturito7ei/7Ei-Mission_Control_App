@@ -29,6 +29,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { AgentAvatar } from '../AgentAvatar'
 import {
   Api,
   type Agent,
@@ -118,7 +119,9 @@ export default function AgentDetailScreen({ agentId }: { agentId: string }) {
       {agent ? (
         <Card style={{ marginBottom: space.lg }}>
           <View style={s.head}>
-            <Text style={s.avatar}>{agent.avatarEmoji || '🤖'}</Text>
+            {/* MOB-7c — the agent's picture in the detail header, as the web's
+                AgentDetail header shows it (its AgentAvatar, size 56). */}
+            <AgentAvatar agent={agent} size={52} />
             <View style={{ flex: 1 }}>
               <Text style={s.name}>{agent.name}</Text>
               {agent.role ? <Text style={s.role}>{agent.role}</Text> : null}
@@ -313,7 +316,6 @@ function Distribution({
 const s = StyleSheet.create({
   wrap: { padding: space.lg },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { fontSize: 34 },
   name: { color: theme.text, fontSize: font.xl, fontWeight: '800' },
   role: { color: theme.textDim, fontSize: font.sm, marginTop: 2 },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },

@@ -33,6 +33,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { AgentAvatar } from '../AgentAvatar'
 import { Api, type Agent } from '../api'
 import { useAuth } from '../auth'
 import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
@@ -88,7 +89,9 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
           >
             <Card>
               <View style={s.head}>
-                <Text style={s.avatar}>{a.avatarEmoji || '🤖'}</Text>
+                {/* MOB-7c — the agent's real picture when it has one, else the
+                    emoji, exactly as the web roster does (its AgentAvatar). */}
+                <AgentAvatar agent={a} size={40} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.name}>{a.name}</Text>
                   {a.role ? <Text style={s.role}>{a.role}</Text> : null}
@@ -130,7 +133,6 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
 const s = StyleSheet.create({
   wrap: { padding: space.lg },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  avatar: { fontSize: 28 },
   name: { color: theme.text, fontSize: font.lg, fontWeight: '700' },
   role: { color: theme.textDim, fontSize: font.sm, marginTop: 2 },
   chevron: { color: theme.textFaint, fontSize: font.lg, fontWeight: '700' },

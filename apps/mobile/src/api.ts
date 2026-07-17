@@ -91,6 +91,10 @@ export type Agent = {
   runtime?: string | null
   agentType?: string | null
   avatarEmoji?: string | null
+  // MOB-7c — the uploaded picture (a base64 data URI), when the org owner set one.
+  // The roster (`SELECT *`) and the detail route (whole row) both carry it; absent
+  // → the emoji is shown. See avatar.ts / AgentAvatar.tsx.
+  avatarUrl?: string | null
   llmProvider?: string | null
   llmModel?: string | null
   heartbeatStatus?: string | null
