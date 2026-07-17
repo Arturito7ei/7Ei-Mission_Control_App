@@ -247,6 +247,24 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_connectors_agent ON agent_connectors(agent_id)`)
   } catch { /* already exists */ }
 
+  // Epic CONN / CONN-5: per-agent Google OAuth. Two additive, idempotent tables:
+  //   agent_oauth_tokens — the agent's OWN Google tokens, ENCRYPTED (AES-256-GCM);
+  //     a SEPARATE table from `secrets` on purpose, so a refresh token is never swept
+  //     into the agent env bag. UNIQUE (org, agent, provider) makes connect an upsert.
+  //   agent_oauth_states — short-lived, single-use CSRF/PKCE state rows; the `id` is
+  //     the opaque random `state`. Pruned by expiry + spent by `used_at`.
+  // Nothing is backfilled — an agent with no Google connection has zero rows and
+  // behaves exactly as before. Reversible: DROP TABLE agent_oauth_tokens / _states.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_oauth_tokens (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, provider TEXT NOT NULL, access_token_enc TEXT NOT NULL, refresh_token_enc TEXT, expires_at INTEGER, scopes TEXT, account_email TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_oauth_tokens_uniq ON agent_oauth_tokens(org_id, agent_id, provider)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_oauth_tokens_agent ON agent_oauth_tokens(agent_id)`)
+  } catch { /* already exists */ }
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_oauth_states (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, connector_id TEXT NOT NULL, provider TEXT NOT NULL, code_verifier TEXT NOT NULL, scopes TEXT NOT NULL, redirect_origin TEXT, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_oauth_states_expires ON agent_oauth_states(expires_at)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

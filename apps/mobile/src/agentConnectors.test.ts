@@ -28,6 +28,7 @@ import {
   MCP_CONNECTOR_ID,
   GITHUB_CONNECTOR_ID,
   JIRA_CONNECTOR_ID,
+  GOOGLE_CONNECTOR_ID,
   isAvailableConnector,
   findDisplayConnector,
   isConfigured,
@@ -38,6 +39,9 @@ import {
   githubConfigToForm,
   validateJiraConfig,
   jiraConfigToForm,
+  googleServicesFromConfig,
+  googleScopesFromConfig,
+  googleServicesSummary,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -109,23 +113,46 @@ test('[CONN-3] each category lists exactly the connectors the operator named, in
   const byTitle = Object.fromEntries(CONNECTOR_GROUPS.map((g) => [g.title, g.connectors.map((c) => c.name)]))
   assert.deepEqual(byTitle['Communication'], ['Google Chat', 'Telegram', 'WhatsApp', 'Signal'])
   assert.deepEqual(byTitle['IT / Project management'], ['GitHub', 'Jira'])
-  assert.deepEqual(byTitle['Google Services'], ['Google Calendar', 'Gmail', 'Google Drive'])
+  // CONN-5: the three Google services became ONE OAuth connection (a single per-agent
+  // Google grant covering Calendar/Gmail/Drive), so the Google group is one row now.
+  assert.deepEqual(byTitle['Google Services'], ['Google Workspace'])
   assert.deepEqual(byTitle['Custom MCP servers'], ['Custom MCP Server'])
 })
 
-test('[CONN-4b] github, jira and the custom MCP server are available; the rest disabled', () => {
-  // CONN-4b enables the two CONN-4a token/basic connectors alongside the CONN-1 mcp
-  // pilot. Order follows the groups: IT/Project (github, jira) then Custom (mcp).
-  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, MCP_CONNECTOR_ID])
+test('[CONN-5] github, jira, google and the custom MCP server are available; the rest disabled', () => {
+  // CONN-5 makes the Google OAuth connector real, joining CONN-4a's github/jira and the
+  // CONN-1 mcp pilot. Order follows the groups: IT/Project (github, jira), Google, Custom.
+  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, MCP_CONNECTOR_ID])
   assert.equal(isAvailableConnector('mcp'), true)
   assert.equal(isAvailableConnector('github'), true)
   assert.equal(isAvailableConnector('jira'), true)
+  assert.equal(isAvailableConnector('google'), true)
   assert.equal(isAvailableConnector('telegram'), false)
   assert.equal(findDisplayConnector('github')?.availability, 'available')
   assert.equal(findDisplayConnector('jira')?.availability, 'available')
+  assert.equal(findDisplayConnector('google')?.availability, 'available')
   // Signal is the only one flagged out-of-scope (vs merely coming-soon).
   assert.equal(findDisplayConnector('signal')?.availability, 'out_of_scope')
   assert.equal(findDisplayConnector('telegram')?.availability, 'coming_soon')
+})
+
+// ─── Google read helpers (config-only display on the phone) — CONN-5 ──────────
+
+test('[CONN-5] google read helpers derive services/scopes from masked config, never a token', () => {
+  const config = {
+    services: { calendar: true, gmail: false, drive: true },
+    scopes: ['openid', 'https://www.googleapis.com/auth/calendar.events'],
+  }
+  assert.deepEqual(googleServicesFromConfig(config), { calendar: true, gmail: false, drive: true })
+  assert.deepEqual(googleScopesFromConfig(config), ['openid', 'https://www.googleapis.com/auth/calendar.events'])
+  assert.equal(googleServicesSummary(googleServicesFromConfig(config)), 'Calendar · Drive')
+  // Absent / malformed config → all-off, empty scopes (a not-yet-connected row).
+  assert.deepEqual(googleServicesFromConfig(null), { calendar: false, gmail: false, drive: false })
+  assert.deepEqual(googleScopesFromConfig(undefined), [])
+  assert.equal(googleServicesSummary({ calendar: false, gmail: false, drive: false }), null)
+  // A token accidentally left in config is NEVER surfaced by these readers.
+  const leaked = googleServicesFromConfig({ services: { gmail: true }, accessToken: 'ya29.SECRET' } as any)
+  assert.equal(JSON.stringify(leaked).includes('SECRET'), false)
 })
 
 test('[CONN-3] every non-available connector carries an honest note pointing at its stage', () => {

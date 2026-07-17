@@ -438,16 +438,67 @@ in the accordion on BOTH surfaces over the same contract — no backend change._
   untouched** (RN core inputs only). **This completes GitHub + Jira as usable per-agent
   connectors on both surfaces.**
 
-### CONN-5 — Per-agent Google OAuth (its own stage) (≈ 5–8 d)
-- Agent-scoped OAuth token storage (decision B: `agentId` on `oauth_tokens` or new table);
-  `state` carries `orgId + agentId` (signed/PKCE); reuse refresh/ensure-fresh.
-- **Web completion:** callback → redirect back to the agent's connectors tab.
-- **Mobile completion:** the hard part — `expo-web-browser` + `AuthSession` + the
-  `sevenei-mc` deep link; **likely requires an EAS dev build** (decision B). If deferred,
-  ship **config-only Google service toggles** now and gate the OAuth button as
-  "desktop-only for now" with an honest banner.
-- **SR focus:** token storage/refresh, PKCE + signed `state` (CSRF), redirect allow-list,
-  scope minimization, and the mobile deep-link interception risk.
+### CONN-5 — Per-agent Google OAuth ✅ SHIPPED
+_As-built on `conn-5-google-oauth`. WEB/desktop run the FULL OAuth flow; MOBILE is
+CONFIG-ONLY (status + account email + "connect from the web dashboard" — the phone
+can't complete OAuth without an EAS dev build, decision B)._
+
+**One Google connection per agent.** The three Google service rows (Calendar/Gmail/Drive)
+collapsed into a single `google` connector (catalog id `google`, authType `oauth`) whose
+config records the granted `{ services, scopes }`. The operator selects which services to
+grant at connect time; the row shows the connected account email + granted scopes.
+
+**Storage — agent-scoped, ENCRYPTED (an improvement over the org connector):**
+- New table **`agent_oauth_tokens`** (`schema.ts`, migrated in `setup.ts`): keyed by
+  `(org_id, agent_id, provider)`, holds `access_token_enc` / `refresh_token_enc`
+  (AES-256-GCM via `services/secrets.encrypt`), `expires_at`, `scopes`, `account_email`.
+  Deliberately **NOT** the `secrets` table, so a refresh token is never swept into the
+  agent env bag (`GET /api/agent/secrets`). Tokens are never projected by
+  `toPublicConnector`, never returned to a client, never logged.
+- The org `oauth_tokens` table (plaintext, keyed by org) is untouched.
+
+**State security — unforgeable + single-use + expiring + PKCE:**
+- New table **`agent_oauth_states`**: the `id` IS the `state` param — 256 bits of
+  randomness (unguessable, unforgeable), server-side only, bound to one
+  `(org, agent, connector)`, carrying the PKCE `code_verifier`, expiring after 10 min,
+  and spent exactly once (`used_at` set by an atomic conditional UPDATE — two concurrent
+  callbacks can't both win). This replaces the org flow's forgeable `state=orgId`.
+- **PKCE S256** binds the auth code to the flow's verifier.
+- `services/agent-google-auth.ts` owns the crypto/HTTP + the state/token store;
+  `services/oauth-redirect.ts` is the redirect allow-list (only `ALLOWED_ORIGINS` — no
+  open redirect; the Google `redirect_uri` is always our own fixed callback).
+
+**Routes:**
+- **Start** (owner-gated, secured scope): `POST …/agents/:agentId/connectors/google/oauth/start`
+  → validates agent-in-org, picks services (≥1), mints a state row + PKCE, returns the
+  Google consent URL. Mints no token.
+- **Callback** (PUBLIC, registered beside `authRoutes`): `GET /api/agent-connectors/google/callback`
+  → spends the state once, exchanges the code (PKCE), fetches the account email, stores
+  ENCRYPTED tokens, records the connector row (`status='connected'`), bounces to
+  `/dashboard?google=connected&agent=…` (no token in the URL). Bad/expired/reused state,
+  denied consent, or a vanished agent → `?google=error`, no token issued.
+- **Disconnect** (owner-gated): the existing DELETE, extended to best-effort revoke at
+  Google + purge the `agent_oauth_tokens` row.
+- The generic configure POST/PUT **reject** the oauth connector (no half-connected row).
+
+**Runtime reach:** `agent-executor.ts`'s Drive-context block now PREFERS the agent's own
+Google token (`ensureFreshAgentGoogleToken` → decrypt → refresh + re-encrypt in place →
+`searchDriveFiles`), falling back to the org token — so a per-agent Google connection
+actually reads that account's Drive. Same backend-side mechanism the org connector uses.
+
+**UI:** web `ConnectorsTab` gets a real Google panel (service checkboxes, Connect →
+launch OAuth → return banner, connected email + granted scopes, Disconnect). Mobile
+`AgentConnectors` shows the `google` row read-only (status + email + services + "Connect
+Google from the web dashboard") with no button/flow.
+
+**Tests:** `backend/src/tests/conn5-google-oauth.test.ts` (20 cases) — state
+forgery/expiry/replay rejected, callback issues no token on bad state, tokens encrypted
+at rest + never in any response, owner-gate (member→403), tenant (org A ✗ agent B→404),
+runtime resolve + refresh/re-encrypt, disconnect purge, generic-write guard. Mobile
+parity tests updated (single `google` row; `AVAILABLE = [github, jira, google, mcp]`).
+
+**SR focus (for the reviewer):** the atomic single-use state spend, the token-never-leaks
+allow-list, the redirect allow-list, and that the org plaintext path is unchanged.
 
 ### CONN-6 — Remaining Communication connectors, config-only (≈ 3–5 d)
 - Telegram (if not the CONN-1 pilot), WhatsApp, Google Chat as **store-settings** entries;
@@ -556,7 +607,7 @@ will grow and the accordion wants room.
 | `connector:` capability namespace | **Reserved, not enforced** |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
 | GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** — backend CONN-4a (keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN`), web+mobile UI rows CONN-4b |
-| Per-agent OAuth (agentId scope, PKCE, mobile completion) | **New** (CONN-5) |
+| Per-agent OAuth (agentId scope, encrypted tokens, PKCE + single-use state) | **SHIPPED** — CONN-5 (`agent_oauth_tokens` + `agent_oauth_states`; web full flow, mobile config-only) |
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
 

@@ -566,6 +566,48 @@ export const oauthTokens = sqliteTable('oauth_tokens', {
   createdAt:    integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Epic CONN / CONN-5: per-AGENT OAuth tokens (Google, v1). The org connector's
+// oauth_tokens row is keyed by (org, provider) and stores tokens in PLAINTEXT; this
+// per-agent table is keyed by (org, agent, provider) and stores them ENCRYPTED
+// (AES-256-GCM, via services/secrets.encrypt) — an improvement, and the reason it is
+// a SEPARATE table from `secrets`: it must NOT be swept into the agent's env bag
+// (GET /api/agent/secrets), which would ship a refresh token into every run. The
+// tokens are consumed BACKEND-SIDE (agent-executor Drive RAG), never returned to a
+// client, and never projected by toPublicConnector. UNIQUE (org, agent, provider).
+export const agentOauthTokens = sqliteTable('agent_oauth_tokens', {
+  id:               text('id').primaryKey(),
+  orgId:            text('org_id').notNull(),
+  agentId:          text('agent_id').notNull(),
+  provider:         text('provider').notNull(),                 // 'google' (v1)
+  accessTokenEnc:   text('access_token_enc').notNull(),         // AES-256-GCM
+  refreshTokenEnc:  text('refresh_token_enc'),                  // AES-256-GCM; null if none
+  expiresAt:        integer('expires_at', { mode: 'timestamp' }),
+  scopes:           text('scopes'),                             // space-joined granted scopes
+  accountEmail:     text('account_email'),                      // the Google account (display label)
+  createdAt:        integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt:        integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
+// Epic CONN / CONN-5: short-lived, SINGLE-USE OAuth state rows — the CSRF/forgery
+// guard for the per-agent Google flow. The `id` IS the `state` param: a 256-bit
+// random hex, so it cannot be forged or guessed; it exists only server-side, binds
+// the flow to one (org, agent, connector), carries the PKCE code_verifier, expires
+// (expiresAt), and is spent exactly once (usedAt, set atomically on callback). This
+// replaces the org flow's forgeable `state=orgId`. Reversible: DROP TABLE.
+export const agentOauthStates = sqliteTable('agent_oauth_states', {
+  id:            text('id').primaryKey(),                       // = the opaque `state` param (random)
+  orgId:         text('org_id').notNull(),
+  agentId:       text('agent_id').notNull(),
+  connectorId:   text('connector_id').notNull(),               // 'google'
+  provider:      text('provider').notNull(),                   // 'google'
+  codeVerifier:  text('code_verifier').notNull(),              // PKCE (S256)
+  scopes:        text('scopes').notNull(),                     // requested scopes (space-joined)
+  redirectOrigin: text('redirect_origin'),                     // validated allow-listed origin for the post-callback bounce
+  createdAt:     integer('created_at', { mode: 'timestamp' }).notNull(),
+  expiresAt:     integer('expires_at', { mode: 'timestamp' }).notNull(),
+  usedAt:        integer('used_at', { mode: 'timestamp' }),    // single-use: set once, on the callback
+})
+
 export const orgMembers = sqliteTable('org_members', {
   id:              text('id').primaryKey(),
   orgId:           text('org_id').notNull(),

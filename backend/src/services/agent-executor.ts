@@ -10,6 +10,7 @@ import { parseAgentWebhooks, stripAgentWebhooks, executeAgentWebhooks } from './
 import { sendPushNotification } from './push'
 import { fireWebhook } from './outbound-webhooks'
 import { ensureFreshToken, searchDriveFiles } from './google-auth'
+import { ensureFreshAgentGoogleToken } from './agent-google-auth'
 import { isExternalAgent, notifyExternalAgent } from './agent-runtime'
 import { goalAncestry, formatGoalContext } from './goals'
 import { canAgentRun } from './governance'
@@ -172,20 +173,38 @@ export async function executeAgentTask(opts: {
       availableAgents = orgAgents.filter(a => a.name !== agent.name)
     }
 
-    // Fetch Drive context if Google is connected for this org
+    // Fetch Drive context if Google is connected. CONN-5: prefer the AGENT's OWN
+    // Google connection (per-agent OAuth, tokens encrypted in agent_oauth_tokens) over
+    // the org-wide one — an agent connected to a specific Google account reads THAT
+    // account's Drive. Falls back to the org token when the agent has none, so the
+    // existing org-level behaviour is unchanged for agents that never connected.
     let driveContext = ''
     try {
-      const oauthToken = await db.query.oauthTokens.findFirst({
-        where: and(eq(schema.oauthTokens.orgId, agent.orgId), eq(schema.oauthTokens.provider, 'google'))
-      })
-      if (oauthToken?.refreshToken) {
-        const fresh = await ensureFreshToken(oauthToken)
-        if (fresh.accessToken !== oauthToken.accessToken) {
-          await db.update(schema.oauthTokens)
-            .set({ accessToken: fresh.accessToken, expiresAt: fresh.expiresAt })
-            .where(eq(schema.oauthTokens.id, oauthToken.id))
+      let driveAccessToken: string | null = null
+      // 1) The agent's own token (fresh; refreshed + re-encrypted in place).
+      try {
+        const agentTok = await ensureFreshAgentGoogleToken(agent.orgId, agent.id)
+        if (agentTok) driveAccessToken = agentTok.accessToken
+      } catch (err) {
+        console.warn('Per-agent Drive token refresh failed (non-critical):', err)
+      }
+      // 2) Fall back to the org-wide Google connection.
+      if (!driveAccessToken) {
+        const oauthToken = await db.query.oauthTokens.findFirst({
+          where: and(eq(schema.oauthTokens.orgId, agent.orgId), eq(schema.oauthTokens.provider, 'google'))
+        })
+        if (oauthToken?.refreshToken) {
+          const fresh = await ensureFreshToken(oauthToken)
+          if (fresh.accessToken !== oauthToken.accessToken) {
+            await db.update(schema.oauthTokens)
+              .set({ accessToken: fresh.accessToken, expiresAt: fresh.expiresAt })
+              .where(eq(schema.oauthTokens.id, oauthToken.id))
+          }
+          driveAccessToken = fresh.accessToken
         }
-        const driveResults = await searchDriveFiles(fresh.accessToken, input, 3)
+      }
+      if (driveAccessToken) {
+        const driveResults = await searchDriveFiles(driveAccessToken, input, 3)
         if (driveResults.length > 0) {
           driveContext = '=== GOOGLE DRIVE DOCUMENTS ===\n' +
             driveResults.map(r => `[${r.name}]: ${r.snippet}`).join('\n') +

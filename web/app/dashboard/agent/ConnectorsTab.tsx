@@ -18,12 +18,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import {
-  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, isConfigured,
+  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, isConfigured,
   validateMcpConfig, mcpConfigToForm,
   validateGithubConfig, githubConfigToForm,
   validateJiraConfig, jiraConfigToForm,
+  GOOGLE_SERVICES, GOOGLE_SERVICE_LABELS, defaultGoogleServices, hasAnyGoogleService,
+  googleServicesFromConfig, googleScopesFromConfig,
   type DisplayConnector, type PublicConnectorState,
   type McpFormInput, type GithubFormInput, type JiraFormInput,
+  type GoogleService, type GoogleServiceSelection,
 } from '@/lib/agentConnectors'
 import { Button, Card, Pill, Select, Skeleton, TextArea, TextInput } from '../ui'
 import { FormLabel } from '../cockpit/shared'
@@ -51,8 +54,31 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
   const [loaded, setLoaded] = useState(false)
   const [ownerOnly, setOwnerOnly] = useState(false)   // a 403 on the gated read
   const [loadErr, setLoadErr] = useState<string | null>(null)
+  // A banner after returning from the Google OAuth bounce (?google=connected|error).
+  const [oauthNotice, setOauthNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   // Which category sections are open. Custom MCP (the real one) opens by default.
   const [open, setOpen] = useState<Record<string, boolean>>({ custom: true })
+
+  // Detect the post-OAuth bounce: the callback redirects to /dashboard?google=…&agent=…
+  // Show a banner, open the Google section, and strip the query so a refresh doesn't
+  // re-show it. No token is ever in this URL — only a status + the agent id.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const g = params.get('google')
+    if (!g) return
+    const forThisAgent = !params.get('agent') || params.get('agent') === agentId
+    if (forThisAgent) {
+      setOpen(o => ({ ...o, google: true }))
+      setOauthNotice(g === 'connected'
+        ? { kind: 'ok', text: 'Google connected.' }
+        : { kind: 'err', text: `Google connection failed${params.get('reason') ? ` (${params.get('reason')})` : ''}.` })
+    }
+    // Strip google/agent/reason from the URL without a navigation.
+    for (const k of ['google', 'agent', 'reason']) params.delete(k)
+    const qs = params.toString()
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''))
+  }, [agentId])
 
   const load = useCallback(async () => {
     setLoadErr(null); setOwnerOnly(false)
@@ -106,8 +132,16 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: space.xl }}>
       <p style={{ ...ax.empty, maxWidth: 640 }}>
         Connect this agent to external services. Credentials are stored encrypted at agent scope and are never shown back —
-        only their connection status. GitHub, Jira and custom MCP servers are configurable today; the rest arrive in later stages.
+        only their connection status. GitHub, Jira, Google and custom MCP servers are configurable today; the rest arrive in later stages.
       </p>
+
+      {oauthNotice && (
+        <div style={oauthNotice.kind === 'ok'
+          ? { color: tk.green, fontSize: text.sm.fontSize }
+          : ax.err}>
+          {oauthNotice.text}
+        </div>
+      )}
 
       {CONNECTOR_GROUPS.map(group => {
         const isOpen = open[group.key] ?? false
@@ -195,7 +229,112 @@ function ConnectorRow({ conn, state, orgId, agentId, getToken, onState }: {
         <JiraConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
           onState={onState} onDone={() => setExpanded(false)} />
       )}
+      {available && expanded && conn.id === GOOGLE_CONNECTOR_ID && (
+        <GoogleConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
     </div>
+  )
+}
+
+// ─── Google (OAuth) config panel (CONN-5) ─────────────────────────────────────
+//
+// No credential form: Google is CONNECTED via the OAuth flow. The operator picks the
+// services to grant, hits Connect, and the browser navigates to Google's consent
+// screen; the public callback stores the tokens (encrypted, agent-scoped) and bounces
+// back to /dashboard?google=connected. When connected we show the account email +
+// granted scopes (never a token) and a Disconnect. Owner-only (the start/disconnect
+// routes are owner-gated; a member's action 403s and surfaces inline).
+function GoogleConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string
+  agentId: string
+  getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const connected = isConfigured(state)
+  // Seed the service selection from the stored grant when connected, else default all.
+  const [services, setServices] = useState<GoogleServiceSelection>(() =>
+    connected ? googleServicesFromConfig(state?.config) : defaultGoogleServices())
+  const [busy, setBusy] = useState<null | 'connect' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const grantedScopes = googleScopesFromConfig(state?.config)
+  const toggle = (svc: GoogleService) => setServices(s => ({ ...s, [svc]: !s[svc] }))
+
+  const connect = async () => {
+    setErr(null)
+    if (!hasAnyGoogleService(services)) { setErr('Select at least one Google service to connect.'); return }
+    setBusy('connect')
+    try {
+      // Owner-gated start route → returns the Google consent URL. Navigate the browser
+      // there; the flow completes at the public callback and bounces back here.
+      const { url } = await api<{ url: string }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${GOOGLE_CONNECTOR_ID}/oauth/start`,
+        { token: await getToken(), method: 'POST', body: JSON.stringify({ services }) })
+      window.location.href = url
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not start Google connection.')
+      setBusy(null)
+    }
+  }
+
+  const remove = async () => {
+    setErr(null); setBusy('delete')
+    try {
+      await api(`/api/orgs/${orgId}/agents/${agentId}/connectors/${GOOGLE_CONNECTOR_ID}`,
+        { token: await getToken(), method: 'DELETE' })
+      onState(null)
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Could not disconnect.'); setBusy(null) }
+  }
+
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      {connected && state?.accountLabel && (
+        <div style={{ fontSize: text.sm.fontSize, color: tk.text }}>
+          Connected as <strong>{state.accountLabel}</strong>
+        </div>
+      )}
+
+      <div>
+        <div style={{ fontSize: text.sm.fontSize, fontWeight: 600, color: tk.text, marginBottom: space.sm }}>
+          {connected ? 'Granted services' : 'Services to grant'}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: space.md }}>
+          {GOOGLE_SERVICES.map(svc => (
+            <label key={svc} style={{ display: 'flex', alignItems: 'center', gap: space.sm, fontSize: text.sm.fontSize, color: tk.text, cursor: 'pointer' }}>
+              <input type="checkbox" checked={services[svc]} onChange={() => toggle(svc)} />
+              {GOOGLE_SERVICE_LABELS[svc]}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {connected && grantedScopes.length > 0 && (
+        <details style={{ fontSize: text.xs.fontSize, color: tk.muted }}>
+          <summary style={{ cursor: 'pointer' }}>{grantedScopes.length} granted scope{grantedScopes.length === 1 ? '' : 's'}</summary>
+          <ul style={{ margin: `${space.sm}px 0 0`, paddingLeft: 18 }}>
+            {grantedScopes.map(s => <li key={s} style={{ wordBreak: 'break-all' }}>{s}</li>)}
+          </ul>
+        </details>
+      )}
+
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize }}>
+        Connecting opens Google’s consent screen. Tokens are stored encrypted at agent scope and are never shown back — this
+        agent reads its own Google account. {connected ? 'Reconnect to change the granted services.' : ''}
+      </p>
+
+      {err && <div style={ax.err}>{err}</div>}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+        <Button variant="primary" onClick={connect} disabled={busy !== null}>
+          {busy === 'connect' ? 'Redirecting…' : connected ? 'Reconnect' : 'Connect Google'}
+        </Button>
+        {connected && <Button variant="danger" onClick={remove} disabled={busy !== null}>{busy === 'delete' ? 'Removing…' : 'Disconnect'}</Button>}
+      </div>
+    </Card>
   )
 }
 

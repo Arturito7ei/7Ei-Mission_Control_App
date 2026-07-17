@@ -10,6 +10,11 @@ import {
   toPublicConnector, connectorEnvKeys, primarySecretKey,
   connectorSecretEntries, connectorAccountLabel, isAtlassianHost,
 } from '../services/agent-connectors'
+import {
+  buildAgentAuthUrl, createOauthState, scopesForServices, hasAnyService,
+  normalizeServices, ensureFreshAgentGoogleToken, deleteAgentGoogleToken,
+} from '../services/agent-google-auth'
+import { allowedRedirectOrigin } from '../services/oauth-redirect'
 
 // ─── Per-agent connectors (Epic CONN / CONN-1) ───────────────────────────────
 //
@@ -152,6 +157,13 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
     if (!meta) return reply.code(404).send({ error: 'Unknown connector' })
     if (!(await agentInOrg(orgId, agentId))) return reply.code(404).send({ error: 'Agent not found' })
 
+    // OAuth connectors (Google) are connected via the dedicated start/callback flow,
+    // never by POSTing a credential here — reject so no half-connected row (config
+    // without tokens) can be created out-of-band. See the /oauth/start route.
+    if (meta.authType === 'oauth') {
+      return reply.code(400).send({ error: `Connect ${meta.name} via the OAuth flow (/connectors/${cid}/oauth/start), not this endpoint.` })
+    }
+
     const body = (req.body ?? {}) as any
     const valid = validateConnectorConfig(cid, body.config)
     if (valid.ok !== true) return reply.code(400).send({ error: valid.error })
@@ -214,6 +226,9 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
     const { orgId, agentId, cid } = req.params as any
     const meta = getAgentConnector(cid)
     if (!meta) return reply.code(404).send({ error: 'Unknown connector' })
+    if (meta.authType === 'oauth') {
+      return reply.code(400).send({ error: `${meta.name} is managed through the OAuth flow — reconnect to change its scopes.` })
+    }
     if (!(await agentInOrg(orgId, agentId))) return reply.code(404).send({ error: 'Agent not found' })
     const existing = await db.query.agentConnectors.findFirst({
       where: and(eq(schema.agentConnectors.orgId, orgId), eq(schema.agentConnectors.agentId, agentId), eq(schema.agentConnectors.connectorId, cid)),
@@ -255,6 +270,18 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
     let result: { ok: boolean; detail?: string; error?: string }
     if (cid === 'mcp') {
       result = { ok: true, detail: row.accountLabel ?? meta.name }
+    } else if (cid === 'google') {
+      // Google: prove the stored (encrypted, agent-scoped) token still refreshes and
+      // authenticates — never echoes the token. A missing/expired-no-refresh token
+      // reports cleanly so the operator knows to reconnect.
+      try {
+        const tok = await ensureFreshAgentGoogleToken(orgId, agentId)
+        result = tok
+          ? { ok: true, detail: tok.accountEmail ?? row.accountLabel ?? 'Google connected' }
+          : { ok: false, error: 'Google token expired — reconnect' }
+      } catch {
+        result = { ok: false, error: 'Google unreachable' }
+      }
     } else {
       try {
         result = await providerTest(cid, await resolveAgentEnv(orgId, agentId))
@@ -285,6 +312,37 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
       // credential AND any non-secret env like Jira base/email), not just secretRef.
       for (const k of connectorEnvKeys(cid)) await delAgentSecret(orgId, agentId, k)
     }
+    // Google (OAuth): the tokens live in the ENCRYPTED agent_oauth_tokens table, not
+    // the env bag — best-effort revoke them at Google and purge the row. Runs even if
+    // the connector row was already gone, so a stale token can't be orphaned.
+    if (cid === 'google') {
+      try { await deleteAgentGoogleToken(orgId, agentId) } catch { /* purge is best-effort; row already deleted */ }
+    }
     reply.code(204)
+  })
+
+  // ─── Google OAuth start (owner-gated) — CONN-5 ────────────────────────────────
+  //
+  // Begin the per-agent Google flow: pick the services (calendar/gmail/drive), mint a
+  // SINGLE-USE, expiring, PKCE-bearing state row bound to THIS (org, agent), and return
+  // the Google consent URL. The browser navigates there; Google redirects to the PUBLIC
+  // callback (routes/agent-auth-google.ts) with ?code&state. No token is minted here.
+  app.post('/api/orgs/:orgId/agents/:agentId/connectors/google/oauth/start', owner, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
+    if (!(await agentInOrg(orgId, agentId))) return reply.code(404).send({ error: 'Agent not found' })
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.PUBLIC_URL) {
+      return reply.code(503).send({ error: 'Google OAuth is not configured on this deployment' })
+    }
+    const services = normalizeServices((req.body as any)?.services)
+    // Default to all three when the client sends nothing; require at least one so a
+    // grant is never identity-only (useless).
+    const chosen = hasAnyService(services) ? services : normalizeServices({ calendar: true, gmail: true, drive: true })
+    const scopes = scopesForServices(chosen)
+    const origin = allowedRedirectOrigin(null)
+    const { id, challenge } = await createOauthState({
+      orgId, agentId, connectorId: 'google', provider: 'google', scopes, redirectOrigin: origin,
+    })
+    const url = buildAgentAuthUrl({ state: id, scopes, challenge })
+    return { url }
   })
 }
