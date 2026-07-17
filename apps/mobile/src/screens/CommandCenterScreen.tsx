@@ -46,6 +46,7 @@ import {
 // the point of use — see the loaders below.
 import type * as AvNS from 'expo-av'
 import type * as DocumentPickerNS from 'expo-document-picker'
+import type * as FileSystemNS from 'expo-file-system'
 import type * as SpeechNS from 'expo-speech'
 import { Api } from '../api'
 import { useAuth } from '../auth'
@@ -78,6 +79,38 @@ const getDocumentPicker = lazyNativeModule(
 )
 const getAv = lazyNativeModule('expo-av', () => require('expo-av') as typeof AvNS)
 const getSpeech = lazyNativeModule('expo-speech', () => require('expo-speech') as typeof SpeechNS)
+const getFileSystem = lazyNativeModule('expo-file-system', () => require('expo-file-system') as typeof FileSystemNS)
+
+/**
+ * Delete a recorded clip from the app's cache once it has been dealt with.
+ *
+ * WHY: `expo-av` writes the recording to the cache directory and never cleans up
+ * after itself, so without this every push-to-talk leaves an m4a of the operator's
+ * voice sitting on the device indefinitely. The backend already refuses to persist
+ * audio (it holds the clip in memory for the provider call only — AUDIO_RETENTION,
+ * PRD §7.8); the phone should hold itself to the same line rather than quietly
+ * accumulating the recordings the server declined to keep.
+ *
+ * Uses the SDK 54 API (`new File(uri).delete()`) rather than the legacy
+ * `deleteAsync`: on the main entry the legacy methods are deprecated and now
+ * **throw at runtime** by design, and the `expo-file-system/legacy` subpath is on
+ * its way out. `exists` makes it idempotent, which is what `{ idempotent: true }`
+ * bought on the old call.
+ *
+ * Never throws. A clip we couldn't delete is a housekeeping failure, not a reason
+ * to fail a turn the operator already spoke — the transcript matters more.
+ */
+async function deleteClip(uri: string): Promise<void> {
+  try {
+    const FS = getFileSystem()
+    if (!FS) return // no file-system module on this host — nothing we can do
+    const file = new FS.File(uri)
+    if (file.exists) file.delete()
+  } catch {
+    // Swallowed on purpose. Nothing here is logged: the URI names a file holding
+    // the operator's voice, and a cleanup miss is not worth a line about it.
+  }
+}
 
 type Msg = {
   role: 'user' | 'assistant'
@@ -130,9 +163,22 @@ export default function CommandCenterScreen() {
 
   // Stop speech and release the mic if we unmount mid-flight — otherwise the reply
   // keeps talking over whatever the operator opened next, and the mic stays hot.
+  //
+  // Recording away from this screen also has to take its clip with it: stopping the
+  // recorder still leaves the m4a in the cache, and this path never uploads it, so
+  // it would be pure residue. Fire-and-forget — the component is already gone.
   useEffect(() => () => {
     try { getSpeech()?.stop() } catch { /* noop */ }
-    try { recordingRef.current?.stopAndUnloadAsync() } catch { /* noop */ }
+    const rec = recordingRef.current
+    recordingRef.current = null
+    if (rec) {
+      rec.stopAndUnloadAsync()
+        .then(() => {
+          const uri = rec.getURI()
+          return uri ? deleteClip(uri) : undefined
+        })
+        .catch(() => { /* the recorder was already gone; nothing to clean up */ })
+    }
   }, [])
 
   // ── Speak a reply (expo-speech). Never throws, never dead-ends: the reply text
@@ -342,32 +388,45 @@ export default function CommandCenterScreen() {
     // Release the session so other audio (and the TTS reply) behaves normally.
     try { await getAv()?.Audio.setAudioModeAsync({ allowsRecordingIOS: false }) } catch { /* noop */ }
     if (!uri) return
+    const clipUri = uri
 
-    const token = await getToken()
-    if (!token || !orgId) {
-      setError('Reconnecting — try that again in a moment.')
-      return
-    }
-    setTranscribing(true)
+    // The clip is deleted on EVERY path from here on, not just the two obvious
+    // ones. Cleanup only after a successful upload would leak the recording every
+    // time transcription failed; cleanup after upload-or-error would still leak it
+    // on the reconnecting branch below, which returns before uploading at all. The
+    // operator's voice shouldn't outlive the turn because of which way it went.
     try {
-      const r = await Api.transcribe(apiUrl, token, orgId, {
-        uri,
-        name: RECORDING_FILENAME,
-        mimeType: RECORDING_MIME,
-      })
-      const text = (r.transcript ?? r.text ?? '').trim()
-      // Push-to-talk submits a non-empty transcript verbatim — the web's
-      // `decideSubmit` in its non-wake-word mode, which is the only mode we have.
-      if (text) send(text, delegate)
-      else setNotice(describeTranscribeFailure('empty_audio').notice)
-    } catch (e: any) {
-      // Diagnose by CODE, never by prose — and latch the chip when the deployment
-      // simply has no key yet, so the operator is told once, clearly.
-      const d = describeTranscribeFailure(sttErrorCode(e?.message))
-      if (d.unconfigured) setSttConfigured(false)
-      setNotice(d.notice)
+      const token = await getToken()
+      if (!token || !orgId) {
+        setError('Reconnecting — try that again in a moment.')
+        return
+      }
+      setTranscribing(true)
+      try {
+        const r = await Api.transcribe(apiUrl, token, orgId, {
+          uri: clipUri,
+          name: RECORDING_FILENAME,
+          mimeType: RECORDING_MIME,
+        })
+        const text = (r.transcript ?? r.text ?? '').trim()
+        // Push-to-talk submits a non-empty transcript verbatim — the web's
+        // `decideSubmit` in its non-wake-word mode, which is the only mode we have.
+        if (text) send(text, delegate)
+        else setNotice(describeTranscribeFailure('empty_audio').notice)
+      } catch (e: any) {
+        // Diagnose by CODE, never by prose — and latch the chip when the deployment
+        // simply has no key yet, so the operator is told once, clearly.
+        const d = describeTranscribeFailure(sttErrorCode(e?.message))
+        if (d.unconfigured) setSttConfigured(false)
+        setNotice(d.notice)
+      } finally {
+        setTranscribing(false)
+      }
     } finally {
-      setTranscribing(false)
+      // `Api.transcribe` streams the file from disk, so this must wait for the
+      // upload to have finished — which it has: the inner block is fully awaited
+      // before this runs, on both the success and the failure path.
+      await deleteClip(clipUri)
     }
   }, [apiUrl, getToken, orgId, send, delegate])
 

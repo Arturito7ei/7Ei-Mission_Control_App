@@ -44,6 +44,7 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', '.expo', 'assets', 'android',
 const NATIVE_PACKAGES = [
   'expo-av',
   'expo-document-picker',
+  'expo-file-system',
   'expo-local-authentication',
   'expo-notifications',
   'expo-speech',
@@ -125,7 +126,7 @@ test('[MOB-7a] the packages MOB-7a added are actually guarded, not just absent',
   // deletes the reactor or the voice legs, this fails and asks the question rather
   // than leaving a guard quietly protecting nothing.
   const all = FILES.map((f) => readFileSync(f, 'utf8')).join('\n')
-  for (const pkg of ['react-native-svg', 'expo-av', 'expo-speech']) {
+  for (const pkg of ['react-native-svg', 'expo-av', 'expo-speech', 'expo-file-system']) {
     assert.match(
       all,
       new RegExp(`lazyNativeModule\\(\\s*['"]${pkg}['"]`),
