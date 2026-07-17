@@ -337,6 +337,64 @@ _As-built on `conn-3-mobile-connectors-accordion`._
   this is where the `connector:` capability + trust/approval model must gate it
   (see CONN-7). Rotation flow (replace token) mirrors the web's existing "Replace token."
 
+#### CONN-4a — GitHub + Jira BACKEND (real via env injection) ✅ SHIPPED
+_As-built on `conn-4a-github-jira-backend`. Backend-only; CONN-4b enables the web +
+mobile accordion rows over this same contract._
+
+- **Catalog:** `github` (auth `token`, `secretRequired`) and `jira` (auth `basic`,
+  `secretRequired`) added to `AGENT_CONNECTORS` (`services/agent-connectors.ts`).
+  Config schemas (zod, `.strict()`): GitHub `{ username? }` (label only — the PAT is
+  NOT config); Jira `{ baseUrl: url(), email: email() }` — `baseUrl` URL-validated.
+- **The execution contract — the EXACT env-var keys the credential is stored/injected
+  under** (`CONNECTOR_ENV_KEYS` in `services/agent-connectors.ts`). This is what makes
+  the connectors REAL: `GET /api/agent/secrets` returns `resolveSecretsForAgent(...)`,
+  a bag keyed by each `secrets` row's `key`, and the adapters inject that bag VERBATIM
+  as env (`os.environ[str(k)] = str(v)` — `adapters/claude-code/cc_adapter.py:120`,
+  `adapters/openclaw/mc_adapter.py`). So the agent-scoped secret KEY **is** the env-var
+  name the runtime receives:
+
+  | Connector | Env keys stored at agent scope (→ injected as env) | Evidence |
+  |---|---|---|
+  | **github** | `GITHUB_TOKEN` (the PAT) | Matches the ORG connector's `secretKey: 'GITHUB_TOKEN'` (`services/connectors.ts`) AND the backend's own consumer `process.env.GITHUB_TOKEN` (`routes/skills.ts:34`). **Confirmed name.** |
+  | **jira** | `JIRA_BASE_URL`, `JIRA_EMAIL` (non-secret), `JIRA_API_TOKEN` (secret) | **Conventional** basic-auth env names. The backend has **no in-repo Jira env consumer** — the org Jira path uses a `JIRA_CONNECTION` JSON blob for backend-side REST, not env — so these are the standard names. ⚠️ **Operator: confirm your runtime's Jira tooling reads exactly `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`** (some MCP servers use `JIRA_URL` / `JIRA_USERNAME`); if different, the mapping is one edit in `CONNECTOR_ENV_KEYS` + `connectorSecretEntries`. |
+
+  Jira's `baseUrl`/`email` are non-secret yet ALSO written into the (encrypted) secret
+  store because env injection is the ONLY channel to the runtime — `config` is not
+  injected. `config` still holds them too, as the returnable display source of truth
+  (masked reads show base URL + email; the token is never in `config`, only the secret
+  store). Multi-key mapping via `connectorSecretEntries()`; the sensitive key
+  (`primarySecretKey()` → `GITHUB_TOKEN` / `JIRA_API_TOKEN`) is recorded as the row's
+  `secretRef`.
+- **Flow (real, not just stored):** configure → `connectorSecretEntries()` encrypts the
+  entries into `agent`-scoped `secrets` rows → `resolveSecretsForAgent(...)` layers them
+  (agent override wins over a company default) → `GET /api/agent/secrets` →
+  adapter injects as env → the runtime's git/gh/Jira tooling reads them. Proven by
+  `[CONN4A-EXEC]` tests asserting the resolved bag carries `GITHUB_TOKEN` and all three
+  `JIRA_*` keys for the agent. `useOrgConnection: true` stores NO agent credential and
+  lets the company-scope secret flow (decision A inheritance).
+- **`test` is a REAL, SSRF-safe provider check** (not a stub, unlike CONN-1's mcp):
+  GitHub → `GET https://api.github.com/user` (host **hardcoded** — no SSRF), returns the
+  login; Jira → `GET {baseUrl}/rest/api/3/myself` with Basic auth **only when
+  `isAtlassianHost(baseUrl)`** (`*.atlassian.net`) — a self-hosted Jira on any other host
+  is **not dialed** (live check skipped, safe result returned). 8s timeout; the token is
+  never echoed (detail = login / displayName). mcp remains a stub.
+- **Security:** the token lives ONLY in the encrypted `secrets` store, NEVER in the
+  `agent_connectors` row, NEVER in any read/list/get/test response, NEVER logged.
+  `toPublicConnector()` (allow-list projection) is unchanged and still masks; the new
+  non-secret config fields (baseUrl/email/username) ARE returnable, the token is not.
+  Owner-gated + tenant-scoped exactly as CONN-1 (generic routes). Disconnect purges
+  EVERY agent-scoped env row for the connector (token AND non-secret base/email).
+- **Tests** `tests/agent-connectors-github-jira.test.ts` (+15): catalog/auth types,
+  Jira URL + email validation, the env-key contract, `isAtlassianHost` SSRF guard,
+  owner-403 / required-credential-400, `[CONN4A-EXEC]` the resolved bag carries the
+  runtime keys, a **sentinel leak sweep** (neither token nor key name in any response),
+  the live test dials only known hosts + records `error` on failure, disconnect purge,
+  cross-tenant 404. Full backend suite (1452) + evals (11/11) + tsc green.
+- **SR focus (met):** no token in any read (value + key sentinels); SSRF-safe test
+  (known hosts only, host-guarded Jira); encryption at rest; owner gate binds; the
+  audit-log hook covers the mutating routes. The powerful-capability containment
+  (`connector:` cap + trust) is still CONN-7 — until then, owner-configured + least-priv.
+
 ### CONN-5 — Per-agent Google OAuth (its own stage) (≈ 5–8 d)
 - Agent-scoped OAuth token storage (decision B: `agentId` on `oauth_tokens` or new table);
   `state` carries `orgId + agentId` (signed/PKCE); reuse refresh/ensure-fresh.
@@ -454,6 +512,7 @@ will grow and the accordion wants room.
 | Google OAuth (org-level) | **Exists** (`google-auth.ts`) |
 | `connector:` capability namespace | **Reserved, not enforced** |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
+| GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** (CONN-4a) — keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN` |
 | Per-agent OAuth (agentId scope, PKCE, mobile completion) | **New** (CONN-5) |
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
