@@ -196,3 +196,18 @@ test('[MOB-7b] the converse image field matches the web’s request builder', ()
   assert.equal(toConverseImage({ name: 'p.jpg', size: 9, mediaType: 'image/jpeg' }), undefined)
   assert.equal(webToConverseRequest({ message: 'x', history: [], image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg' } }).image, undefined)
 })
+
+// The strongest pin of all: straight to the SERVER's enforcer. converse-images.ts
+// is now dep-free (its ChainLink / LLMContentPart imports are `import type`, erased
+// at runtime), so — unlike the drizzle-carrying schema.ts — it loads under
+// `node --test` with no root node_modules, which means this import survives Mobile
+// CI rather than silently dropping the file (see settings.test.ts's warning). The
+// web mirror above pins client-to-client; this pins client-to-source-of-truth.
+import { MAX_IMAGE_BYTES as SERVER_IMAGE_MAX_BYTES } from '../../../backend/src/services/converse-images.ts'
+
+test('[MOB-7b] the phone’s image cap is exactly the server’s MAX_IMAGE_BYTES', () => {
+  assert.equal(IMAGE_MAX_BYTES, SERVER_IMAGE_MAX_BYTES)
+  // and the web sits on the same number, so all three agree — no gap where the
+  // composer waves through a photo the backend then refuses with a 413.
+  assert.equal(WEB_IMAGE_MAX_BYTES, SERVER_IMAGE_MAX_BYTES)
+})

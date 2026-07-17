@@ -25,8 +25,12 @@
 // to hops that can actually see, and if none remain the operator is TOLD
 // (NO_VISION_MESSAGE) rather than lied to.
 
-import { ChainLink } from './llm-fallback'
-import { LLMContentPart } from './llm-router'
+// Type-only: both are used purely as annotations. `import type` erases them at
+// compile time, so this module carries no runtime dependency on llm-fallback or
+// llm-router — which is what lets a dep-free client test import it to pin the
+// shared image limit (see web/mobile's cross-workspace tripwires).
+import type { ChainLink } from './llm-fallback'
+import type { LLMContentPart } from './llm-router'
 
 /**
  * Hard byte ceiling for one attached image, BEFORE base64. Anthropic rejects an
