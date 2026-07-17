@@ -134,12 +134,30 @@ export interface PublicConnectorState {
   config: Record<string, unknown> | null
   accountLabel: string | null
   useOrgConnection: boolean
+  /** CONN-7 containment: the owner-set trust ENUM (never a secret). 'approval_required'
+   *  (default) routes every WRITE/DESTRUCTIVE action through the approval + step-up flow;
+   *  'auto_write' auto-approves WRITE actions — DESTRUCTIVE actions ALWAYS need approval. */
+  trustLevel?: TrustLevel
   lastTestedAt: number | null
   lastError: string | null
 }
 
 export function isConfigured(state: Pick<PublicConnectorState, 'status'> | null | undefined): boolean {
   return !!state && state.status !== 'not_configured'
+}
+
+// ─── Per-connector TRUST (CONN-7) — mirrors the backend enum ──────────────────
+//
+// Owner-only. Kept identical to apps/mobile/src/agentConnectors.ts (the parity test
+// asserts the two agree). The backend is the enforcer; this is display + the value
+// the owner PUTs to `…/connectors/:cid/trust`.
+export const TRUST_LEVELS = ['approval_required', 'auto_write'] as const
+export type TrustLevel = (typeof TRUST_LEVELS)[number]
+
+/** Is this (agent, connector) trusted to auto-approve WRITE actions? Fail-safe: any
+ *  value other than the explicit 'auto_write' reads as NOT trusted. */
+export function isTrusted(state: Pick<PublicConnectorState, 'trustLevel'> | null | undefined): boolean {
+  return state?.trustLevel === 'auto_write'
 }
 
 // ─── Custom MCP config — a client mirror of the backend zod schema ────────────

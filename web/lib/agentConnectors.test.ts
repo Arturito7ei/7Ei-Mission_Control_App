@@ -12,6 +12,7 @@ import {
   validateTelegramConfig, telegramConfigToForm,
   validateWhatsappConfig, whatsappConfigToForm,
   validateGoogleChatConfig, googleChatConfigToForm,
+  TRUST_LEVELS, isTrusted,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -206,4 +207,17 @@ test('[CONN-6] comms config-to-form never surfaces a credential leaked into conf
   const gc = googleChatConfigToForm({ space: 'spaces/A', GOOGLE_CHAT_WEBHOOK_URL: 'https://secret' } as any)
   assert.deepEqual(gc, { space: 'spaces/A' })
   assert.equal(JSON.stringify(gc).includes('secret'), false)
+})
+
+// ─── CONN-7 — the per-connector trust vocabulary ──────────────────────────────
+
+test('[CONN-7] trust levels are the two-value enum; isTrusted is fail-safe', () => {
+  assert.deepEqual([...TRUST_LEVELS], ['approval_required', 'auto_write'])
+  assert.equal(isTrusted({ trustLevel: 'auto_write' }), true)
+  assert.equal(isTrusted({ trustLevel: 'approval_required' }), false)
+  // Any non-'auto_write' value (incl. absent) reads as NOT trusted — matches the
+  // backend's normalizeTrustLevel fail-safe (an unknown value is the stricter level).
+  assert.equal(isTrusted({ trustLevel: undefined }), false)
+  assert.equal(isTrusted(null), false)
+  assert.equal(isTrusted({ trustLevel: 'yolo' as any }), false)
 })

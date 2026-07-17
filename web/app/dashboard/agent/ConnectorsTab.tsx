@@ -27,8 +27,8 @@ import {
   validateWhatsappConfig, whatsappConfigToForm,
   validateGoogleChatConfig, googleChatConfigToForm,
   GOOGLE_SERVICES, GOOGLE_SERVICE_LABELS, defaultGoogleServices, hasAnyGoogleService,
-  googleServicesFromConfig, googleScopesFromConfig,
-  type DisplayConnector, type PublicConnectorState,
+  googleServicesFromConfig, googleScopesFromConfig, isTrusted,
+  type DisplayConnector, type PublicConnectorState, type TrustLevel,
   type McpFormInput, type GithubFormInput, type JiraFormInput,
   type TelegramFormInput, type WhatsappFormInput, type GoogleChatFormInput,
   type GoogleService, type GoogleServiceSelection,
@@ -251,7 +251,82 @@ function ConnectorRow({ conn, state, orgId, agentId, getToken, onState }: {
         <GoogleChatConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
           onState={onState} onDone={() => setExpanded(false)} />
       )}
+
+      {/* CONN-7 — owner-only trust toggle, shown for any CONFIGURED connector. The
+          backend is the enforcer; this sets the (agent, connector) trust level. */}
+      {available && expanded && configured && (
+        <TrustToggle orgId={orgId} agentId={agentId} connectorId={conn.id}
+          getToken={getToken} state={state} onState={onState} />
+      )}
     </div>
+  )
+}
+
+// ─── Trust toggle (CONN-7 containment) — owner-only per-connector ─────────────
+//
+// "Require approval for writes" ↔ "Auto-approve writes (trusted)". The stronger
+// policy stays clear: DESTRUCTIVE actions ALWAYS require approval, even when trusted.
+// Owner-only (the whole tab is owner-gated + the backend PUT is owner-gated). The
+// value is a returnable ENUM — never a secret.
+function TrustToggle({ orgId, agentId, connectorId, getToken, state, onState }: {
+  orgId: string
+  agentId: string
+  connectorId: string
+  getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+}) {
+  const trusted = isTrusted(state)
+  const [busy, setBusy] = useState<TrustLevel | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const setTrust = async (level: TrustLevel) => {
+    if (busy || state?.trustLevel === level) return
+    setErr(null); setBusy(level)
+    try {
+      const { connector } = await api<{ connector: PublicConnectorState }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}/trust`,
+        { token: await getToken(), method: 'PUT', body: JSON.stringify({ trustLevel: level }) })
+      onState(connector)
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not update trust.')
+    }
+    setBusy(null)
+  }
+
+  const opt = (level: TrustLevel, label: string) => {
+    const on = (state?.trustLevel ?? 'approval_required') === level
+    return (
+      <button key={level} onClick={() => setTrust(level)} disabled={busy !== null}
+        aria-pressed={on}
+        style={{
+          flex: 1, minWidth: 200, textAlign: 'left', cursor: busy ? 'default' : 'pointer',
+          padding: `${space.sm}px ${space.md}px`, borderRadius: tk.r.md,
+          border: `1px solid ${on ? tk.blue : tk.line}`,
+          background: on ? tk.surfaceHigh : 'transparent', color: tk.text,
+          fontSize: text.sm.fontSize, fontWeight: on ? 700 : 500,
+        }}>
+        <span aria-hidden="true" style={{ marginRight: space.sm }}>{on ? '◉' : '○'}</span>{label}
+      </button>
+    )
+  }
+
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.sm, background: tk.bg }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: space.sm }}>
+        <span style={{ fontSize: text.sm.fontSize, fontWeight: 700, color: tk.text }}>Write trust</span>
+        {trusted && <Pill tone="warn">Trusted</Pill>}
+      </div>
+      <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap' }}>
+        {opt('approval_required', 'Require approval for writes')}
+        {opt('auto_write', 'Auto-approve writes (trusted)')}
+      </div>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize }}>
+        Read actions always run freely. When trusted, this agent’s <strong>write/send</strong> actions on this connector run
+        without approval. <strong>Destructive actions always require approval</strong>, even when trusted.
+      </p>
+      {err && <div style={ax.err}>{err}</div>}
+    </Card>
   )
 }
 

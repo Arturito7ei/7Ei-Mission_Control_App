@@ -51,6 +51,8 @@ import {
   googleServicesFromConfig,
   googleScopesFromConfig,
   googleServicesSummary,
+  TRUST_LEVELS,
+  isTrusted,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -59,6 +61,7 @@ import {
   CONNECTOR_GROUPS as WEB_GROUPS,
   AVAILABLE_CONNECTOR_IDS as WEB_AVAILABLE,
   MCP_CONNECTOR_ID as WEB_MCP_ID,
+  TRUST_LEVELS as WEB_TRUST_LEVELS,
   validateMcpConfig as webValidateMcpConfig,
   validateGithubConfig as webValidateGithubConfig,
   validateJiraConfig as webValidateJiraConfig,
@@ -76,6 +79,16 @@ test('[CONN-3] the phone’s connector groups are field-identical to the web’s
 test('[CONN-3] the available set and the MCP id match the web exactly', () => {
   assert.deepEqual(AVAILABLE_CONNECTOR_IDS, WEB_AVAILABLE)
   assert.equal(MCP_CONNECTOR_ID, WEB_MCP_ID)
+})
+
+test('[CONN-7] the trust levels match the web exactly and isTrusted is fail-safe', () => {
+  assert.deepEqual(TRUST_LEVELS, WEB_TRUST_LEVELS)
+  assert.deepEqual([...TRUST_LEVELS], ['approval_required', 'auto_write'])
+  // Only the explicit 'auto_write' reads as trusted; anything else is NOT trusted.
+  assert.equal(isTrusted({ trustLevel: 'auto_write' }), true)
+  assert.equal(isTrusted({ trustLevel: 'approval_required' }), false)
+  assert.equal(isTrusted({ trustLevel: undefined }), false)
+  assert.equal(isTrusted(null), false)
 })
 
 test('[CONN-3] validateMcpConfig agrees with the web across representative inputs', () => {

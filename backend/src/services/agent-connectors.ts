@@ -340,6 +340,28 @@ export function isAtlassianHost(rawUrl: string): boolean {
   }
 }
 
+// ─── Per-connector TRUST level (CONN-7 containment) ──────────────────────────
+//
+// The owner-set trust for a single (agent, connector) pair. Default is
+// 'approval_required' — every WRITE / DESTRUCTIVE connector action routes through
+// the approval + step-up flow. 'auto_write' auto-approves WRITE actions for that
+// pair; DESTRUCTIVE actions ALWAYS require approval regardless of trust (the
+// documented policy — see services/connector-authz.ts). It is an ENUM, never a
+// secret, and the only new field `toPublicConnector` may return.
+export const TRUST_LEVELS = ['approval_required', 'auto_write'] as const
+export type TrustLevel = (typeof TRUST_LEVELS)[number]
+export const DEFAULT_TRUST_LEVEL: TrustLevel = 'approval_required'
+
+export function isValidTrustLevel(v: unknown): v is TrustLevel {
+  return typeof v === 'string' && (TRUST_LEVELS as readonly string[]).includes(v)
+}
+
+/** Coerce a stored/absent trust value to a valid level. Fail-safe: an unknown or
+ *  null value reads as the STRICTER 'approval_required', never as auto_write. */
+export function normalizeTrustLevel(v: unknown): TrustLevel {
+  return isValidTrustLevel(v) ? v : DEFAULT_TRUST_LEVEL
+}
+
 // ─── The client-safe projection (twin of toPublicOrg) ────────────────────────
 
 type ConnectorRow = typeof schema.agentConnectors.$inferSelect
@@ -356,6 +378,7 @@ export const PUBLIC_CONNECTOR_FIELDS = [
   'config',
   'accountLabel',
   'useOrgConnection',
+  'trustLevel', // CONN-7: the trust ENUM only (approval_required | auto_write) — never a secret.
   'lastTestedAt',
   'lastError',
 ] as const

@@ -21,6 +21,11 @@ export const DANGEROUS_APPROVAL_TYPES = [
   'wallet_tx',
   'email_send',
   'machine_exec',
+  // CONN-7 — a per-agent connector WRITE/SEND/DESTRUCTIVE action that must be
+  // human-approved. Treating it as a dangerous type gives it, for free, the same
+  // machine-rendered summary + STEP-UP-to-approve guarantee the phone/desk already
+  // enforce (see services/connector-authz.ts + routes/tasks.ts decide gate).
+  'connector_action',
 ] as const
 export type DangerousApprovalType = (typeof DANGEROUS_APPROVAL_TYPES)[number]
 
@@ -146,6 +151,26 @@ function renderMachineExec(a: any): RenderResult {
   return { ok: true, summary, warnings }
 }
 
+// CONN-7 — a connector action approval card. Rendered VERBATIM from the structured
+// action (connectorId + the action verb + its classification), never model prose, so
+// the operator approves the concrete connector call. `classification` is 'write' |
+// 'destructive' | 'unknown' (READ never files an approval — it is allowed outright).
+function renderConnectorAction(a: any): RenderResult {
+  const connectorId = String(a?.connectorId ?? '').trim()
+  if (!connectorId) return { ok: false, error: 'connector_action requires a connectorId' }
+  const action = String(a?.action ?? '').trim()
+  if (!action) return { ok: false, error: 'connector_action requires an action' }
+  const cls = String(a?.classification ?? '').trim().toLowerCase()
+  const name = String(a?.connectorName ?? '').trim() || connectorId
+  const target = a?.target ? ` → ${String(a.target)}` : ''
+  const lead = cls === 'destructive' ? 'DESTRUCTIVE ' : ''
+  const summary = `${lead}${name}: ${action}${target}`
+  const warnings: string[] = []
+  if (cls === 'destructive') warnings.push('Destructive connector action — always requires approval, even for a trusted connector.')
+  else if (cls === 'unknown') warnings.push('Unrecognized connector action — approved conservatively (fail-closed).')
+  return { ok: true, summary, warnings }
+}
+
 /** Render the verbatim, machine-generated approval summary for a dangerous type
  *  from its structured action payload. Fail-closed: unknown type or missing
  *  required fields → `{ ok:false, error }` so the route 400s rather than fall
@@ -157,6 +182,7 @@ export function renderActionSummary(type: string, action: any): RenderResult {
     case 'wallet_tx':        return renderWalletTx(action)
     case 'email_send':       return renderEmailSend(action)
     case 'machine_exec':     return renderMachineExec(action)
+    case 'connector_action': return renderConnectorAction(action)
     default:                 return { ok: false, error: `not a dangerous approval type: ${type}` }
   }
 }
