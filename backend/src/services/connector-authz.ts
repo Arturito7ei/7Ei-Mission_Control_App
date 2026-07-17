@@ -110,7 +110,30 @@ export const CONNECTOR_ACTION_TAXONOMY: Record<string, ConnectorActionMap> = {
 
 // A verb that LOOKS destructive is forced to 'destructive' even if it isn't in the
 // explicit set — a trusted connector must never auto-approve a stray "delete_*"/"purge".
-const DESTRUCTIVE_KEYWORD = /(^|[._:\- ])(delete|destroy|drop|purge|remove|wipe|revoke|truncate)([._:\- ]|$)/
+const DESTRUCTIVE_VERBS = ['delete', 'destroy', 'drop', 'purge', 'remove', 'wipe', 'revoke', 'truncate'] as const
+const DESTRUCTIVE_SET = new Set<string>(DESTRUCTIVE_VERBS)
+
+/**
+ * Does this action contain a destructive VERB as a whole token? Fail-closed backstop:
+ * a trusted connector must never auto-approve a destructive action just because its
+ * verb wasn't in the explicit set. Tokenizes across BOTH separators (`.` `_` `:` `-`
+ * space) AND camelCase boundaries, so `delete_file`, `deleteFile`, `forceDelete`,
+ * `dropTable` and `purgeAll` all surface their destructive verb — the separator-only
+ * regex this replaces missed every camelCase / concatenated spelling, letting e.g.
+ * `deleteFile` on a trusted `auto_write` connector classify as WRITE and auto-approve.
+ * Token-level (not substring) so benign words that merely CONTAIN a verb — `undelete`,
+ * `backdrop`, `dropdown`, `get_deleted_items` — are NOT swept up (over-approval only
+ * on genuine destructive verbs). Matches the ORIGINAL casing to see camelCase.
+ */
+function hasDestructiveVerb(rawAction: string): boolean {
+  const tokens = rawAction
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // split camelCase: deleteFile → "delete File"
+    .split(/[._:\-\s]+/)
+    .map(t => t.toLowerCase())
+    .filter(Boolean)
+  return tokens.some(t => DESTRUCTIVE_SET.has(t) || DESTRUCTIVE_SET.has(t.replace(/s$/, '')))
+}
+
 const WRITE_KEYWORD = /(^|[._:\- ])(send|create|update|write|push|commit|comment|post|edit|modify|upload|insert|merge|transition|reply|forward|share|add)([._:\- ]|$)/
 const READ_KEYWORD = /(^|[._:\- ])(read|get|list|search|fetch|view|download|show)([._:\- ]|$)/
 
@@ -121,14 +144,15 @@ const READ_KEYWORD = /(^|[._:\- ])(read|get|list|search|fetch|view|download|show
  * connector's `defaultClass`. An unknown connector or a blank action → 'unknown'.
  */
 export function classifyConnectorAction(connectorId: string, action: unknown): ConnectorActionClass {
-  const norm = String(action ?? '').trim().toLowerCase()
+  const raw = String(action ?? '').trim()
+  const norm = raw.toLowerCase()
   const map = CONNECTOR_ACTION_TAXONOMY[connectorId]
   if (!map) return 'unknown'          // unknown connector → fail closed
   if (!norm) return 'unknown'         // no action given → fail closed
   if (map.destructive.includes(norm)) return 'destructive'
   if (map.read.includes(norm)) return 'read'
   if (map.write.includes(norm)) return 'write'
-  if (DESTRUCTIVE_KEYWORD.test(norm)) return 'destructive'
+  if (hasDestructiveVerb(raw)) return 'destructive' // camelCase/sep-aware fail-closed backstop
   if (WRITE_KEYWORD.test(norm)) return 'write'
   if (READ_KEYWORD.test(norm)) return 'read'
   return map.defaultClass

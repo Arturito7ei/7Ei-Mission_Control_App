@@ -124,6 +124,29 @@ test('[CONN7-TAX] destructive keyword overrides even when not explicitly listed'
   assert.equal(classifyConnectorAction('google', 'wipe_mailbox'), 'destructive')
 })
 
+test('[CONN7-TAX] AUDIT: destructive verb survives camelCase / no-separator spelling', () => {
+  // Regression for the audit finding: the separator-only guard missed camelCase and
+  // concatenated destructive verbs, so on a defaultClass='write' connector (mcp/comms)
+  // a trusted `auto_write` pair auto-APPROVED a destructive action. Every spelling of a
+  // destructive verb must classify 'destructive' (→ always needs approval, even trusted).
+  for (const a of ['deleteFile', 'dropTable', 'purgeAll', 'wipeDatabase', 'revokeAccess',
+    'deleteAllRecords', 'forceDelete', 'hardDelete', 'bulkDrop']) {
+    assert.equal(classifyConnectorAction('mcp', a), 'destructive', `mcp '${a}' must be destructive`)
+  }
+  assert.equal(classifyConnectorAction('telegram', 'deleteMessage'), 'destructive')
+  assert.equal(classifyConnectorAction('whatsapp', 'deleteMessage'), 'destructive')
+  assert.equal(classifyConnectorAction('google_chat', 'deleteMessage'), 'destructive')
+  // …and a trusted connector STILL cannot auto-approve it (the whole point).
+  assert.equal(decideConnectorAuthorization({
+    hasCapability: true, connectorConfigured: true,
+    classification: classifyConnectorAction('mcp', 'deleteFile'), trustLevel: 'auto_write',
+  }).decision, 'needs_approval')
+  // Benign tokens that merely CONTAIN a verb are NOT swept up (token-level, not substring).
+  assert.equal(classifyConnectorAction('github', 'get_deleted_items'), 'read')
+  assert.equal(classifyConnectorAction('mcp', 'undelete'), 'write')
+  assert.equal(classifyConnectorAction('mcp', 'dropdown_options'), 'write')
+})
+
 test('[CONN7-CAP] connector capability grammar + wildcard matching', () => {
   assert.equal(connectorCapability('github'), 'connector:github')
   assert.equal(hasConnectorCapability(['connector:github'], 'github'), true)
