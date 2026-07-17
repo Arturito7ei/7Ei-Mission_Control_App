@@ -20,12 +20,23 @@ import {
   TextInput,
   View,
 } from 'react-native'
-import * as DocumentPicker from 'expo-document-picker'
+// TYPE-only: erased at compile time, so it keeps expo-document-picker's
+// requireNativeModule('ExpoDocumentPicker') OUT of the boot path. The value is
+// pulled in lazily at the tap — see getDocumentPicker below.
+import type * as DocumentPickerNS from 'expo-document-picker'
 import { Api } from '../api'
 import { useAuth } from '../auth'
 import { attachmentChipLabel, canSendTurn, rejectAttachment, toConverseAttachment, type AttachedDoc } from '../attach'
+import { lazyNativeModule } from '../nativeModule'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Chip } from '../ui'
+
+// Resolved on the first attach tap, never at import. A host without the picker
+// costs the operator the attach button, not the app.
+const getDocumentPicker = lazyNativeModule(
+  'expo-document-picker',
+  () => require('expo-document-picker') as typeof DocumentPickerNS,
+)
 
 type Msg = {
   role: 'user' | 'assistant'
@@ -60,7 +71,13 @@ export default function CommandCenterScreen() {
   const pickAttachment = useCallback(async () => {
     setError(null)
     setNotice(null)
-    let picked: DocumentPicker.DocumentPickerResult
+    const DocumentPicker = getDocumentPicker()
+    if (!DocumentPicker) {
+      // Readable, not white: the loader already logged which module is missing.
+      setError("This app build can't open the file picker. You can still send a message.")
+      return
+    }
+    let picked: DocumentPickerNS.DocumentPickerResult
     try {
       picked = await DocumentPicker.getDocumentAsync({
         type: '*/*',
