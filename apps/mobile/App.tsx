@@ -15,6 +15,7 @@ import React from 'react'
 import { StatusBar } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import { AuthProvider, useAuth } from './src/auth'
+import ErrorBoundary from './src/ErrorBoundary'
 import { PushProvider } from './src/notifications'
 import RootNavigator from './src/navigation'
 import { theme } from './src/theme'
@@ -56,12 +57,18 @@ function Gate({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // ErrorBoundary is the OUTERMOST component on purpose: a throw inside
+  // SafeAreaProvider or AuthProvider (which mounts ClerkProvider) takes the whole
+  // tree down to a blank screen, and those providers are precisely the ones worth
+  // reporting on. Anything above the boundary is unreportable, so nothing is.
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
-        <Shell />
-      </AuthProvider>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <StatusBar barStyle="light-content" backgroundColor={theme.bg} />
+          <Shell />
+        </AuthProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   )
 }
