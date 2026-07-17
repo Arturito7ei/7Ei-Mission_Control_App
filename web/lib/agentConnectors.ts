@@ -4,16 +4,18 @@
 //
 // TWO honesty rules this module encodes:
 //   1. The operator's category grouping (Communication / IT-Project / Google /
-//      Custom MCP) is shown IN FULL, but only the connectors that are REAL in v1
-//      are wired to the CONN-1 API. Today that is exactly ONE — the custom MCP
-//      server (the CONN-1 pilot). Every other connector renders as a disabled
-//      "coming soon" / "out of scope" row so we never fake a save against a
-//      backend connector that does not exist yet (the backend 404s an unknown
-//      connectorId — CONN-1's catalog holds only `mcp`).
+//      Custom MCP) is shown IN FULL, but only the connectors that are REAL are
+//      wired to the CONN-1/CONN-4a API. As of CONN-4b that is THREE — the custom
+//      MCP server (the CONN-1 pilot), GitHub (PAT) and Jira (basic), the two
+//      token/basic connectors CONN-4a made real via the agent-secrets env path.
+//      Every other connector renders as a disabled "coming soon" / "out of scope"
+//      row so we never fake a save against a backend connector that does not exist
+//      yet (the backend 404s an unknown connectorId).
 //   2. `AVAILABLE_CONNECTOR_IDS` is a hand-copied mirror of the backend
 //      `AGENT_CONNECTORS` catalog. `agentConnectors.test.ts` reads the backend
-//      source and fails if the two drift — the standing parity-tripwire rule for
-//      any list copied across the web/backend boundary.
+//      source and fails if the client offers an id the backend lacks (a SUBSET
+//      tripwire) — the standing parity rule for any list copied across the
+//      web/backend boundary.
 
 export type ConnectorAvailability = 'available' | 'coming_soon' | 'out_of_scope'
 
@@ -35,13 +37,17 @@ export interface ConnectorGroup {
   connectors: DisplayConnector[]
 }
 
-/** The connectorId of the one config-only connector wired end-to-end in v1. */
+/** The connectorId of the config-only connector wired end-to-end at CONN-1. */
 export const MCP_CONNECTOR_ID = 'mcp'
+/** The token/basic connectors CONN-4a made real; enabled in the UI at CONN-4b. */
+export const GITHUB_CONNECTOR_ID = 'github'
+export const JIRA_CONNECTOR_ID = 'jira'
 
 /**
  * The accordion, grouped by category exactly as the operator listed them.
- * Order within each group matches the operator's list. Only `mcp` is `available`;
- * the rest carry an honest note pointing at the stage that makes them real.
+ * Order within each group matches the operator's list. `mcp`, `github` and `jira`
+ * are `available`; the rest carry an honest note pointing at the stage that makes
+ * them real.
  */
 export const CONNECTOR_GROUPS: ConnectorGroup[] = [
   {
@@ -58,8 +64,8 @@ export const CONNECTOR_GROUPS: ConnectorGroup[] = [
     key: 'it_project',
     title: 'IT / Project management',
     connectors: [
-      { id: 'github', name: 'GitHub', icon: '🐙', availability: 'coming_soon', note: 'GitHub (personal access token) lands in a later stage (CONN-4).' },
-      { id: 'jira', name: 'Jira', icon: '📋', availability: 'coming_soon', note: 'Jira (basic auth) lands in a later stage (CONN-4).' },
+      { id: GITHUB_CONNECTOR_ID, name: 'GitHub', icon: '🐙', availability: 'available' },
+      { id: JIRA_CONNECTOR_ID, name: 'Jira', icon: '📋', availability: 'available' },
     ],
   },
   {
@@ -81,9 +87,9 @@ export const CONNECTOR_GROUPS: ConnectorGroup[] = [
 ]
 
 /**
- * The connector ids that are REAL in v1 — i.e. backed by CONN-1's API. Derived
- * from the groups so there is one source of truth; the parity test asserts this
- * set equals the backend `AGENT_CONNECTORS` catalog.
+ * The connector ids that are REAL — i.e. backed by the CONN-1/CONN-4a API.
+ * Derived from the groups so there is one source of truth; the parity test
+ * asserts this set is a SUBSET of the backend `AGENT_CONNECTORS` catalog.
  */
 export const AVAILABLE_CONNECTOR_IDS: string[] = CONNECTOR_GROUPS
   .flatMap(g => g.connectors)
@@ -206,5 +212,78 @@ export function mcpConfigToForm(config: Record<string, unknown> | null | undefin
     url: typeof c.url === 'string' ? c.url : '',
     command: typeof c.command === 'string' ? c.command : '',
     args: Array.isArray(c.args) ? c.args.join('\n') : '',
+  }
+}
+
+// ─── GitHub (PAT) config — a client mirror of the backend zod schema ──────────
+//
+// backend/src/services/agent-connectors.ts `GithubConfigSchema`:
+//   username  string, trimmed, 1..120, optional   (display label only — NOT a credential)
+// The PAT itself is the WRITE-ONLY `secret` field, stored agent-scoped under
+// GITHUB_TOKEN; it is NEVER config and NEVER read back. `secretRequired` on the
+// backend, so a first configure must carry a token — the form enforces this only
+// when the connector is not already configured (blank keeps the stored token).
+
+export interface GithubConfig { username?: string }
+export interface GithubFormInput { username: string }
+export type GithubValidation = { ok: true; config: GithubConfig } | { ok: false; error: string }
+
+/** Validate the NON-SECRET GitHub config (the optional username label). The token
+ *  is validated separately by the form (required on first configure). */
+export function validateGithubConfig(input: GithubFormInput): GithubValidation {
+  const username = (input.username ?? '').trim()
+  if (username.length > 120) return { ok: false, error: 'Username must be 120 characters or fewer.' }
+  const config: GithubConfig = {}
+  if (username) config.username = username   // omitted when blank so .strict()+.optional() are happy
+  return { ok: true, config }
+}
+
+/** Seed a blank/edit GitHub form from a stored config (never carries a secret). */
+export function githubConfigToForm(config: Record<string, unknown> | null | undefined): GithubFormInput {
+  const c = (config ?? {}) as Partial<GithubConfig>
+  return { username: typeof c.username === 'string' ? c.username : '' }
+}
+
+// ─── Jira (basic) config — a client mirror of the backend zod schema ──────────
+//
+// backend/src/services/agent-connectors.ts `JiraConfigSchema`:
+//   baseUrl  string, trimmed, valid URL, <=2048, required   (the Atlassian site)
+//   email    string, trimmed, valid email, <=320, required
+// Both are NON-secret and returnable; the API token is the WRITE-ONLY `secret`
+// field, stored agent-scoped under JIRA_API_TOKEN (baseUrl/email are ALSO mirrored
+// into agent-scoped secrets by the backend so the runtime gets all three as env —
+// see CONN-4a). `secretRequired`, so a first configure must carry a token.
+
+export interface JiraConfig { baseUrl: string; email: string }
+export interface JiraFormInput { baseUrl: string; email: string }
+export type JiraValidation = { ok: true; config: JiraConfig } | { ok: false; error: string }
+
+function isUrl(s: string): boolean {
+  try { new URL(s); return true } catch { return false }
+}
+function isEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
+}
+
+/** Validate the NON-SECRET Jira config (baseUrl + email). The API token is
+ *  validated separately by the form (required on first configure). */
+export function validateJiraConfig(input: JiraFormInput): JiraValidation {
+  const baseUrl = (input.baseUrl ?? '').trim()
+  const email = (input.email ?? '').trim()
+  if (!baseUrl) return { ok: false, error: 'Base URL is required.' }
+  if (baseUrl.length > 2048) return { ok: false, error: 'Base URL must be 2048 characters or fewer.' }
+  if (!isUrl(baseUrl)) return { ok: false, error: 'Enter a valid URL (e.g. https://your-team.atlassian.net).' }
+  if (!email) return { ok: false, error: 'Email is required.' }
+  if (email.length > 320) return { ok: false, error: 'Email must be 320 characters or fewer.' }
+  if (!isEmail(email)) return { ok: false, error: 'Enter a valid email address.' }
+  return { ok: true, config: { baseUrl, email } }
+}
+
+/** Seed a blank/edit Jira form from a stored config (never carries a secret). */
+export function jiraConfigToForm(config: Record<string, unknown> | null | undefined): JiraFormInput {
+  const c = (config ?? {}) as Partial<JiraConfig>
+  return {
+    baseUrl: typeof c.baseUrl === 'string' ? c.baseUrl : '',
+    email: typeof c.email === 'string' ? c.email : '',
   }
 }

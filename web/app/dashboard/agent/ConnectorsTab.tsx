@@ -18,9 +18,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import {
-  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, isConfigured,
+  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, isConfigured,
   validateMcpConfig, mcpConfigToForm,
-  type DisplayConnector, type PublicConnectorState, type McpFormInput,
+  validateGithubConfig, githubConfigToForm,
+  validateJiraConfig, jiraConfigToForm,
+  type DisplayConnector, type PublicConnectorState,
+  type McpFormInput, type GithubFormInput, type JiraFormInput,
 } from '@/lib/agentConnectors'
 import { Button, Card, Pill, Select, Skeleton, TextArea, TextInput } from '../ui'
 import { FormLabel } from '../cockpit/shared'
@@ -103,7 +106,7 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: space.xl }}>
       <p style={{ ...ax.empty, maxWidth: 640 }}>
         Connect this agent to external services. Credentials are stored encrypted at agent scope and are never shown back —
-        only their connection status. Only the custom MCP server is configurable today; the rest arrive in later stages.
+        only their connection status. GitHub, Jira and custom MCP servers are configurable today; the rest arrive in later stages.
       </p>
 
       {CONNECTOR_GROUPS.map(group => {
@@ -182,6 +185,14 @@ function ConnectorRow({ conn, state, orgId, agentId, getToken, onState }: {
 
       {available && expanded && conn.id === MCP_CONNECTOR_ID && (
         <McpConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
+      {available && expanded && conn.id === GITHUB_CONNECTOR_ID && (
+        <GithubConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
+      {available && expanded && conn.id === JIRA_CONNECTOR_ID && (
+        <JiraConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
           onState={onState} onDone={() => setExpanded(false)} />
       )}
     </div>
@@ -291,6 +302,216 @@ function McpConfig({ orgId, agentId, getToken, state, onState, onDone }: {
       <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
         Stored encrypted at agent scope and injected into this agent’s runtime. It is never displayed back — leave blank to
         keep the existing token.
+      </p>
+
+      {err && <div style={ax.err}>{err}</div>}
+      {msg && <div style={{ color: tk.green, fontSize: text.sm.fontSize }}>{msg}</div>}
+      {configured && lastTested && !msg && (
+        <div style={{ ...ax.empty, fontSize: text.xs.fontSize }}>Last tested {lastTested}.</div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+        <Button variant="primary" onClick={save} disabled={busy !== null}>
+          {busy === 'save' ? 'Saving…' : configured ? 'Save changes' : 'Connect'}
+        </Button>
+        {configured && <Button onClick={test} disabled={busy !== null}>{busy === 'test' ? 'Testing…' : 'Test'}</Button>}
+        {configured && <Button variant="danger" onClick={remove} disabled={busy !== null}>{busy === 'delete' ? 'Removing…' : 'Disconnect'}</Button>}
+      </div>
+    </Card>
+  )
+}
+
+// ─── GitHub (PAT) config form (CONN-4a, real via the agent-secrets env path) ──
+//
+// Same shape and security invariants as McpConfig: the PAT is WRITE-ONLY
+// (type=password, seeded from '' never a read, cleared after a successful save,
+// blank on save keeps the stored token). The only NON-secret config is an optional
+// username label. The backend requires a token on FIRST configure — so the form
+// blocks a first save with no token, but allows a blank token on re-configure.
+function GithubConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string
+  agentId: string
+  getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<GithubFormInput>(() => githubConfigToForm(state?.config))
+  const [secret, setSecret] = useState('')   // the PAT — WRITE-ONLY, never seeded from a read
+  const [busy, setBusy] = useState<null | 'save' | 'test' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const save = async () => {
+    setErr(null); setMsg(null)
+    const valid = validateGithubConfig(form)
+    if (valid.ok !== true) { setErr(valid.error); return }
+    if (!configured && !secret.trim()) { setErr('A personal access token is required to connect GitHub.'); return }
+    setBusy('save')
+    try {
+      const body: Record<string, unknown> = { config: valid.config }
+      if (secret.trim()) body.secret = secret.trim()   // only sent when the operator typed one
+      const { connector } = await api<{ connector: PublicConnectorState }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${GITHUB_CONNECTOR_ID}`,
+        { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
+      onState(connector)
+      setSecret('')                      // clear the write-only field after success
+      setForm(githubConfigToForm(connector.config))
+      setMsg('Saved.')
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not save this connector.')   // edits (incl. token) preserved for retry
+    }
+    setBusy(null)
+  }
+
+  const test = async () => {
+    setErr(null); setMsg(null); setBusy('test')
+    try {
+      const r = await api<{ ok: boolean; detail?: string | null; testedAt?: string }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${GITHUB_CONNECTOR_ID}/test`,
+        { token: await getToken(), method: 'POST', body: '{}' })
+      setMsg(r.ok ? `✓ ${r.detail ?? 'OK'}` : `✗ ${r.detail ?? 'failed'}`)
+      if (state) onState({ ...state, lastTestedAt: r.testedAt ? Date.parse(r.testedAt) : Date.now(), lastError: r.ok ? null : (r.detail ?? 'failed') })
+    } catch (e: any) { setErr(e?.message ?? 'Test failed.') }
+    setBusy(null)
+  }
+
+  const remove = async () => {
+    setErr(null); setMsg(null); setBusy('delete')
+    try {
+      await api(`/api/orgs/${orgId}/agents/${agentId}/connectors/${GITHUB_CONNECTOR_ID}`,
+        { token: await getToken(), method: 'DELETE' })
+      onState(null)
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Could not disconnect.'); setBusy(null) }
+  }
+
+  const lastTested = rel(state?.lastTestedAt ?? null)
+
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      <FormLabel>Username <span style={{ fontWeight: 400, color: tk.muted }}>· optional · display label</span>
+        <TextInput value={form.username} placeholder="e.g. octocat" autoComplete="off"
+          onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+      </FormLabel>
+
+      <FormLabel>Personal access token <span style={{ fontWeight: 400, color: tk.muted }}>· write-only</span>
+        <TextInput type="password" value={secret} autoComplete="off"
+          placeholder={configured ? 'Leave blank to keep the stored token' : 'ghp_… / github_pat_…'}
+          onChange={e => setSecret(e.target.value)} />
+      </FormLabel>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
+        Stored encrypted at agent scope as <code>GITHUB_TOKEN</code> and injected into this agent’s runtime. It is never
+        displayed back — leave blank to keep the existing token.
+      </p>
+
+      {err && <div style={ax.err}>{err}</div>}
+      {msg && <div style={{ color: tk.green, fontSize: text.sm.fontSize }}>{msg}</div>}
+      {configured && lastTested && !msg && (
+        <div style={{ ...ax.empty, fontSize: text.xs.fontSize }}>Last tested {lastTested}.</div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+        <Button variant="primary" onClick={save} disabled={busy !== null}>
+          {busy === 'save' ? 'Saving…' : configured ? 'Save changes' : 'Connect'}
+        </Button>
+        {configured && <Button onClick={test} disabled={busy !== null}>{busy === 'test' ? 'Testing…' : 'Test'}</Button>}
+        {configured && <Button variant="danger" onClick={remove} disabled={busy !== null}>{busy === 'delete' ? 'Removing…' : 'Disconnect'}</Button>}
+      </div>
+    </Card>
+  )
+}
+
+// ─── Jira (basic) config form (CONN-4a, real via the agent-secrets env path) ──
+//
+// Same security invariants as above: the API token is WRITE-ONLY. The NON-secret
+// config is baseUrl + email (both returnable and shown). The backend requires a
+// token on FIRST configure; blank on re-configure keeps the stored token.
+function JiraConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string
+  agentId: string
+  getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<JiraFormInput>(() => jiraConfigToForm(state?.config))
+  const [secret, setSecret] = useState('')   // the API token — WRITE-ONLY, never seeded from a read
+  const [busy, setBusy] = useState<null | 'save' | 'test' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const setF = (k: keyof JiraFormInput, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    setErr(null); setMsg(null)
+    const valid = validateJiraConfig(form)
+    if (valid.ok !== true) { setErr(valid.error); return }
+    if (!configured && !secret.trim()) { setErr('An API token is required to connect Jira.'); return }
+    setBusy('save')
+    try {
+      const body: Record<string, unknown> = { config: valid.config }
+      if (secret.trim()) body.secret = secret.trim()
+      const { connector } = await api<{ connector: PublicConnectorState }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${JIRA_CONNECTOR_ID}`,
+        { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
+      onState(connector)
+      setSecret('')
+      setForm(jiraConfigToForm(connector.config))
+      setMsg('Saved.')
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not save this connector.')
+    }
+    setBusy(null)
+  }
+
+  const test = async () => {
+    setErr(null); setMsg(null); setBusy('test')
+    try {
+      const r = await api<{ ok: boolean; detail?: string | null; testedAt?: string }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connectors/${JIRA_CONNECTOR_ID}/test`,
+        { token: await getToken(), method: 'POST', body: '{}' })
+      setMsg(r.ok ? `✓ ${r.detail ?? 'OK'}` : `✗ ${r.detail ?? 'failed'}`)
+      if (state) onState({ ...state, lastTestedAt: r.testedAt ? Date.parse(r.testedAt) : Date.now(), lastError: r.ok ? null : (r.detail ?? 'failed') })
+    } catch (e: any) { setErr(e?.message ?? 'Test failed.') }
+    setBusy(null)
+  }
+
+  const remove = async () => {
+    setErr(null); setMsg(null); setBusy('delete')
+    try {
+      await api(`/api/orgs/${orgId}/agents/${agentId}/connectors/${JIRA_CONNECTOR_ID}`,
+        { token: await getToken(), method: 'DELETE' })
+      onState(null)
+      onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Could not disconnect.'); setBusy(null) }
+  }
+
+  const lastTested = rel(state?.lastTestedAt ?? null)
+
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: space.lg }}>
+        <FormLabel>Site URL
+          <TextInput value={form.baseUrl} placeholder="https://your-team.atlassian.net" inputMode="url" autoComplete="off"
+            onChange={e => setF('baseUrl', e.target.value)} />
+        </FormLabel>
+        <FormLabel>Email
+          <TextInput value={form.email} placeholder="you@example.com" inputMode="email" autoComplete="off"
+            onChange={e => setF('email', e.target.value)} />
+        </FormLabel>
+      </div>
+
+      <FormLabel>API token <span style={{ fontWeight: 400, color: tk.muted }}>· write-only</span>
+        <TextInput type="password" value={secret} autoComplete="off"
+          placeholder={configured ? 'Leave blank to keep the stored token' : 'Atlassian API token'}
+          onChange={e => setSecret(e.target.value)} />
+      </FormLabel>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
+        Stored encrypted at agent scope as <code>JIRA_API_TOKEN</code> (with <code>JIRA_BASE_URL</code> / <code>JIRA_EMAIL</code>)
+        and injected into this agent’s runtime. The token is never displayed back — leave blank to keep the existing one.
       </p>
 
       {err && <div style={ax.err}>{err}</div>}

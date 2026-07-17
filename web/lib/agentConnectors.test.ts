@@ -3,8 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   CONNECTOR_GROUPS, AVAILABLE_CONNECTOR_IDS, MCP_CONNECTOR_ID,
+  GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID,
   isAvailableConnector, findDisplayConnector, isConfigured,
   parseArgs, validateMcpConfig, mcpConfigToForm,
+  validateGithubConfig, githubConfigToForm,
+  validateJiraConfig, jiraConfigToForm,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -24,14 +27,19 @@ test('[CONN-2] each category lists exactly the connectors the operator named, in
   assert.deepEqual(byTitle['Custom MCP servers'], ['Custom MCP Server'])
 })
 
-test('[CONN-2] only the custom MCP server is available in v1; everything else is disabled', () => {
-  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [MCP_CONNECTOR_ID])
+test('[CONN-4b] github, jira and the custom MCP server are available; the rest disabled', () => {
+  // CONN-4b enables the two CONN-4a token/basic connectors alongside the CONN-1 mcp
+  // pilot. Order follows the groups: IT/Project (github, jira) then Custom (mcp).
+  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, MCP_CONNECTOR_ID])
   assert.equal(isAvailableConnector('mcp'), true)
-  assert.equal(isAvailableConnector('github'), false)
+  assert.equal(isAvailableConnector('github'), true)
+  assert.equal(isAvailableConnector('jira'), true)
   assert.equal(isAvailableConnector('telegram'), false)
+  assert.equal(findDisplayConnector('github')?.availability, 'available')
+  assert.equal(findDisplayConnector('jira')?.availability, 'available')
   // Signal is the only one flagged out-of-scope (vs merely coming-soon).
   assert.equal(findDisplayConnector('signal')?.availability, 'out_of_scope')
-  assert.equal(findDisplayConnector('github')?.availability, 'coming_soon')
+  assert.equal(findDisplayConnector('telegram')?.availability, 'coming_soon')
 })
 
 test('[CONN-2] every non-available connector carries an honest note pointing at its stage', () => {
@@ -118,4 +126,42 @@ test('[CONN-2] validateMcpConfig: arg count and length limits mirror the backend
 test('[CONN-2] parseArgs: one per line, trimmed, blanks dropped', () => {
   assert.deepEqual(parseArgs('  a \n\n b\nc  '), ['a', 'b', 'c'])
   assert.deepEqual(parseArgs(''), [])
+})
+
+// ─── GitHub config validation — mirrors the backend GithubConfigSchema ────────
+
+test('[CONN-4b] validateGithubConfig: username optional, trimmed, capped at 120', () => {
+  // Blank username is fine — it is optional and omitted from the config body.
+  assert.deepEqual(validateGithubConfig({ username: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateGithubConfig({ username: '  octocat  ' }), { ok: true, config: { username: 'octocat' } })
+  assert.equal(validateGithubConfig({ username: 'x'.repeat(121) }).ok, false)
+})
+
+test('[CONN-4b] githubConfigToForm never surfaces a credential, even if one leaks into config', () => {
+  const form = githubConfigToForm({ username: 'octocat', GITHUB_TOKEN: 'ghp_SECRET', token: 'nope' } as any)
+  assert.deepEqual(form, { username: 'octocat' })
+  assert.equal(JSON.stringify(form).includes('ghp_SECRET'), false)
+})
+
+// ─── Jira config validation — mirrors the backend JiraConfigSchema ────────────
+
+test('[CONN-4b] validateJiraConfig: baseUrl must be a valid URL, email required + valid', () => {
+  assert.equal(validateJiraConfig({ baseUrl: '', email: 'a@b.co' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'not-a-url', email: 'a@b.co' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.atlassian.net', email: '' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.atlassian.net', email: 'not-an-email' }).ok, false)
+  const r = validateJiraConfig({ baseUrl: '  https://x.atlassian.net  ', email: '  me@x.co  ' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.ok && r.config, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
+})
+
+test('[CONN-4b] validateJiraConfig: length caps mirror the backend (2048 url / 320 email)', () => {
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.co/' + 'a'.repeat(2048), email: 'a@b.co' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.atlassian.net', email: 'a'.repeat(320) + '@b.co' }).ok, false)
+})
+
+test('[CONN-4b] jiraConfigToForm never surfaces a credential, even if one leaks into config', () => {
+  const form = jiraConfigToForm({ baseUrl: 'https://x.atlassian.net', email: 'me@x.co', JIRA_API_TOKEN: 'SECRET' } as any)
+  assert.deepEqual(form, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
+  assert.equal(JSON.stringify(form).includes('SECRET'), false)
 })
