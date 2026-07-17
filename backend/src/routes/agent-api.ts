@@ -13,6 +13,7 @@ import { parseCapabilities, isCapabilityAllowed, signRunToken, requiresApproval 
 import { prepareApprovalRecord } from '../services/dangerous-approvals'
 import { notifyApprovalCreated } from '../services/push'
 import { documentEndpoint } from '../services/openapi'
+import { executeConnectorAction } from '../services/connector-execution'
 
 const RUNTIME_BRANCH: Record<string, string> = { openclaw: 'claw', cursor: 'cursor', claude_code: 'cc' }
 
@@ -54,6 +55,7 @@ const RuntimeBody = z.object({ status: z.string().optional(), previewUrl: z.stri
 const RunTokenBody = z.object({ runId: z.string().optional() })
 const ApprovalBody = z.object({ type: z.string(), summary: z.string(), payload: z.any().optional() })
 const MessageBody = z.object({ taskId: z.string().optional(), content: z.string() })
+const ConnectorExecuteBody = z.object({ action: z.string(), params: z.record(z.any()).optional(), target: z.string().optional(), approvalId: z.string().optional() })
 const PluginResultBody = z.object({ status: z.enum(['done', 'failed']).optional(), result: z.any().optional() })
 
 // Self-describing API (MCA-85 D1): summaries + request bodies for the whole
@@ -78,6 +80,7 @@ function documentAgentApi() {
   documentEndpoint('POST', '/api/agent/tasks/:taskId/claim', { summary: 'Atomic checkout: assigned → in_progress (returns runId + sessionState)' })
   documentEndpoint('POST', '/api/agent/tasks/:taskId/result', { summary: 'Report a task result (done|failed)', body: ResultSchema })
   documentEndpoint('POST', '/api/agent/approvals', { summary: 'Request human sign-off for a sensitive action', body: ApprovalBody })
+  documentEndpoint('POST', '/api/agent/connectors/:connectorId/execute', { summary: 'Execute a connector action (CONN-7 gated: allow → runs; write/destructive → files an approval; pass approvalId to redeem an approved one, single-use)', body: ConnectorExecuteBody })
   documentEndpoint('POST', '/api/agent/messages', { summary: 'Free-form progress/chatter message from the runtime', body: MessageBody })
 }
 
@@ -459,6 +462,34 @@ export async function agentApiRoutes(app: FastifyInstance) {
     // MOB-3B: an agent-proposed approval (incl. dangerous types) pings the owner's phone.
     notifyApprovalCreated({ id: approval.id, orgId: agent.orgId, type: approval.type, summary: approval.summary }).catch(() => {})
     return { ok: true, approval, warnings: prepared.warnings }
+  })
+
+  // CONN-8a — execute a connector action (the real, credential-bearing call).
+  //
+  // Org + agent scope come from the agent token (agentAuth), never the body — so this
+  // cannot be aimed at another tenant's agent. The framework fail-closes on everything:
+  // missing explicit `connector:<id>` capability, unconfigured connector, or an
+  // unsupported connector → refused; a WRITE/DESTRUCTIVE not covered by trust → NOT run,
+  // an approval is filed and its id returned (202); the agent redeems it later by
+  // re-calling with `approvalId` once the operator has approved it WITH step-up. An
+  // approved gated action executes EXACTLY once (single-use; replay → 409). The
+  // credential is decrypted only inside the framework and never returned here.
+  app.post('/api/agent/connectors/:connectorId/execute', async (req, reply) => {
+    const agent = (req as any).agent
+    const { connectorId } = req.params as any
+    const parsed = ConnectorExecuteBody.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ') })
+    const b = parsed.data
+    const result = await executeConnectorAction({
+      orgId: agent.orgId, agentId: agent.id, connectorId,
+      action: b.action, params: b.params ?? {}, target: b.target ?? null, approvalId: b.approvalId ?? null,
+    })
+    const code = result.status === 'executed' ? 200
+      : result.status === 'pending_approval' ? 202
+      : result.status === 'denied' ? 403
+      : result.status === 'error' ? 502
+      : 409 // rejected (replay / un-approved / unsupported / bad action)
+    return reply.code(code).send(result)
   })
 
   // Free-form progress / chatter message from the runtime.

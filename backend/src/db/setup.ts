@@ -271,6 +271,19 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_oauth_states_expires ON agent_oauth_states(expires_at)`)
   } catch { /* already exists */ }
 
+  // Epic CONN / CONN-8a: connector_executions — the connector-action execution ledger.
+  // Additive and idempotent (CREATE IF NOT EXISTS); nothing is backfilled. The UNIQUE
+  // index on approval_id is the SINGLE-USE guarantee: an approved connector_action can
+  // be redeemed EXACTLY ONCE — a second execute with the same approval_id violates the
+  // constraint and is rejected as a replay. Allow-path rows carry a NULL approval_id
+  // (SQLite treats NULLs as distinct, so many are allowed) and are audit-only. The
+  // credential is never stored here. Reversible: DROP TABLE connector_executions.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS connector_executions (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, connector_id TEXT NOT NULL, action TEXT NOT NULL, classification TEXT NOT NULL, approval_id TEXT, status TEXT NOT NULL DEFAULT 'running', error TEXT, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_executions_approval ON connector_executions(approval_id)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_connector_executions_agent ON connector_executions(org_id, agent_id)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

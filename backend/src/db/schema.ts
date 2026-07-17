@@ -223,6 +223,27 @@ export const agentConnectors = sqliteTable('agent_connectors', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Epic CONN / CONN-8a — the connector EXECUTION ledger. One row per attempt to
+// actually invoke a connector action through the execution framework. Its reason to
+// exist is SINGLE-USE enforcement: `approvalId` carries a UNIQUE index, so an approved
+// `connector_action` can be redeemed EXACTLY ONCE (a second insert with the same
+// approvalId hits the constraint → replay rejected). Allow-path executions (READ /
+// auto_write WRITE) carry a NULL approvalId (many NULLs are allowed) and exist purely
+// as an audit trail. NEVER stores a credential or request params — only the action,
+// its classification, a status, and a sanitized error. Reversible: DROP TABLE.
+export const connectorExecutions = sqliteTable('connector_executions', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),
+  agentId: text('agent_id').notNull(),
+  connectorId: text('connector_id').notNull(),
+  action: text('action').notNull(),
+  classification: text('classification').notNull(),   // read | write | destructive | unknown
+  approvalId: text('approval_id'),                     // set only when redeeming a gated approval; UNIQUE — the replay guard
+  status: text('status').notNull().default('running'), // running | succeeded | failed
+  error: text('error'),                                // sanitized message ONLY — never a token / raw provider body with secrets
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
 // MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and
 // sessionState that persists across heartbeats so runs resume instead of restart.
 export const agentRuns = sqliteTable('agent_runs', {

@@ -650,6 +650,90 @@ DESTRUCTIVE actions ALWAYS need approval, even when trusted.** Fail-closed throu
   purely the *invocation* plumbing on top of that gate.
 - Flagged as its **own epic**, sequenced after the capability/containment work (CONN-7).
 
+#### CONN-8a — Execution framework + first executor (GitHub) ✅ SHIPPED
+
+The harness that turns "authorized" into "actually invoked". Backend-only (framework +
+GitHub executor + a secured agent-facing route). **Mobile parity: N/A** — 8a ships no UI;
+triggering/monitoring executions from web/mobile is a later slice (CONN-8b).
+
+- **One entry point** — `executeConnectorAction({orgId, agentId, connectorId, action,
+  params, approvalId?})` in `services/connector-execution.ts`. The decision flow, all
+  fail-closed:
+  1. **Scope** — the agent must exist and belong to `orgId` (never cross-tenant); the
+     connector must be known + configured (not disabled).
+  2. **Explicit capability (CONN-7 carry-forward i)** — execution requires an EXPLICIT
+     `connector:<id>` / `connector:*` / `*` cap. Unlike CONN-7's `authorizeConnectorAction`
+     (whose `isCapabilityAllowed` treats an empty permission list as legacy allow-all),
+     the execution framework **denies an empty/absent permission list** — an agent with no
+     declared permissions can no longer make real external calls by default.
+     (`hasExplicitConnectorCapability`.)
+  3. **A real executor must exist** for the connector or nothing runs. 8a registers
+     **GitHub only**; jira/google/comms/**mcp** have no executor and are refused — a
+     fail-closed default, not an oversight.
+  4. **The CONN-7 decision** (`decideConnectorAuthorization`, with the tightened cap):
+     READ → allow; WRITE → allow only if trusted (`auto_write`); DESTRUCTIVE / UNKNOWN →
+     needs approval. Plus **carry-forward ii**: an OPAQUE tool the executor can't vouch
+     for (MCP's open-ended surface) is escalated to needs_approval **even under
+     auto_write** (`mustEscalateUnknownWrite`; GitHub's fixed action set is unaffected).
+  5. **`deny`** → `denied`, nothing runs. **`needs_approval`** → a dangerous
+     `connector_action` approval is filed (the SAME machine-rendered card + step-up the
+     Inbox uses, via the shared `fileConnectorActionApproval`) and a `pending_approval`
+     result with the `approvalId` is returned — **NOT executed**. **`allow`** → execute
+     exactly once.
+- **The approved-once execution path.** A `needs_approval` action does **not** run just
+  because the agent holds an `approvalId`. Execution requires the caller to re-invoke with
+  that `approvalId` **after** the operator approves it in the Inbox **with step-up** (the
+  decide route only reaches `approved` after a fresh command session). On redemption the
+  framework verifies the approval is `connector_action`, in the org, **`approved`**, and
+  **bound to this exact (agent, connector, action)** — so an approval for X can't run Y and
+  agent A can't redeem agent B's approval. **Single-use** is enforced atomically by a
+  UNIQUE index on `connector_executions.approval_id`: the redemption is *claimed* (a row
+  inserted) **before** the provider call, so a replay — or two concurrent redemptions —
+  hits the constraint and is rejected. At-most-once: even a failed provider call consumes
+  the approval (re-approval, not replay, is the recovery).
+- **The GitHub executor** (`services/connector-github.ts`) — a fixed-surface adapter.
+  Actions and their taxonomy alignment (each `class` MUST equal
+  `classifyConnectorAction('github', action)`, asserted in tests):
+  `repo.get` / `issues.list` / `issue.get` → **READ**; `issue.create` / `issue.comment` →
+  **WRITE**; `repo.delete` → **DESTRUCTIVE**. **SSRF is closed by construction**: the host
+  is hardcoded to `api.github.com`, every URL is that constant + validated/encoded path
+  segments, `owner`/`repo` are charset-restricted and the issue number must be a positive
+  integer — params never supply a URL. Uses the stored agent-scoped `GITHUB_TOKEN`.
+- **Credential handling.** The token is decrypted **only at execution time**, filtered to
+  just this connector's env keys (least privilege), used only in the `Authorization`
+  header, and **never** returned, logged, or stored. A deep `redactSecrets` pass over the
+  result and a redaction of every error string are the belt-and-suspenders backstop
+  (a provider echoing the token can't leak it). The `connector_executions` ledger stores
+  action/classification/status/**sanitized** error only — never the credential or params.
+- **Bounds.** `boundedHttpClient` enforces a hard 10s timeout (AbortController) and a 1 MB
+  response cap (content-length *and* materialized body). Provider failures surface as clean
+  structured errors (`ConnectorProviderError`) — never a raw provider body.
+- **How an agent reaches it** — `POST /api/agent/connectors/:connectorId/execute` (added
+  to `routes/agent-api.ts`, behind `agentAuth`). Org + agent come from the agent token,
+  **never the body**, so it is inherently org-scoped and cannot be aimed at another
+  tenant's agent. Status mapping: executed → 200, pending_approval → 202, denied → 403,
+  provider error → 502, rejected (replay / un-approved / unsupported / bad action) → 409.
+  This is how BYO runtimes already reach every other capability (`/secrets`, `/approvals`).
+  **The internal LLM loop (`agent-executor.ts`) was intentionally NOT modified** — wiring
+  execution into that path is a larger, riskier change deferred to CONN-8b; the integration
+  point is this same `executeConnectorAction` entry, callable with the agent's own
+  `(orgId, agentId)`.
+- **New table** — `connector_executions` (idempotent migration in `db/setup.ts`): the
+  single-use ledger. UNIQUE(`approval_id`) is the replay guard; allow-path rows carry a
+  NULL `approval_id` (many allowed) as an audit trail. Reversible: DROP TABLE.
+- **Tests** — `src/tests/connector-execution.test.ts` (19): deny (no cap / legacy
+  allow-all / not configured / cross-tenant), fail-closed on no-executor, READ executes
+  (mocked transport), WRITE→approval-not-executed, un-approved redemption rejected,
+  step-up-refused-stays-pending, approved+stepped-up executes exactly once + replay
+  rejected, approval bound to action+agent, auto_write WRITE executes, DESTRUCTIVE under
+  auto_write still needs approval, credential-never-leaks (sentinel, incl. echoed token &
+  ledger), SSRF host-fixed, and the secured route (401/403/202). No real network.
+
+**Remaining for CONN-8b:** the Jira / Google / comms executors + the custom-MCP bridge
+(backend MCP client + per-agent server registry, honoring the baked carry-forward ii), and
+the web/mobile UI to trigger + monitor executions; optional wiring of `executeConnectorAction`
+into the internal `agent-executor.ts` loop.
+
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
 real wins that need no OAuth (CONN-2/3/4), then the expensive OAuth surface isolated
 (CONN-5), then breadth (CONN-6), then the capability/containment tightening (CONN-7).
@@ -735,7 +819,10 @@ will grow and the accordion wants room.
 | Per-agent OAuth (agentId scope, encrypted tokens, PKCE + single-use state) | **SHIPPED** — CONN-5 (`agent_oauth_tokens` + `agent_oauth_states`; web full flow, mobile config-only) |
 | Communication connectors (Telegram / WhatsApp / Google Chat) at agent scope | **SHIPPED** — CONN-6 (config + credential storage via env injection; keys `TELEGRAM_BOT_TOKEN`+`TELEGRAM_CHAT_ID` / `WHATSAPP_ACCESS_TOKEN`+ids / `GOOGLE_CHAT_WEBHOOK_URL`; web+mobile forms; `test` is a stub; **Signal out of scope**). WhatsApp/GoogleChat env names flagged for operator confirmation |
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
-| Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
+| Connector EXECUTION framework (authz-gated, single-use approvals, credential-at-exec) | **SHIPPED** — CONN-8a (`executeConnectorAction`; explicit-cap tightening; approved-once via `connector_executions` UNIQUE(approval_id); `POST /api/agent/connectors/:id/execute`) |
+| GitHub executor (real api.github.com calls) | **SHIPPED** — CONN-8a (`connector-github.ts`; read `repo.get`/`issues.list`/`issue.get`, write `issue.create`/`issue.comment`, destructive `repo.delete`; SSRF-fixed host; bounded) |
+| Jira / Google / comms executors + custom-MCP invocation bridge | **New** (CONN-8b) |
+| Web/mobile UI to trigger + monitor executions | **New** (CONN-8b) |
 
 _End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3
 (mobile mirror) is next, then CONN-4… per the roadmap above._
