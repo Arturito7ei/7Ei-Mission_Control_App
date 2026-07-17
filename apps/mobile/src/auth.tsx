@@ -46,6 +46,12 @@ type AuthState = {
   token: string | null // paste-mode bearer (null in Clerk mode — token comes from getToken)
   orgId: string | null
   orgName: string | null
+  // MOB-7d — the caller's role in the selected org ('owner' | 'member'), from
+  // `/api/orgs` (`memberRole`). Drives whether the agent-settings EDITOR is offered.
+  // Not an authz decision: the backend's owner gate is the enforcer; a null role
+  // (a pasted token whose orgs were never listed with a role) fails closed to
+  // read-only unless the backend later 403s an attempted save. See agentEdit.ts.
+  orgRole: string | null
   // Async: in Clerk mode this mints a fresh, auto-refreshing JWT; in paste mode it
   // returns the stored bearer. Screens await this before every API call.
   getToken: () => Promise<string | null>
@@ -124,12 +130,14 @@ function PasteAuthProvider({ children }: { children: React.ReactNode }) {
     async (token: string, apiUrlRaw: string): Promise<Org[]> => {
       const apiUrl = (apiUrlRaw || defaultApiUrl()).trim().replace(/\/+$/, '')
       const orgs = await Api.orgs(apiUrl, token) // validates the token (401 if bad)
+      const only = orgs.length === 1 ? orgs[0] : null
       await persist({
         authMode: 'paste',
         token,
         apiUrl,
-        orgId: orgs.length === 1 ? orgs[0].id : null,
-        orgName: orgs.length === 1 ? orgs[0].name : null,
+        orgId: only?.id ?? null,
+        orgName: only?.name ?? null,
+        orgRole: only?.memberRole ?? null,
       })
       return orgs
     },
@@ -139,7 +147,7 @@ function PasteAuthProvider({ children }: { children: React.ReactNode }) {
   const chooseOrg = useCallback(
     async (org: Org) => {
       if (!session) return
-      await persist({ ...session, orgId: org.id, orgName: org.name })
+      await persist({ ...session, orgId: org.id, orgName: org.name, orgRole: org.memberRole ?? null })
     },
     [session, persist],
   )
@@ -161,6 +169,7 @@ function PasteAuthProvider({ children }: { children: React.ReactNode }) {
       token: session?.token ?? null,
       orgId: session?.orgId ?? null,
       orgName: session?.orgName ?? null,
+      orgRole: session?.orgRole ?? null,
       getToken: async () => session?.token ?? null,
       connect,
       resolveClerkOrgs: async () => [],
@@ -205,12 +214,14 @@ function ClerkAuthBridge({ children }: { children: React.ReactNode }) {
       const jwt = await clerk.getToken()
       if (!jwt) throw new Error('Not signed in to Clerk yet.')
       const orgs = await Api.orgs(apiUrl, jwt)
+      const only = orgs.length === 1 ? orgs[0] : null
       await persist({
         authMode: 'clerk',
         token: null,
         apiUrl,
-        orgId: orgs.length === 1 ? orgs[0].id : null,
-        orgName: orgs.length === 1 ? orgs[0].name : null,
+        orgId: only?.id ?? null,
+        orgName: only?.name ?? null,
+        orgRole: only?.memberRole ?? null,
       })
       return orgs
     },
@@ -222,12 +233,14 @@ function ClerkAuthBridge({ children }: { children: React.ReactNode }) {
     async (token: string, apiUrlRaw: string): Promise<Org[]> => {
       const apiUrl = (apiUrlRaw || defaultApiUrl()).trim().replace(/\/+$/, '')
       const orgs = await Api.orgs(apiUrl, token)
+      const only = orgs.length === 1 ? orgs[0] : null
       await persist({
         authMode: 'paste',
         token,
         apiUrl,
-        orgId: orgs.length === 1 ? orgs[0].id : null,
-        orgName: orgs.length === 1 ? orgs[0].name : null,
+        orgId: only?.id ?? null,
+        orgName: only?.name ?? null,
+        orgRole: only?.memberRole ?? null,
       })
       return orgs
     },
@@ -243,12 +256,14 @@ function ClerkAuthBridge({ children }: { children: React.ReactNode }) {
         apiUrl: defaultApiUrl(),
         orgId: null,
         orgName: null,
+        orgRole: null,
       }
       await persist({
         ...base,
         authMode: clerkSignedIn ? 'clerk' : base.authMode,
         orgId: org.id,
         orgName: org.name,
+        orgRole: org.memberRole ?? null,
       })
     },
     [session, clerkSignedIn, persist],
@@ -286,6 +301,7 @@ function ClerkAuthBridge({ children }: { children: React.ReactNode }) {
       token: clerkSignedIn ? null : (session?.token ?? null),
       orgId: effectiveSession?.orgId ?? null,
       orgName: effectiveSession?.orgName ?? null,
+      orgRole: effectiveSession?.orgRole ?? null,
       getToken,
       connect,
       resolveClerkOrgs,

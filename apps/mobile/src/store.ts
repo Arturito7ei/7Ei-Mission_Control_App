@@ -17,6 +17,12 @@ const K = {
   apiUrl: 'mc.apiUrl',
   orgId: 'mc.orgId',
   orgName: 'mc.orgName',
+  // MOB-7d — the caller's membership role in the selected org ('owner' | 'member'),
+  // as `/api/orgs` returns it (`memberRole`). Persisted so owner-only edit surfaces
+  // (the agent-settings editor) can gate the affordance without re-fetching. It is
+  // NOT an authorisation decision — the backend's owner gate is the real enforcer;
+  // this only decides what to OFFER. Absent on pre-MOB-7d sessions → null.
+  orgRole: 'mc.orgRole',
 } as const
 
 export type AuthMode = 'clerk' | 'paste'
@@ -27,6 +33,7 @@ export type Session = {
   apiUrl: string
   orgId: string | null
   orgName: string | null
+  orgRole: string | null
 }
 
 async function get(key: string): Promise<string | null> {
@@ -48,19 +55,22 @@ async function set(key: string, value: string | null): Promise<void> {
 }
 
 export async function loadSession(): Promise<Session | null> {
-  const [mode, token, apiUrl, orgId, orgName] = await Promise.all([
+  const [mode, token, apiUrl, orgId, orgName, orgRole] = await Promise.all([
     get(K.authMode),
     get(K.token),
     get(K.apiUrl),
     get(K.orgId),
     get(K.orgName),
+    get(K.orgRole),
   ])
   // Back-compat: a MOB-1 session has a token but no authMode → it's a paste session.
   const authMode: AuthMode | null = mode === 'clerk' || mode === 'paste' ? mode : token ? 'paste' : null
   if (!authMode) return null
   // A paste session with no token is meaningless — treat as no session.
   if (authMode === 'paste' && !token) return null
-  return { authMode, token: authMode === 'paste' ? token : null, apiUrl: apiUrl ?? '', orgId, orgName }
+  // orgRole is absent on pre-MOB-7d sessions → null (editing stays gated until the
+  // next org resolve writes it, which fail-closes correctly).
+  return { authMode, token: authMode === 'paste' ? token : null, apiUrl: apiUrl ?? '', orgId, orgName, orgRole }
 }
 
 export async function saveSession(s: Session): Promise<void> {
@@ -70,6 +80,7 @@ export async function saveSession(s: Session): Promise<void> {
     set(K.apiUrl, s.apiUrl),
     set(K.orgId, s.orgId),
     set(K.orgName, s.orgName),
+    set(K.orgRole, s.orgRole),
   ])
 }
 
