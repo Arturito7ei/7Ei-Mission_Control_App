@@ -42,6 +42,11 @@ export const MCP_CONNECTOR_ID = 'mcp'
 /** The token/basic connectors CONN-4a made real; enabled in the UI at CONN-4b. */
 export const GITHUB_CONNECTOR_ID = 'github'
 export const JIRA_CONNECTOR_ID = 'jira'
+/** The Communication connectors CONN-6 makes real for STORAGE (config + credential);
+ *  the runtime env path carries them to the agent — send/receive execution is CONN-8. */
+export const TELEGRAM_CONNECTOR_ID = 'telegram'
+export const WHATSAPP_CONNECTOR_ID = 'whatsapp'
+export const GOOGLE_CHAT_CONNECTOR_ID = 'google_chat'
 /** The per-agent Google OAuth connector (Calendar/Gmail/Drive), real at CONN-5.
  *  ONE connection per agent grants the selected service scopes — mirrors the backend
  *  `google` catalog id. FULL OAuth on web/desktop; the phone is CONFIG-ONLY (status +
@@ -59,9 +64,10 @@ export const CONNECTOR_GROUPS: ConnectorGroup[] = [
     key: 'communication',
     title: 'Communication',
     connectors: [
-      { id: 'google_chat', name: 'Google Chat', icon: '💬', availability: 'coming_soon', note: 'Comms connectors land in a later stage (CONN-6).' },
-      { id: 'telegram', name: 'Telegram', icon: '✈️', availability: 'coming_soon', note: 'Per-agent Telegram (bot token) lands in a later stage (CONN-6).' },
-      { id: 'whatsapp', name: 'WhatsApp', icon: '🟢', availability: 'coming_soon', note: 'WhatsApp Cloud API lands in a later stage (CONN-6).' },
+      // CONN-6: config + credential storage now (execution is CONN-8). Signal stays out.
+      { id: GOOGLE_CHAT_CONNECTOR_ID, name: 'Google Chat', icon: '💬', availability: 'available' },
+      { id: TELEGRAM_CONNECTOR_ID, name: 'Telegram', icon: '✈️', availability: 'available' },
+      { id: WHATSAPP_CONNECTOR_ID, name: 'WhatsApp', icon: '🟢', availability: 'available' },
       { id: 'signal', name: 'Signal', icon: '🔵', availability: 'out_of_scope', note: 'Out of scope for v1 — Signal has no official API (spike-only if ever).' },
     ],
   },
@@ -291,6 +297,88 @@ export function jiraConfigToForm(config: Record<string, unknown> | null | undefi
     baseUrl: typeof c.baseUrl === 'string' ? c.baseUrl : '',
     email: typeof c.email === 'string' ? c.email : '',
   }
+}
+
+// ─── Communication connectors (CONN-6) — client mirrors of the backend zod ────
+//
+// All three store a WRITE-ONLY credential (the secret) plus optional NON-secret
+// config, exactly like GitHub/Jira. The credential is never read back. The server
+// stays the final validator (`.strict()`); these give instant feedback + a clean body.
+//
+// backend/src/services/agent-connectors.ts:
+//   telegram    TelegramConfigSchema  { botUsername? 1..120, chatId? 1..64 }   secret = bot token
+//   whatsapp    WhatsappConfigSchema  { phoneNumberId? 1..64, businessAccountId? 1..64 }  secret = access token
+//   google_chat GoogleChatConfigSchema { space? 1..200 }                       secret = incoming-webhook URL
+
+export interface TelegramConfig { botUsername?: string; chatId?: string }
+export interface TelegramFormInput { botUsername: string; chatId: string }
+export type TelegramValidation = { ok: true; config: TelegramConfig } | { ok: false; error: string }
+
+/** Validate the NON-SECRET Telegram config. The bot token is validated separately by
+ *  the form (required on first configure). */
+export function validateTelegramConfig(input: TelegramFormInput): TelegramValidation {
+  const botUsername = (input.botUsername ?? '').trim()
+  const chatId = (input.chatId ?? '').trim()
+  if (botUsername.length > 120) return { ok: false, error: 'Bot username must be 120 characters or fewer.' }
+  if (chatId.length > 64) return { ok: false, error: 'Chat ID must be 64 characters or fewer.' }
+  const config: TelegramConfig = {}
+  if (botUsername) config.botUsername = botUsername
+  if (chatId) config.chatId = chatId
+  return { ok: true, config }
+}
+
+/** Seed a blank/edit Telegram form from a stored config (never carries a secret). */
+export function telegramConfigToForm(config: Record<string, unknown> | null | undefined): TelegramFormInput {
+  const c = (config ?? {}) as Partial<TelegramConfig>
+  return {
+    botUsername: typeof c.botUsername === 'string' ? c.botUsername : '',
+    chatId: typeof c.chatId === 'string' ? c.chatId : '',
+  }
+}
+
+export interface WhatsappConfig { phoneNumberId?: string; businessAccountId?: string }
+export interface WhatsappFormInput { phoneNumberId: string; businessAccountId: string }
+export type WhatsappValidation = { ok: true; config: WhatsappConfig } | { ok: false; error: string }
+
+/** Validate the NON-SECRET WhatsApp config. The access token is validated separately. */
+export function validateWhatsappConfig(input: WhatsappFormInput): WhatsappValidation {
+  const phoneNumberId = (input.phoneNumberId ?? '').trim()
+  const businessAccountId = (input.businessAccountId ?? '').trim()
+  if (phoneNumberId.length > 64) return { ok: false, error: 'Phone number ID must be 64 characters or fewer.' }
+  if (businessAccountId.length > 64) return { ok: false, error: 'Business account ID must be 64 characters or fewer.' }
+  const config: WhatsappConfig = {}
+  if (phoneNumberId) config.phoneNumberId = phoneNumberId
+  if (businessAccountId) config.businessAccountId = businessAccountId
+  return { ok: true, config }
+}
+
+/** Seed a blank/edit WhatsApp form from a stored config (never carries a secret). */
+export function whatsappConfigToForm(config: Record<string, unknown> | null | undefined): WhatsappFormInput {
+  const c = (config ?? {}) as Partial<WhatsappConfig>
+  return {
+    phoneNumberId: typeof c.phoneNumberId === 'string' ? c.phoneNumberId : '',
+    businessAccountId: typeof c.businessAccountId === 'string' ? c.businessAccountId : '',
+  }
+}
+
+export interface GoogleChatConfig { space?: string }
+export interface GoogleChatFormInput { space: string }
+export type GoogleChatValidation = { ok: true; config: GoogleChatConfig } | { ok: false; error: string }
+
+/** Validate the NON-SECRET Google Chat config (an optional space label). The webhook
+ *  URL is the WRITE-ONLY secret, validated separately (required on first configure). */
+export function validateGoogleChatConfig(input: GoogleChatFormInput): GoogleChatValidation {
+  const space = (input.space ?? '').trim()
+  if (space.length > 200) return { ok: false, error: 'Space must be 200 characters or fewer.' }
+  const config: GoogleChatConfig = {}
+  if (space) config.space = space
+  return { ok: true, config }
+}
+
+/** Seed a blank/edit Google Chat form from a stored config (never carries a secret). */
+export function googleChatConfigToForm(config: Record<string, unknown> | null | undefined): GoogleChatFormInput {
+  const c = (config ?? {}) as Partial<GoogleChatConfig>
+  return { space: typeof c.space === 'string' ? c.space : '' }
 }
 
 // ─── Google (OAuth) — CONN-5 ──────────────────────────────────────────────────

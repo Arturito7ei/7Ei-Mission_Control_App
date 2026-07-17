@@ -18,14 +18,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import {
-  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, isConfigured,
+  CONNECTOR_GROUPS, MCP_CONNECTOR_ID, GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID,
+  TELEGRAM_CONNECTOR_ID, WHATSAPP_CONNECTOR_ID, GOOGLE_CHAT_CONNECTOR_ID, isConfigured,
   validateMcpConfig, mcpConfigToForm,
   validateGithubConfig, githubConfigToForm,
   validateJiraConfig, jiraConfigToForm,
+  validateTelegramConfig, telegramConfigToForm,
+  validateWhatsappConfig, whatsappConfigToForm,
+  validateGoogleChatConfig, googleChatConfigToForm,
   GOOGLE_SERVICES, GOOGLE_SERVICE_LABELS, defaultGoogleServices, hasAnyGoogleService,
   googleServicesFromConfig, googleScopesFromConfig,
   type DisplayConnector, type PublicConnectorState,
   type McpFormInput, type GithubFormInput, type JiraFormInput,
+  type TelegramFormInput, type WhatsappFormInput, type GoogleChatFormInput,
   type GoogleService, type GoogleServiceSelection,
 } from '@/lib/agentConnectors'
 import { Button, Card, Pill, Select, Skeleton, TextArea, TextInput } from '../ui'
@@ -132,7 +137,8 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: space.xl }}>
       <p style={{ ...ax.empty, maxWidth: 640 }}>
         Connect this agent to external services. Credentials are stored encrypted at agent scope and are never shown back —
-        only their connection status. GitHub, Jira, Google and custom MCP servers are configurable today; the rest arrive in later stages.
+        only their connection status. GitHub, Jira, Google, custom MCP servers and the communication connectors
+        (Telegram, WhatsApp, Google Chat) are configurable today. Signal remains out of scope.
       </p>
 
       {oauthNotice && (
@@ -231,6 +237,18 @@ function ConnectorRow({ conn, state, orgId, agentId, getToken, onState }: {
       )}
       {available && expanded && conn.id === GOOGLE_CONNECTOR_ID && (
         <GoogleConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
+      {available && expanded && conn.id === TELEGRAM_CONNECTOR_ID && (
+        <TelegramConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
+      {available && expanded && conn.id === WHATSAPP_CONNECTOR_ID && (
+        <WhatsappConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
+          onState={onState} onDone={() => setExpanded(false)} />
+      )}
+      {available && expanded && conn.id === GOOGLE_CHAT_CONNECTOR_ID && (
+        <GoogleChatConfig orgId={orgId} agentId={agentId} getToken={getToken} state={state}
           onState={onState} onDone={() => setExpanded(false)} />
       )}
     </div>
@@ -666,6 +684,225 @@ function JiraConfig({ orgId, agentId, getToken, state, onState, onDone }: {
         {configured && <Button onClick={test} disabled={busy !== null}>{busy === 'test' ? 'Testing…' : 'Test'}</Button>}
         {configured && <Button variant="danger" onClick={remove} disabled={busy !== null}>{busy === 'delete' ? 'Removing…' : 'Disconnect'}</Button>}
       </div>
+    </Card>
+  )
+}
+
+// ─── Communication connectors (CONN-6) — config + credential STORAGE ───────────
+//
+// Telegram / WhatsApp / Google Chat. Same security invariants as GitHub/Jira: the
+// credential is WRITE-ONLY (type=password, seeded from '' never a read, cleared after
+// a successful save; blank on save keeps the stored one). NON-secret config is
+// returnable and shown. The backend requires the credential on FIRST configure. These
+// are STORE-ONLY in v1 — the backend does not yet send/receive (that is CONN-8).
+//
+// `useCommsConnector` factors the shared save/test/delete plumbing so each connector
+// component is just its field layout — the write-only-secret contract lives in ONE place.
+function useCommsConnector<F>(opts: {
+  connectorId: string
+  orgId: string
+  agentId: string
+  getToken: Getter
+  configured: boolean
+  buildConfig: () => { ok: true; config: unknown } | { ok: false; error: string }
+  seedForm: (config: Record<string, unknown> | null | undefined) => F
+  setForm: (f: F) => void
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const [secret, setSecret] = useState('')   // WRITE-ONLY — never seeded from a read
+  const [busy, setBusy] = useState<null | 'save' | 'test' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  const base = `/api/orgs/${opts.orgId}/agents/${opts.agentId}/connectors/${opts.connectorId}`
+
+  const save = async () => {
+    setErr(null); setMsg(null)
+    const valid = opts.buildConfig()
+    if (valid.ok !== true) { setErr(valid.error); return }
+    if (!opts.configured && !secret.trim()) { setErr('A credential is required to connect.'); return }
+    setBusy('save')
+    try {
+      const body: Record<string, unknown> = { config: valid.config }
+      if (secret.trim()) body.secret = secret.trim()   // only sent when the operator typed one
+      const { connector } = await api<{ connector: PublicConnectorState }>(
+        base, { token: await opts.getToken(), method: 'POST', body: JSON.stringify(body) })
+      opts.onState(connector)
+      setSecret('')                                    // clear the write-only field after success
+      opts.setForm(opts.seedForm(connector.config))
+      setMsg('Saved.')
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not save this connector.')   // edits (incl. secret) preserved for retry
+    }
+    setBusy(null)
+  }
+
+  const test = async () => {
+    setErr(null); setMsg(null); setBusy('test')
+    try {
+      const r = await api<{ ok: boolean; detail?: string | null; testedAt?: string }>(
+        `${base}/test`, { token: await opts.getToken(), method: 'POST', body: '{}' })
+      setMsg(r.ok ? `✓ ${r.detail ?? 'OK'}` : `✗ ${r.detail ?? 'failed'}`)
+      if (opts.state) opts.onState({ ...opts.state, lastTestedAt: r.testedAt ? Date.parse(r.testedAt) : Date.now(), lastError: r.ok ? null : (r.detail ?? 'failed') })
+    } catch (e: any) { setErr(e?.message ?? 'Test failed.') }
+    setBusy(null)
+  }
+
+  const remove = async () => {
+    setErr(null); setMsg(null); setBusy('delete')
+    try {
+      await api(base, { token: await opts.getToken(), method: 'DELETE' })
+      opts.onState(null)
+      opts.onDone()
+    } catch (e: any) { setErr(e?.message ?? 'Could not disconnect.'); setBusy(null) }
+  }
+
+  return { secret, setSecret, busy, err, msg, save, test, remove }
+}
+
+/** The shared action row + status lines for a comms connector form. */
+function CommsActions({ configured, busy, err, msg, lastTested, save, test, remove }: {
+  configured: boolean
+  busy: null | 'save' | 'test' | 'delete'
+  err: string | null
+  msg: string | null
+  lastTested: string | null
+  save: () => void
+  test: () => void
+  remove: () => void
+}) {
+  return (
+    <>
+      {err && <div style={ax.err}>{err}</div>}
+      {msg && <div style={{ color: tk.green, fontSize: text.sm.fontSize }}>{msg}</div>}
+      {configured && lastTested && !msg && (
+        <div style={{ ...ax.empty, fontSize: text.xs.fontSize }}>Last tested {lastTested}.</div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+        <Button variant="primary" onClick={save} disabled={busy !== null}>
+          {busy === 'save' ? 'Saving…' : configured ? 'Save changes' : 'Connect'}
+        </Button>
+        {configured && <Button onClick={test} disabled={busy !== null}>{busy === 'test' ? 'Testing…' : 'Test'}</Button>}
+        {configured && <Button variant="danger" onClick={remove} disabled={busy !== null}>{busy === 'delete' ? 'Removing…' : 'Disconnect'}</Button>}
+      </div>
+    </>
+  )
+}
+
+function TelegramConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string; agentId: string; getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<TelegramFormInput>(() => telegramConfigToForm(state?.config))
+  const setF = (k: keyof TelegramFormInput, v: string) => setForm(f => ({ ...f, [k]: v }))
+  const c = useCommsConnector<TelegramFormInput>({
+    connectorId: TELEGRAM_CONNECTOR_ID, orgId, agentId, getToken, configured,
+    buildConfig: () => validateTelegramConfig(form), seedForm: telegramConfigToForm, setForm,
+    state, onState, onDone,
+  })
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: space.lg }}>
+        <FormLabel>Bot username <span style={{ fontWeight: 400, color: tk.muted }}>· optional · display label</span>
+          <TextInput value={form.botUsername} placeholder="e.g. my_agent_bot" autoComplete="off"
+            onChange={e => setF('botUsername', e.target.value)} />
+        </FormLabel>
+        <FormLabel>Chat ID <span style={{ fontWeight: 400, color: tk.muted }}>· optional · default target</span>
+          <TextInput value={form.chatId} placeholder="e.g. 123456789" autoComplete="off"
+            onChange={e => setF('chatId', e.target.value)} />
+        </FormLabel>
+      </div>
+      <FormLabel>Bot token <span style={{ fontWeight: 400, color: tk.muted }}>· write-only</span>
+        <TextInput type="password" value={c.secret} autoComplete="off"
+          placeholder={configured ? 'Leave blank to keep the stored token' : '123456:ABC-DEF…'}
+          onChange={e => c.setSecret(e.target.value)} />
+      </FormLabel>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
+        Stored encrypted at agent scope as <code>TELEGRAM_BOT_TOKEN</code> (with <code>TELEGRAM_CHAT_ID</code>) and injected
+        into this agent’s runtime. Sending is wired in a later stage. Never displayed back — leave blank to keep the stored token.
+      </p>
+      <CommsActions configured={configured} busy={c.busy} err={c.err} msg={c.msg}
+        lastTested={rel(state?.lastTestedAt ?? null)} save={c.save} test={c.test} remove={c.remove} />
+    </Card>
+  )
+}
+
+function WhatsappConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string; agentId: string; getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<WhatsappFormInput>(() => whatsappConfigToForm(state?.config))
+  const setF = (k: keyof WhatsappFormInput, v: string) => setForm(f => ({ ...f, [k]: v }))
+  const c = useCommsConnector<WhatsappFormInput>({
+    connectorId: WHATSAPP_CONNECTOR_ID, orgId, agentId, getToken, configured,
+    buildConfig: () => validateWhatsappConfig(form), seedForm: whatsappConfigToForm, setForm,
+    state, onState, onDone,
+  })
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: space.lg }}>
+        <FormLabel>Phone number ID <span style={{ fontWeight: 400, color: tk.muted }}>· optional</span>
+          <TextInput value={form.phoneNumberId} placeholder="e.g. 105954…" autoComplete="off"
+            onChange={e => setF('phoneNumberId', e.target.value)} />
+        </FormLabel>
+        <FormLabel>Business account ID <span style={{ fontWeight: 400, color: tk.muted }}>· optional</span>
+          <TextInput value={form.businessAccountId} placeholder="e.g. 102290…" autoComplete="off"
+            onChange={e => setF('businessAccountId', e.target.value)} />
+        </FormLabel>
+      </div>
+      <FormLabel>Access token <span style={{ fontWeight: 400, color: tk.muted }}>· write-only</span>
+        <TextInput type="password" value={c.secret} autoComplete="off"
+          placeholder={configured ? 'Leave blank to keep the stored token' : 'Cloud API access token'}
+          onChange={e => c.setSecret(e.target.value)} />
+      </FormLabel>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
+        Stored encrypted at agent scope as <code>WHATSAPP_ACCESS_TOKEN</code> (with the phone / business IDs) and injected
+        into this agent’s runtime. Sending is wired in a later stage. Never displayed back — leave blank to keep the stored token.
+      </p>
+      <CommsActions configured={configured} busy={c.busy} err={c.err} msg={c.msg}
+        lastTested={rel(state?.lastTestedAt ?? null)} save={c.save} test={c.test} remove={c.remove} />
+    </Card>
+  )
+}
+
+function GoogleChatConfig({ orgId, agentId, getToken, state, onState, onDone }: {
+  orgId: string; agentId: string; getToken: Getter
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<GoogleChatFormInput>(() => googleChatConfigToForm(state?.config))
+  const c = useCommsConnector<GoogleChatFormInput>({
+    connectorId: GOOGLE_CHAT_CONNECTOR_ID, orgId, agentId, getToken, configured,
+    buildConfig: () => validateGoogleChatConfig(form), seedForm: googleChatConfigToForm, setForm,
+    state, onState, onDone,
+  })
+  return (
+    <Card style={{ margin: `0 ${space.lg}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.lg, background: tk.bg }}>
+      <FormLabel>Space <span style={{ fontWeight: 400, color: tk.muted }}>· optional · display label</span>
+        <TextInput value={form.space} placeholder="e.g. spaces/AAAA…" autoComplete="off"
+          onChange={e => setForm({ space: e.target.value })} />
+      </FormLabel>
+      <FormLabel>Incoming webhook URL <span style={{ fontWeight: 400, color: tk.muted }}>· write-only</span>
+        <TextInput type="password" value={c.secret} autoComplete="off"
+          placeholder={configured ? 'Leave blank to keep the stored URL' : 'https://chat.googleapis.com/v1/spaces/…'}
+          onChange={e => c.setSecret(e.target.value)} />
+      </FormLabel>
+      <p style={{ ...ax.empty, fontSize: text.xs.fontSize, marginTop: -space.sm }}>
+        The webhook URL embeds a key and is treated as a secret — stored encrypted at agent scope as
+        <code> GOOGLE_CHAT_WEBHOOK_URL</code> and injected into this agent’s runtime. Sending is wired in a later stage.
+        Never displayed back — leave blank to keep the stored URL.
+      </p>
+      <CommsActions configured={configured} busy={c.busy} err={c.err} msg={c.msg}
+        lastTested={rel(state?.lastTestedAt ?? null)} save={c.save} test={c.test} remove={c.remove} />
     </Card>
   )
 }
