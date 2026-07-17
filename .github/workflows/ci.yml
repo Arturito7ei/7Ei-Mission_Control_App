@@ -79,3 +79,44 @@ jobs:
         # Build gate: proves the app still bundles. Pure JS — Metro + Hermes,
         # no Xcode and no native toolchain, ~7s locally.
         run: npm run export
+
+  web:
+    # `web` is the PRIMARY UI (Next.js 15 on Vercel). Like the `mobile` job, it
+    # is a standalone job rather than a matrix cell: it runs the real unit-test
+    # + production-build gates, not just the install/typecheck that the `check`
+    # matrix above covers. Before this job existed, NO workflow ran web's unit
+    # tests — a broken web test (CONN-5) reached `main` unseen, the exact gap the
+    # `mobile` job closed for the phone. web has its own committed lockfile
+    # (web/package-lock.json), so it installs in-place like `mobile` does.
+    name: Web (web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        # `npm ci` off the committed lockfile. `--legacy-peer-deps` matches the
+        # `check` matrix and the backend test job: this repo's react 19 / next 15
+        # peer graph needs it, and it resolves cleanly this way.
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        # 243 tests (node --test --experimental-strip-types over app/** + lib/**).
+        # No `|| true` — a failing test must fail the job.
+        run: npm test
+
+      - name: Build (Next.js production build)
+        # Build gate: `next build` must pass, mirroring web/CLAUDE.md's
+        # merge invariant.
+        run: npm run build
