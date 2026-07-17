@@ -13,6 +13,7 @@ import DashboardTab from './DashboardTab'
 import InstructionsTab from './InstructionsTab'
 import SkillsTab from './SkillsTab'
 import ConfigurationTab from './ConfigurationTab'
+import ConnectorsTab from './ConnectorsTab'
 import RunsTab from './RunsTab'
 import BudgetTab from './BudgetTab'
 
@@ -139,6 +140,7 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
         {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'skills' && <SkillsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenLibrary={onOpenLibrary} />}
         {tab === 'configuration' && <ConfigurationTab orgId={orgId} agentId={agentId} getToken={getToken} onSaved={load} />}
+        {tab === 'connectors' && <ConnectorsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'runs' && <RunsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenTask={onOpenTask} />}
         {tab === 'budget' && <BudgetTab orgId={orgId} agentId={agentId} agentName={agent.name} getToken={getToken} />}
       </div>

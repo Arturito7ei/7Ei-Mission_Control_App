@@ -249,13 +249,42 @@ _As-built on `conn-1-agent-connectors-backend`._
   owner gate binds (member 403, cross-tenant 404, R-4 tail-path avoided by the org-scoped
   path); encryption at rest; the automatic audit-log hook covers the mutating routes.
 
-### CONN-2 — Web accordion UI for the config-only connector (≈ 2–3 d)
-- New `ConnectorsTab.tsx` under `web/app/dashboard/agent/` (add `'connectors'` to
-  `AGENT_TABS`), or a section in `ConfigurationTab` (decision, minor). Accordion grouped
-  by category; inline config panel reusing the `ConnectorsPanel` form idiom; masked status
-  pills; owner-only (mirror how sibling tabs already 403 members).
-- **SR focus:** the client never renders a secret; error mapping doesn't leak; owner-gate
-  reflected in UI but backend is the enforcer.
+### CONN-2 — Web accordion UI for the config-only connector ✅ SHIPPED
+_As-built on `conn-2-web-connectors-accordion`._
+- **New owner-only Connectors tab** — `web/app/dashboard/agent/ConnectorsTab.tsx`;
+  `'connectors'` added to `AGENT_TABS` (`web/lib/agentRoute.ts`) between Configuration
+  and Runs, wired in `AgentDetail.tsx`. Chose a dedicated tab (decision F), not a
+  Configuration section.
+- **Accordion grouped by category exactly as the operator listed** (each a collapsible
+  `<section>` with `aria-expanded`, a "N connected" pill, and connector rows):
+  Communication (Google Chat · Telegram · WhatsApp · Signal), IT / Project management
+  (GitHub · Jira), Google Services (Google Calendar · Gmail · Google Drive), Custom MCP
+  servers. The **Custom MCP** section opens by default.
+- **Real in v1 = custom MCP only** (the CONN-1 pilot). Inline config panel: name,
+  transport (http|stdio), url **or** command+args, and an **optional write-only** token.
+  `POST …/connectors/mcp` (configure), masked status pill (Connected/Not connected +
+  `accountLabel`), `POST …/test`, `DELETE` (Disconnect). Optimistic edits reconcile to
+  the server's masked row.
+- **Everything else is a disabled "Coming soon" / "Out of scope" row** with an honest
+  note naming its stage (GitHub/Jira → CONN-4, Google trio → CONN-5,
+  Telegram/WhatsApp/Google Chat → CONN-6, **Signal out of scope**). No fake saves — the
+  CONN-1 catalog holds only `mcp`, so calling an unknown connectorId would 404; the tab
+  never issues that call.
+- **Pure logic + parity** — `web/lib/agentConnectors.ts`: the category catalog,
+  `AVAILABLE_CONNECTOR_IDS` (derived), and `validateMcpConfig` — a client mirror of the
+  backend `McpConfigSchema` (server stays the final validator). `agentConnectors.test.ts`
+  (+13) covers category rendering, the available-set, masked-only display, MCP validation,
+  and a **parity tripwire** that reads the backend `AGENT_CONNECTORS` source and fails if
+  the client "available" set drifts from it (Next.js can't import backend source that pulls
+  in drizzle, so the tripwire text-reads the file — dep-free, CI-safe).
+- **SR focus (met):** the client **never renders a secret** — the read projection carries
+  no credential (not even a `secretRef`), the token input is `type=password`, seeded from
+  `''` (never from a read), cleared only after a successful save, and blank-on-save keeps
+  the stored token. **Owner-gate:** the list GET is itself owner-gated, so a **403 on load**
+  → a clean read-only "owner-only" note; a mutating 403 surfaces in the row with the
+  operator's edits preserved. The backend remains the enforcer.
+- **Verify:** web `npm run build` + `tsc --noEmit` + `npm test` (234/234) green. Additive
+  to `web/**` + docs. **Parity: CONN-3 mirrors this to the phone** over the same contract.
 
 ### CONN-3 — Mobile accordion mirror (≈ 2–3 d)
 - `apps/mobile` connectors section on `AgentDetailScreen` (or a dedicated screen) mirroring
@@ -389,7 +418,8 @@ will grow and the accordion wants room.
 | `connector:` capability namespace | **Reserved, not enforced** |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
 | Per-agent OAuth (agentId scope, PKCE, mobile completion) | **New** (CONN-5) |
-| Accordion UI, web + mobile | **New** (CONN-2/3; no shared Accordion primitive today) |
+| Accordion UI, web + mobile | **Web SHIPPED** (CONN-2, local expandable — no shared Accordion primitive); mobile CONN-3 |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
 
-_End of plan. Nothing here has been implemented; CONN-1 starts after decisions A–E._
+_End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3
+(mobile mirror) is next, then CONN-4… per the roadmap above._
