@@ -555,6 +555,11 @@ export const Api = {
 
   // PUT …/model-profile — primary/cheap model + reasoning effort. A model swap
   // changes spend + capability, so the screen CONFIRMS before calling this.
+  // The route answers `{ agentId, profile, resolved }` — NOT `{ agent }` (the web
+  // re-loads the roster after this call rather than reading the body). Return the
+  // authoritative `profile` so the screen reconciles the row from the server's
+  // answer; reading a non-existent `.agent` here yielded `undefined` and blanked
+  // the agent on a SUCCESSFUL save (audit MOB-7d fix).
   updateModelProfile: (
     base: string,
     token: string,
@@ -562,14 +567,19 @@ export const Api = {
     agentId: string,
     body: { primaryModel: string; cheapModel: string; cheapModelEnabled: boolean; reasoningEffort: string },
   ) =>
-    api<{ agent: Agent }>(base, `/api/orgs/${orgId}/agents/${agentId}/model-profile`, {
+    api<{
+      agentId: string
+      profile: { primaryModel: string | null; cheapModel: string | null; cheapModelEnabled: boolean; reasoningEffort: string | null }
+    }>(base, `/api/orgs/${orgId}/agents/${agentId}/model-profile`, {
       token,
       method: 'PUT',
       body: JSON.stringify(body),
-    }).then((r) => r.agent),
+    }).then((r) => r.profile),
 
   // PUT …/trust — the trust MODE (boundary editing stays on the desk). Safety-
-  // critical, so the screen CONFIRMS before calling this.
+  // critical, so the screen CONFIRMS before calling this. The route answers
+  // `{ agentId, trustMode, boundary }` — NOT `{ agent }` — so return the new
+  // `trustMode` for the screen to reconcile (same audit fix as model-profile).
   updateAgentTrust: (
     base: string,
     token: string,
@@ -577,11 +587,11 @@ export const Api = {
     agentId: string,
     body: { trustMode: string },
   ) =>
-    api<{ agent: Agent }>(base, `/api/orgs/${orgId}/agents/${agentId}/trust`, {
-      token,
-      method: 'PUT',
-      body: JSON.stringify(body),
-    }).then((r) => r.agent),
+    api<{ agentId: string; trustMode: string; boundary: unknown }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/trust`,
+      { token, method: 'PUT', body: JSON.stringify(body) },
+    ).then((r) => r.trustMode),
 
   // GET …/skills — the split payload the SkillsTab renders (member-readable).
   agentSkills: (base: string, token: string, orgId: string, agentId: string) =>

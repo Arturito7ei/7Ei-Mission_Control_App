@@ -599,7 +599,16 @@ function ModelProfileSection({
     setErr(null)
     setSaved(false)
     try {
-      const updated = await Api.updateModelProfile(apiUrl, token, orgId, agentId, buildModelProfileBody(form))
+      // The route answers with the new profile (not a full agent row); merge it
+      // onto the agent we already have so on-screen state IS the server's answer.
+      const profile = await Api.updateModelProfile(apiUrl, token, orgId, agentId, buildModelProfileBody(form))
+      const updated: Agent = {
+        ...agent,
+        primaryModel: profile.primaryModel,
+        cheapModel: profile.cheapModel,
+        cheapModelEnabled: profile.cheapModelEnabled,
+        reasoningEffort: profile.reasoningEffort,
+      }
       onAgentUpdated(updated)
       setForm(emptyModelForm(updated))
       setSaved(true)
@@ -694,8 +703,10 @@ function TrustSection({
     setBusy(true)
     setErr(null)
     try {
-      const updated = await Api.updateAgentTrust(apiUrl, token, orgId, agentId, buildTrustBody(target))
-      onAgentUpdated(updated)
+      // The route answers `{ trustMode }`, not a full agent row — merge the new
+      // mode onto the current agent so the card reconciles to the server's answer.
+      const trustMode = await Api.updateAgentTrust(apiUrl, token, orgId, agentId, buildTrustBody(target))
+      onAgentUpdated({ ...agent, trustMode })
     } catch (e: any) {
       setErr(e?.message ?? 'Could not change the trust tier.')
     }
