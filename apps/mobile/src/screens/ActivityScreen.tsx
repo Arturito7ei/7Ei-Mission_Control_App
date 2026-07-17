@@ -16,8 +16,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { AgentAvatar } from '../AgentAvatar'
 import { Api } from '../api'
 import {
+  actionVerb,
   activityCount,
   activityFeed,
   formatDuration,
@@ -91,15 +93,23 @@ export default function ActivityScreen() {
           </Text>
           {feed.map((e) => (
             <Card key={e.key} style={{ marginBottom: space.md }}>
-              <Text style={s.title} numberOfLines={2}>
-                {e.title}
-              </Text>
-              <View style={s.meta}>
-                <Text style={s.agent} numberOfLines={1}>
-                  {e.avatarEmoji} {e.agentName}
+              {/* MOB-7c — a log line: WHO (avatar + name) did WHAT (the verb),
+                  with the state as a glyph+label chip on the right. The timeline
+                  lanes carry only `avatarEmoji` (no picture), exactly as the web's
+                  own swimlane does, so this actor is emoji here by data — the
+                  shared AgentAvatar just frames it like the roster and detail. */}
+              <View style={s.actor}>
+                <AgentAvatar agent={{ avatarEmoji: e.avatarEmoji }} size={22} />
+                <Text style={s.actorText} numberOfLines={1}>
+                  <Text style={s.agentName}>{e.agentName}</Text>
+                  <Text style={s.verb}> {actionVerb(e.status, e.ongoing)}</Text>
                 </Text>
                 <Chip label={e.status} tone={statusTone(e.status)} glyph={statusIcon(e.status)} />
               </View>
+              {/* WHICH — the task/run the action was on. */}
+              <Text style={s.title} numberOfLines={2}>
+                {e.title}
+              </Text>
               <View style={s.nums}>
                 <Text style={s.when}>
                   {formatWhen(e.startMs, now)} · {formatDuration(e.startMs, e.endMs, now)}
@@ -125,15 +135,11 @@ export default function ActivityScreen() {
 const s = StyleSheet.create({
   wrap: { padding: space.lg },
   count: { color: theme.textDim, fontSize: font.sm, fontWeight: '700', marginBottom: space.md },
-  title: { color: theme.text, fontSize: font.base, fontWeight: '600' },
-  meta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.md,
-    marginTop: space.md,
-  },
-  agent: { color: theme.textDim, fontSize: font.sm, flex: 1 },
+  actor: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  actorText: { flex: 1, fontSize: font.sm },
+  agentName: { color: theme.text, fontWeight: '700' },
+  verb: { color: theme.textDim },
+  title: { color: theme.text, fontSize: font.base, fontWeight: '600', marginTop: space.sm },
   nums: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md, marginTop: space.sm },
   when: { color: theme.textFaint, fontSize: font.sm - 1 },
   cost: { color: theme.blue, fontSize: font.sm - 1, fontWeight: '600' },

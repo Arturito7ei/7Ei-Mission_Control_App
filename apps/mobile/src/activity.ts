@@ -22,8 +22,10 @@
 // `startPct` / `widthPct` are ignored here ON PURPOSE: they are the projection,
 // and they are the only part of the payload that assumes a wide canvas.
 //
-// Everything below is pure — no React, no react-native — so activity.test.ts can
-// load it under `node --test` and pin the rules.
+// Everything below is pure — no React, no react-native, and no imports — so
+// activity.test.ts can load it under `node --test` and pin the rules. (Kept
+// import-free on purpose: a runtime cross-module import would force a `.ts`
+// extension that tsc rejects outside the excluded test files.)
 
 /** A timeline block — the backend's `TLBlock` (backend/src/services/timeline.ts). */
 export interface TLBlockLite {
@@ -142,6 +144,44 @@ export function eventKey(lane: { agentId: string }, b: TLBlockLite): string {
 export function activityCount(timeline: TimelineLite | null | undefined): number {
   if (!timeline?.lanes) return 0
   return timeline.lanes.reduce((n, l) => n + (l.blocks?.length ?? 0), 0)
+}
+
+/**
+ * MOB-7c — the action a row records, as a verb, so the feed reads as an activity
+ * LOG ("Dev completed …", "Maya is running …") and not a wall of status chips. The
+ * four facts a log row needs are who/what/which/when; this is the "what", phrased.
+ *
+ * Keyed off `ongoing` first (a still-running block is present-tense regardless of
+ * its status label), then the block's status. The timeline emits a small, known
+ * vocabulary — running/done/failed/paused (web/app/dashboard/agent/shared.tsx),
+ * plus the run rows' `succeeded` — so the map is inlined rather than pulling in
+ * status.ts (which would force the `.ts`-import clash noted at the top). The chip
+ * beside it still carries the exact status label through status.ts; this is only
+ * the verb. Pure and testable.
+ */
+export function actionVerb(status: string, ongoing: boolean): string {
+  if (ongoing) return 'is running'
+  switch ((status ?? '').toLowerCase()) {
+    case 'done':
+    case 'succeeded':
+    case 'completed':
+    case 'success':
+      return 'completed'
+    case 'failed':
+    case 'error':
+    case 'stopped':
+    case 'terminated':
+      return 'failed'
+    case 'paused':
+      return 'paused'
+    case 'blocked':
+      return 'was blocked on'
+    default:
+      // Anything else that reached the feed is a finished unit of work — a block
+      // only exists because something started, so "ran" is the safe verb (never
+      // "queued": a block is never merely queued).
+      return 'ran'
+  }
 }
 
 /**

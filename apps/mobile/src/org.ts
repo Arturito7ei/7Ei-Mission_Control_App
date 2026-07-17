@@ -40,6 +40,10 @@ export interface OrgAgentLite {
   reportsTo?: string | null
   status?: string | null
   avatarEmoji?: string | null
+  // MOB-7c — the uploaded picture (data URI). The `/orgchart` route selects it
+  // (backend/src/routes/agents.ts), so the tree can show real faces like the web's
+  // OrgChart does; absent → the emoji. See AgentAvatar.tsx.
+  avatarUrl?: string | null
   runtime?: string | null
   llmModel?: string | null
   jobDescription?: string | null

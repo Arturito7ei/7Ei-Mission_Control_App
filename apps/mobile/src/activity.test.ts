@@ -19,6 +19,7 @@ import {
 import {
   ACTIVITY_LIMIT,
   ACTIVITY_WINDOW_MS,
+  actionVerb,
   activityCount,
   activityFeed,
   formatDuration,
@@ -180,4 +181,22 @@ test('[MOB-6d] durations scale from ms to hours', () => {
   assert.equal(formatDuration(NOW - 1400, NOW, NOW), '1.4s')
   assert.equal(formatDuration(NOW - min(12), NOW, NOW), '12m')
   assert.equal(formatDuration(NOW - min(120), NOW, NOW), '2h')
+})
+
+test('[MOB-7c] actionVerb reads as an activity log line', () => {
+  // Ongoing wins regardless of the status label — a running block is present-tense.
+  assert.equal(actionVerb('running', true), 'is running')
+  assert.equal(actionVerb('done', true), 'is running')
+  // Finished states, phrased. These are the labels the timeline actually emits
+  // (running/done/failed/paused — web/app/dashboard/agent/shared.tsx), plus the
+  // run rows' 'succeeded', which aliases to done via canonicalStatus.
+  assert.equal(actionVerb('done', false), 'completed')
+  assert.equal(actionVerb('failed', false), 'failed')
+  assert.equal(actionVerb('paused', false), 'paused')
+  assert.equal(actionVerb('blocked', false), 'was blocked on')
+  // A non-ongoing block with an active/unknown label is a finished unit of work —
+  // never "queued", because a block only exists once something started.
+  assert.equal(actionVerb('running', false), 'ran')
+  assert.equal(actionVerb('pending', false), 'ran')
+  assert.equal(actionVerb('', false), 'ran')
 })

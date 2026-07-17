@@ -35,6 +35,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
+import { AgentAvatar } from '../AgentAvatar'
 import { Api } from '../api'
 import { useAuth } from '../auth'
 import {
@@ -100,7 +101,9 @@ function AgentRow({ row, onOpen, onToggle }: {
         accessibilityLabel={`${a.name}, ${roleLine(a)}. Status ${a.status ?? 'unknown'}. Open agent.`}
         style={({ pressed }) => [s.card, { opacity: pressed ? 0.7 : 1 }]}
       >
-        <Text style={s.avatar}>{a.avatarEmoji || '🤖'}</Text>
+        {/* MOB-7c — the agent's picture on the node, as the web's OrgChart nodes
+            show it (their AgentAvatar, size 36). */}
+        <AgentAvatar agent={a} size={32} />
         <View style={s.body}>
           <View style={s.nameRow}>
             <Text style={s.name} numberOfLines={1}>
@@ -245,7 +248,6 @@ const s = StyleSheet.create({
     padding: space.md,
     minHeight: 44,
   },
-  avatar: { fontSize: 24 },
   body: { flex: 1, minWidth: 0 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   name: { color: theme.text, fontSize: font.base, fontWeight: '700', flexShrink: 1 },
