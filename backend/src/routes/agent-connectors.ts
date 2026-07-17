@@ -265,10 +265,11 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
     if (!row) return reply.code(400).send({ ok: false, error: 'not configured' })
 
     // github/jira do a REAL, SSRF-safe provider check (known hosts only) using the
-    // agent's RESOLVED credential; mcp stays a stub (no arbitrary-URL dial). Any
-    // network/credential failure records a clean, credential-free lastError.
+    // agent's RESOLVED credential; mcp + the CONN-6 comms connectors stay STUBS (no
+    // arbitrary-URL / provider dial — execution is CONN-8). Any network/credential
+    // failure records a clean, credential-free lastError.
     let result: { ok: boolean; detail?: string; error?: string }
-    if (cid === 'mcp') {
+    if (cid === 'mcp' || cid === 'telegram' || cid === 'whatsapp' || cid === 'google_chat') {
       result = { ok: true, detail: row.accountLabel ?? meta.name }
     } else if (cid === 'google') {
       // Google: prove the stored (encrypted, agent-scoped) token still refreshes and

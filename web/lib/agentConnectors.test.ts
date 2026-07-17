@@ -3,11 +3,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
   CONNECTOR_GROUPS, AVAILABLE_CONNECTOR_IDS, MCP_CONNECTOR_ID,
-  GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID,
+  GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID,
+  TELEGRAM_CONNECTOR_ID, WHATSAPP_CONNECTOR_ID, GOOGLE_CHAT_CONNECTOR_ID,
   isAvailableConnector, findDisplayConnector, isConfigured,
   parseArgs, validateMcpConfig, mcpConfigToForm,
   validateGithubConfig, githubConfigToForm,
   validateJiraConfig, jiraConfigToForm,
+  validateTelegramConfig, telegramConfigToForm,
+  validateWhatsappConfig, whatsappConfigToForm,
+  validateGoogleChatConfig, googleChatConfigToForm,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -23,23 +27,28 @@ test('[CONN-2] each category lists exactly the connectors the operator named, in
   const byTitle = Object.fromEntries(CONNECTOR_GROUPS.map(g => [g.title, g.connectors.map(c => c.name)]))
   assert.deepEqual(byTitle['Communication'], ['Google Chat', 'Telegram', 'WhatsApp', 'Signal'])
   assert.deepEqual(byTitle['IT / Project management'], ['GitHub', 'Jira'])
-  assert.deepEqual(byTitle['Google Services'], ['Google Calendar', 'Gmail', 'Google Drive'])
+  // CONN-5: the three Google services became ONE OAuth connection (a single per-agent
+  // Google grant covering Calendar/Gmail/Drive), so the Google group is one row now.
+  assert.deepEqual(byTitle['Google Services'], ['Google Workspace'])
   assert.deepEqual(byTitle['Custom MCP servers'], ['Custom MCP Server'])
 })
 
-test('[CONN-4b] github, jira and the custom MCP server are available; the rest disabled', () => {
-  // CONN-4b enables the two CONN-4a token/basic connectors alongside the CONN-1 mcp
-  // pilot. Order follows the groups: IT/Project (github, jira) then Custom (mcp).
-  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, MCP_CONNECTOR_ID])
-  assert.equal(isAvailableConnector('mcp'), true)
-  assert.equal(isAvailableConnector('github'), true)
-  assert.equal(isAvailableConnector('jira'), true)
-  assert.equal(isAvailableConnector('telegram'), false)
-  assert.equal(findDisplayConnector('github')?.availability, 'available')
-  assert.equal(findDisplayConnector('jira')?.availability, 'available')
-  // Signal is the only one flagged out-of-scope (vs merely coming-soon).
+test('[CONN-6] the comms connectors join github/jira/google/mcp as available; only Signal is out', () => {
+  // CONN-6 makes the three Communication connectors real for STORAGE (Telegram,
+  // WhatsApp, Google Chat), alongside CONN-5 google, CONN-4a github/jira and the CONN-1
+  // mcp pilot. Order follows the groups: Communication (google_chat, telegram, whatsapp),
+  // IT/Project (github, jira), Google, Custom.
+  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [
+    GOOGLE_CHAT_CONNECTOR_ID, TELEGRAM_CONNECTOR_ID, WHATSAPP_CONNECTOR_ID,
+    GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, MCP_CONNECTOR_ID,
+  ])
+  for (const id of ['mcp', 'github', 'jira', 'google', 'telegram', 'whatsapp', 'google_chat']) {
+    assert.equal(isAvailableConnector(id), true, `${id} must be available`)
+    assert.equal(findDisplayConnector(id)?.availability, 'available')
+  }
+  // Signal is the only one flagged out-of-scope (nothing left merely coming-soon).
+  assert.equal(isAvailableConnector('signal'), false)
   assert.equal(findDisplayConnector('signal')?.availability, 'out_of_scope')
-  assert.equal(findDisplayConnector('telegram')?.availability, 'coming_soon')
 })
 
 test('[CONN-2] every non-available connector carries an honest note pointing at its stage', () => {
@@ -164,4 +173,37 @@ test('[CONN-4b] jiraConfigToForm never surfaces a credential, even if one leaks 
   const form = jiraConfigToForm({ baseUrl: 'https://x.atlassian.net', email: 'me@x.co', JIRA_API_TOKEN: 'SECRET' } as any)
   assert.deepEqual(form, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
   assert.equal(JSON.stringify(form).includes('SECRET'), false)
+})
+
+// ─── Communication connectors validation (CONN-6) — mirror the backend zod ────
+
+test('[CONN-6] validateTelegramConfig: botUsername/chatId optional + length-capped', () => {
+  assert.deepEqual(validateTelegramConfig({ botUsername: '', chatId: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateTelegramConfig({ botUsername: '  bot  ', chatId: '  42  ' }), { ok: true, config: { botUsername: 'bot', chatId: '42' } })
+  assert.equal(validateTelegramConfig({ botUsername: 'x'.repeat(121), chatId: '' }).ok, false)
+  assert.equal(validateTelegramConfig({ botUsername: '', chatId: 'x'.repeat(65) }).ok, false)
+})
+
+test('[CONN-6] validateWhatsappConfig: ids optional + length-capped', () => {
+  assert.deepEqual(validateWhatsappConfig({ phoneNumberId: '', businessAccountId: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateWhatsappConfig({ phoneNumberId: ' 111 ', businessAccountId: ' 222 ' }), { ok: true, config: { phoneNumberId: '111', businessAccountId: '222' } })
+  assert.equal(validateWhatsappConfig({ phoneNumberId: 'x'.repeat(65), businessAccountId: '' }).ok, false)
+})
+
+test('[CONN-6] validateGoogleChatConfig: space optional + length-capped', () => {
+  assert.deepEqual(validateGoogleChatConfig({ space: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateGoogleChatConfig({ space: '  spaces/AAA  ' }), { ok: true, config: { space: 'spaces/AAA' } })
+  assert.equal(validateGoogleChatConfig({ space: 'x'.repeat(201) }).ok, false)
+})
+
+test('[CONN-6] comms config-to-form never surfaces a credential leaked into config', () => {
+  const tg = telegramConfigToForm({ botUsername: 'bot', chatId: '42', TELEGRAM_BOT_TOKEN: 'SECRET', secret: 'nope' } as any)
+  assert.deepEqual(tg, { botUsername: 'bot', chatId: '42' })
+  assert.equal(JSON.stringify(tg).includes('SECRET'), false)
+  const wa = whatsappConfigToForm({ phoneNumberId: '111', WHATSAPP_ACCESS_TOKEN: 'SECRET' } as any)
+  assert.deepEqual(wa, { phoneNumberId: '111', businessAccountId: '' })
+  assert.equal(JSON.stringify(wa).includes('SECRET'), false)
+  const gc = googleChatConfigToForm({ space: 'spaces/A', GOOGLE_CHAT_WEBHOOK_URL: 'https://secret' } as any)
+  assert.deepEqual(gc, { space: 'spaces/A' })
+  assert.equal(JSON.stringify(gc).includes('secret'), false)
 })

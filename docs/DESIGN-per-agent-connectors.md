@@ -194,9 +194,9 @@ copy with a parity tripwire, per the standing rule).
 
 | Group | Connector | v1 realistic capability | Auth | Notes |
 |---|---|---|---|---|
-| **Communication** | Telegram (bot token) | **Config-only now** — store bot token + chat/target at agent scope; execution wires later | token | Org already has a Telegram bot path (`telegram-bot.ts`, org `telegramBotToken`); per-agent bot token is new but same shape. Lowest-risk first connector. |
-| | Google Chat | Config-only → later OAuth/webhook | oauth/webhook | Defer; needs Google Workspace app + webhook or OAuth. |
-| | WhatsApp | Config-only (store credentials/phone id) | token (Cloud API) | Execution needs a send bridge that doesn't exist — settings now, wire later. |
+| **Communication** | Telegram (bot token) | **SHIPPED (CONN-6)** — store bot token + chat/target at agent scope (`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`); execution wires later (CONN-8) | token | Env names CONFIRMED (telegram-webhook.ts + openclaw adapter). |
+| | Google Chat | **SHIPPED (CONN-6)** — store incoming-webhook URL (the credential) + space label; execution later | token (webhook) | `GOOGLE_CHAT_WEBHOOK_URL`, no in-repo consumer yet (flagged). |
+| | WhatsApp | **SHIPPED (CONN-6)** — store access token + phone/business ids; execution later | token (Cloud API) | `WHATSAPP_ACCESS_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID`/`WHATSAPP_BUSINESS_ACCOUNT_ID`, no in-repo consumer yet (flagged). |
 | | Signal | **Later / flag as hard** | n/a | No official API; requires `signal-cli` host process. Recommend **out of v1**. |
 | **IT / Project** | GitHub | **Real now via PAT** — agent-scoped `GITHUB_TOKEN` flows through `/api/agent/secrets` to the runtime | token (PAT) | Reuse `tokenTestRequest`. Full GitHub-App OAuth is a later upgrade. |
 | | Jira | **Real now via basic** (domain/email/apiToken) | basic | Reuse the org Jira validate path at agent scope. |
@@ -500,12 +500,61 @@ parity tests updated (single `google` row; `AVAILABLE = [github, jira, google, m
 **SR focus (for the reviewer):** the atomic single-use state spend, the token-never-leaks
 allow-list, the redirect allow-list, and that the org plaintext path is unchanged.
 
-### CONN-6 — Remaining Communication connectors, config-only (≈ 3–5 d)
-- Telegram (if not the CONN-1 pilot), WhatsApp, Google Chat as **store-settings** entries;
-  Signal explicitly **out** (or spike-only). No execution bridge yet — the row states
-  "configured, execution pending."
-- **SR focus:** don't imply capability that isn't wired; validate/normalize webhook URLs;
-  masked reads.
+### CONN-6 — Remaining Communication connectors, config + credential storage ✅ SHIPPED
+_As-built on `conn-6-comms-connectors`. Backend + web + mobile in one PR. Telegram,
+WhatsApp and Google Chat become per-agent connectors for **STORAGE** (config + encrypted
+credential, agent-scoped, rides the existing env-injection path). The backend does NOT
+yet SEND/RECEIVE — that is the CONN-8 execution bridge (decision D). **Signal stays OUT
+of scope** (no official API)._
+
+- **Catalog:** `telegram`, `whatsapp`, `google_chat` added to `AGENT_CONNECTORS`
+  (`services/agent-connectors.ts`), all `category: 'Communication'`, `authType: 'token'`,
+  `hasSecret` + `secretRequired` (a comms connector with no credential is not real).
+  Config schemas (zod, `.strict()`, all NON-secret fields optional): telegram
+  `{ botUsername?, chatId? }`, whatsapp `{ phoneNumberId?, businessAccountId? }`,
+  google_chat `{ space? }`. The credential is always the WRITE-ONLY `secret`, never config.
+- **The execution contract — env-var KEYS** (`CONNECTOR_ENV_KEYS`), the same wire that
+  makes GitHub/Jira real (`GET /api/agent/secrets` → adapters inject the bag VERBATIM as
+  env). ⚠️ **These are documented for operator confirmation — a wrong name is a one-line
+  edit in `CONNECTOR_ENV_KEYS` + `connectorSecretEntries`:**
+
+  | Connector | Env keys stored at agent scope (→ injected as env) | Evidence |
+  |---|---|---|
+  | **telegram** | `TELEGRAM_BOT_TOKEN` (secret), `TELEGRAM_CHAT_ID` (non-secret) | **CONFIRMED** — `routes/telegram-webhook.ts` reads `process.env.TELEGRAM_BOT_TOKEN`; the openclaw adapter reads `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` (`mc_adapter.py`). |
+  | **whatsapp** | `WHATSAPP_ACCESS_TOKEN` (secret), `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID` (non-secret) | **CONVENTIONAL** Meta Cloud API names — **NO in-repo consumer yet** (execution is CONN-8). ⚠️ operator: confirm your WhatsApp tooling reads exactly these. |
+  | **google_chat** | `GOOGLE_CHAT_WEBHOOK_URL` (secret = the incoming-webhook URL) | **CONVENTIONAL** — **NO in-repo consumer yet.** The webhook URL embeds a `key`+`token`, so it IS sensitive → stored as the write-only secret, never in `config`. A bot/service-account flow can replace it later with no data migration. ⚠️ operator: confirm. |
+
+  Non-secret ids (telegram `chatId`, whatsapp phone/business ids) are ALSO written into the
+  encrypted secret store (env injection is the only channel to the runtime — `config` is
+  not injected) AND kept in `config` as the returnable display source of truth. The
+  sensitive key (`primarySecretKey` → `TELEGRAM_BOT_TOKEN` / `WHATSAPP_ACCESS_TOKEN` /
+  `GOOGLE_CHAT_WEBHOOK_URL`) is recorded as the row's `secretRef`.
+- **`test` is a SAFE STUB** (unlike CONN-4a's github/jira live checks): no provider is
+  dialed — a telegram/whatsapp/google_chat test never opens a socket (a test asserts
+  `fetch` is never called), avoiding the SSRF surface of an arbitrary webhook / graph host.
+  It records the attempt and returns the masked label. Real pings land with execution (CONN-8).
+- **Web + mobile:** the three rows move from "coming soon" to **available** in both client
+  catalogs (`web/lib/agentConnectors.ts` + `apps/mobile/src/agentConnectors.ts`, kept
+  field-identical) with real inline config forms (write-only secret + non-secret inputs),
+  save/test/delete, masked status, owner-gated + 403 handling — identical to the github/jira
+  rows. A shared `useCommsConnector` hook factors the save/test/delete plumbing on each
+  platform so the write-only-secret contract lives in one place. **Signal stays out-of-scope.**
+- **Security:** the credential lives ONLY in the encrypted `secrets` store, NEVER in the
+  `agent_connectors` row, NEVER in any read/list/get/test/put response, NEVER logged.
+  `toPublicConnector()` masks unchanged; the new non-secret config fields are returnable, the
+  credential is not. Disconnect purges EVERY agent-scoped env row (credential + non-secret ids).
+- **Tests:** `tests/agent-connectors-comms.test.ts` (+10): catalog/auth types, strict config
+  validation, the env-key contract, owner-403 / required-credential-400, `[CONN6-EXEC]` the
+  resolved bag carries all runtime keys, a **sentinel leak sweep** (no credential or key name
+  in any response), `test`-is-a-stub (no dial), disconnect purge, cross-tenant 404. Client
+  parity tripwires updated (available set now `[google_chat, telegram, whatsapp, github, jira,
+  google, mcp]`; SUBSET tripwire green; cross-platform validators agree) + form-validation +
+  config-to-form leak tests on both clients. (Also fixed a pre-existing red: CONN-5 updated the
+  web catalog to one Google row but left `web/lib/agentConnectors.test.ts` asserting the old
+  three — brought the two web assertions in line.)
+- **SR focus (met):** no credential in any read (value + key sentinels); `test` opens no
+  socket (SSRF-free by construction); encryption at rest; owner gate binds (member 403,
+  cross-tenant 404); disconnect purge. The `connector:` capability containment is still CONN-7.
 
 ### CONN-7 — Enforce the `connector:` capability + trust/approval model (≈ 4–6 d)
 - Make the reserved `connector:<action>` namespace **real**: gate which connectors an
@@ -608,6 +657,7 @@ will grow and the accordion wants room.
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
 | GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** — backend CONN-4a (keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN`), web+mobile UI rows CONN-4b |
 | Per-agent OAuth (agentId scope, encrypted tokens, PKCE + single-use state) | **SHIPPED** — CONN-5 (`agent_oauth_tokens` + `agent_oauth_states`; web full flow, mobile config-only) |
+| Communication connectors (Telegram / WhatsApp / Google Chat) at agent scope | **SHIPPED** — CONN-6 (config + credential storage via env injection; keys `TELEGRAM_BOT_TOKEN`+`TELEGRAM_CHAT_ID` / `WHATSAPP_ACCESS_TOKEN`+ids / `GOOGLE_CHAT_WEBHOOK_URL`; web+mobile forms; `test` is a stub; **Signal out of scope**). WhatsApp/GoogleChat env names flagged for operator confirmation |
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
 

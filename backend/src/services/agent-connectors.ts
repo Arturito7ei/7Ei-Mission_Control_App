@@ -71,6 +71,44 @@ export const AGENT_CONNECTORS: AgentConnectorMeta[] = [
     docsUrl: 'https://modelcontextprotocol.io',
     hasSecret: true, // optional bearer/api-key for the server, stored agent-scoped
   },
+  // ─── Communication connectors (CONN-6) — config + credential storage only ───────
+  // Store settings + credential now (encrypted, agent-scoped); the runtime env path
+  // carries them to the agent. The backend does NOT yet CALL these providers — the
+  // send/receive execution bridge is CONN-8 (decision D). `test` is a safe stub (no
+  // provider ping — avoids the SSRF surface of an arbitrary webhook / graph host).
+  {
+    id: 'telegram',
+    name: 'Telegram',
+    category: 'Communication',
+    authType: 'token',
+    icon: '✈️',
+    docsUrl: 'https://core.telegram.org/bots#how-do-i-create-a-bot',
+    hasSecret: true, // the bot token — stored agent-scoped under TELEGRAM_BOT_TOKEN
+    secretRequired: true,
+  },
+  {
+    id: 'whatsapp',
+    name: 'WhatsApp',
+    category: 'Communication',
+    authType: 'token',
+    icon: '🟢',
+    docsUrl: 'https://developers.facebook.com/docs/whatsapp/cloud-api',
+    hasSecret: true, // the Cloud API access token — WHATSAPP_ACCESS_TOKEN
+    secretRequired: true,
+  },
+  {
+    id: 'google_chat',
+    name: 'Google Chat',
+    category: 'Communication',
+    authType: 'token',
+    icon: '💬',
+    docsUrl: 'https://developers.google.com/chat/how-tos/webhooks',
+    // v1 credential is an incoming-webhook URL (it embeds a key+token in its query,
+    // so it IS sensitive — stored as the write-only secret, never in config). A
+    // bot/service-account flow can replace it later without a data migration.
+    hasSecret: true, // the webhook URL — GOOGLE_CHAT_WEBHOOK_URL
+    secretRequired: true,
+  },
   {
     id: 'google',
     name: 'Google Workspace',
@@ -128,10 +166,35 @@ const JiraConfigSchema = z.object({
   email: z.string().trim().email().max(320),
 }).strict()
 
+// Telegram (bot): the NON-secret config is a display username + an optional target
+// chat id (mirrored to env as TELEGRAM_CHAT_ID for the completion-ping convention the
+// openclaw adapter already reads). The bot token travels in `secret` → TELEGRAM_BOT_TOKEN.
+const TelegramConfigSchema = z.object({
+  botUsername: z.string().trim().min(1).max(120).optional(),
+  chatId: z.string().trim().min(1).max(64).optional(),
+}).strict()
+
+// WhatsApp (Cloud API): NON-secret ids (phone number id + business account id), both
+// mirrored to env. The access token travels in `secret` → WHATSAPP_ACCESS_TOKEN.
+const WhatsappConfigSchema = z.object({
+  phoneNumberId: z.string().trim().min(1).max(64).optional(),
+  businessAccountId: z.string().trim().min(1).max(64).optional(),
+}).strict()
+
+// Google Chat: the only NON-secret config is an optional space label (e.g.
+// "spaces/AAAA…"). The incoming-webhook URL is the credential and travels in `secret`
+// → GOOGLE_CHAT_WEBHOOK_URL (never config — the URL embeds a key+token).
+const GoogleChatConfigSchema = z.object({
+  space: z.string().trim().min(1).max(200).optional(),
+}).strict()
+
 const CONFIG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   github: GithubConfigSchema,
   jira: JiraConfigSchema,
   mcp: McpConfigSchema,
+  telegram: TelegramConfigSchema,
+  whatsapp: WhatsappConfigSchema,
+  google_chat: GoogleChatConfigSchema,
 }
 
 export type ValidatedConfig = { ok: true; config: Record<string, unknown> } | { ok: false; error: string }
@@ -178,10 +241,22 @@ export function connectorSecretKey(connectorId: string): string {
 // store: env injection is the ONLY channel to the runtime — `config` is not injected —
 // so all three MUST live here for Jira to actually work. `config` still holds
 // baseUrl/email too, as the returnable display source of truth.
+//   telegram    → TELEGRAM_BOT_TOKEN (secret), TELEGRAM_CHAT_ID (non-secret)
+//                 CONFIRMED name: telegram-webhook.ts + the openclaw adapter both read
+//                 process.env.TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID.
+//   whatsapp    → WHATSAPP_ACCESS_TOKEN (secret), WHATSAPP_PHONE_NUMBER_ID,
+//                 WHATSAPP_BUSINESS_ACCOUNT_ID (non-secret). CONVENTIONAL Meta Cloud API
+//                 names — NO in-repo consumer yet (execution is CONN-8), so ⚠️ operator:
+//                 confirm your runtime's WhatsApp tooling reads exactly these.
+//   google_chat → GOOGLE_CHAT_WEBHOOK_URL (secret = the incoming-webhook URL).
+//                 CONVENTIONAL name — NO in-repo consumer yet; ⚠️ operator: confirm.
 export const CONNECTOR_ENV_KEYS: Record<string, readonly string[]> = {
   github: ['GITHUB_TOKEN'],
   jira: ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'],
   mcp: [connectorSecretKey('mcp')],
+  telegram: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
+  whatsapp: ['WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_BUSINESS_ACCOUNT_ID'],
+  google_chat: ['GOOGLE_CHAT_WEBHOOK_URL'],
 }
 
 /** The agent-scoped env keys a connector writes (for purge-on-disconnect). */
@@ -195,6 +270,9 @@ export function primarySecretKey(connectorId: string): string | null {
   if (connectorId === 'github') return 'GITHUB_TOKEN'
   if (connectorId === 'jira') return 'JIRA_API_TOKEN'
   if (connectorId === 'mcp') return connectorSecretKey('mcp')
+  if (connectorId === 'telegram') return 'TELEGRAM_BOT_TOKEN'
+  if (connectorId === 'whatsapp') return 'WHATSAPP_ACCESS_TOKEN'
+  if (connectorId === 'google_chat') return 'GOOGLE_CHAT_WEBHOOK_URL'
   return null
 }
 
@@ -219,6 +297,15 @@ export function connectorSecretEntries(
     if (cred) out.JIRA_API_TOKEN = cred
   } else if (connectorId === 'mcp') {
     if (cred) out[connectorSecretKey('mcp')] = cred
+  } else if (connectorId === 'telegram') {
+    if (typeof config.chatId === 'string') out.TELEGRAM_CHAT_ID = config.chatId
+    if (cred) out.TELEGRAM_BOT_TOKEN = cred
+  } else if (connectorId === 'whatsapp') {
+    if (typeof config.phoneNumberId === 'string') out.WHATSAPP_PHONE_NUMBER_ID = config.phoneNumberId
+    if (typeof config.businessAccountId === 'string') out.WHATSAPP_BUSINESS_ACCOUNT_ID = config.businessAccountId
+    if (cred) out.WHATSAPP_ACCESS_TOKEN = cred
+  } else if (connectorId === 'google_chat') {
+    if (cred) out.GOOGLE_CHAT_WEBHOOK_URL = cred
   }
   return out
 }
@@ -231,6 +318,9 @@ export function connectorAccountLabel(
   if (connectorId === 'github') return typeof config.username === 'string' ? config.username : null
   if (connectorId === 'jira') return typeof config.email === 'string' ? config.email : null
   if (connectorId === 'mcp') return typeof config.name === 'string' ? config.name : null
+  if (connectorId === 'telegram') return typeof config.botUsername === 'string' ? config.botUsername : (typeof config.chatId === 'string' ? config.chatId : null)
+  if (connectorId === 'whatsapp') return typeof config.phoneNumberId === 'string' ? config.phoneNumberId : null
+  if (connectorId === 'google_chat') return typeof config.space === 'string' ? config.space : null
   return null
 }
 

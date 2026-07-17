@@ -29,6 +29,9 @@ import {
   GITHUB_CONNECTOR_ID,
   JIRA_CONNECTOR_ID,
   GOOGLE_CONNECTOR_ID,
+  TELEGRAM_CONNECTOR_ID,
+  WHATSAPP_CONNECTOR_ID,
+  GOOGLE_CHAT_CONNECTOR_ID,
   isAvailableConnector,
   findDisplayConnector,
   isConfigured,
@@ -39,6 +42,12 @@ import {
   githubConfigToForm,
   validateJiraConfig,
   jiraConfigToForm,
+  validateTelegramConfig,
+  telegramConfigToForm,
+  validateWhatsappConfig,
+  whatsappConfigToForm,
+  validateGoogleChatConfig,
+  googleChatConfigToForm,
   googleServicesFromConfig,
   googleScopesFromConfig,
   googleServicesSummary,
@@ -53,6 +62,9 @@ import {
   validateMcpConfig as webValidateMcpConfig,
   validateGithubConfig as webValidateGithubConfig,
   validateJiraConfig as webValidateJiraConfig,
+  validateTelegramConfig as webValidateTelegramConfig,
+  validateWhatsappConfig as webValidateWhatsappConfig,
+  validateGoogleChatConfig as webValidateGoogleChatConfig,
 } from '../../../web/lib/agentConnectors.ts'
 
 // ─── Cross-platform parity: the phone == the desk ─────────────────────────────
@@ -101,6 +113,15 @@ test('[CONN-4b] validateJiraConfig agrees with the web across representative inp
   }
 })
 
+test('[CONN-6] the comms validators agree with the web across representative inputs', () => {
+  const tgCases = [{ botUsername: '', chatId: '' }, { botUsername: '  bot  ', chatId: '  42  ' }, { botUsername: 'x'.repeat(121), chatId: '' }, { botUsername: '', chatId: 'x'.repeat(65) }]
+  for (const c of tgCases) assert.deepEqual(validateTelegramConfig(c), webValidateTelegramConfig(c), `telegram drift for ${JSON.stringify(c)}`)
+  const waCases = [{ phoneNumberId: '', businessAccountId: '' }, { phoneNumberId: ' 111 ', businessAccountId: ' 222 ' }, { phoneNumberId: 'x'.repeat(65), businessAccountId: '' }]
+  for (const c of waCases) assert.deepEqual(validateWhatsappConfig(c), webValidateWhatsappConfig(c), `whatsapp drift for ${JSON.stringify(c)}`)
+  const gcCases = [{ space: '' }, { space: '  spaces/AAA  ' }, { space: 'x'.repeat(201) }]
+  for (const c of gcCases) assert.deepEqual(validateGoogleChatConfig(c), webValidateGoogleChatConfig(c), `google_chat drift for ${JSON.stringify(c)}`)
+})
+
 // ─── Grouping: the operator's four categories, in order, with their connectors ─
 
 test('[CONN-3] the accordion renders the operator’s four categories in order', () => {
@@ -119,21 +140,22 @@ test('[CONN-3] each category lists exactly the connectors the operator named, in
   assert.deepEqual(byTitle['Custom MCP servers'], ['Custom MCP Server'])
 })
 
-test('[CONN-5] github, jira, google and the custom MCP server are available; the rest disabled', () => {
-  // CONN-5 makes the Google OAuth connector real, joining CONN-4a's github/jira and the
-  // CONN-1 mcp pilot. Order follows the groups: IT/Project (github, jira), Google, Custom.
-  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, MCP_CONNECTOR_ID])
-  assert.equal(isAvailableConnector('mcp'), true)
-  assert.equal(isAvailableConnector('github'), true)
-  assert.equal(isAvailableConnector('jira'), true)
-  assert.equal(isAvailableConnector('google'), true)
-  assert.equal(isAvailableConnector('telegram'), false)
-  assert.equal(findDisplayConnector('github')?.availability, 'available')
-  assert.equal(findDisplayConnector('jira')?.availability, 'available')
-  assert.equal(findDisplayConnector('google')?.availability, 'available')
-  // Signal is the only one flagged out-of-scope (vs merely coming-soon).
+test('[CONN-6] the comms connectors join github/jira/google/mcp as available; only Signal is out', () => {
+  // CONN-6 makes the three Communication connectors real for STORAGE (Telegram,
+  // WhatsApp, Google Chat), alongside CONN-5 google, CONN-4a github/jira, CONN-1 mcp.
+  // Order follows the groups: Communication (google_chat, telegram, whatsapp),
+  // IT/Project (github, jira), Google, Custom.
+  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [
+    GOOGLE_CHAT_CONNECTOR_ID, TELEGRAM_CONNECTOR_ID, WHATSAPP_CONNECTOR_ID,
+    GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, GOOGLE_CONNECTOR_ID, MCP_CONNECTOR_ID,
+  ])
+  for (const id of ['mcp', 'github', 'jira', 'google', 'telegram', 'whatsapp', 'google_chat']) {
+    assert.equal(isAvailableConnector(id), true, `${id} must be available`)
+    assert.equal(findDisplayConnector(id)?.availability, 'available')
+  }
+  // Signal is the only one flagged out-of-scope (nothing left merely coming-soon).
+  assert.equal(isAvailableConnector('signal'), false)
   assert.equal(findDisplayConnector('signal')?.availability, 'out_of_scope')
-  assert.equal(findDisplayConnector('telegram')?.availability, 'coming_soon')
 })
 
 // ─── Google read helpers (config-only display on the phone) — CONN-5 ──────────
@@ -265,4 +287,28 @@ test('[CONN-4b] github/jira config-to-form never surfaces a credential leaked in
   const ji = jiraConfigToForm({ baseUrl: 'https://x.atlassian.net', email: 'me@x.co', JIRA_API_TOKEN: 'SECRET' } as any)
   assert.deepEqual(ji, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
   assert.equal(JSON.stringify(ji).includes('SECRET'), false)
+})
+
+// ─── Communication connectors validation (CONN-6) ─────────────────────────────
+
+test('[CONN-6] comms validators: optional fields, length caps, blanks omitted', () => {
+  assert.deepEqual(validateTelegramConfig({ botUsername: '', chatId: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateTelegramConfig({ botUsername: '  bot  ', chatId: '  42  ' }), { ok: true, config: { botUsername: 'bot', chatId: '42' } })
+  assert.equal(validateTelegramConfig({ botUsername: 'x'.repeat(121), chatId: '' }).ok, false)
+  assert.deepEqual(validateWhatsappConfig({ phoneNumberId: ' 111 ', businessAccountId: '' }), { ok: true, config: { phoneNumberId: '111' } })
+  assert.equal(validateWhatsappConfig({ phoneNumberId: '', businessAccountId: 'x'.repeat(65) }).ok, false)
+  assert.deepEqual(validateGoogleChatConfig({ space: '  spaces/AAA  ' }), { ok: true, config: { space: 'spaces/AAA' } })
+  assert.equal(validateGoogleChatConfig({ space: 'x'.repeat(201) }).ok, false)
+})
+
+test('[CONN-6] comms config-to-form never surfaces a credential leaked into config', () => {
+  const tg = telegramConfigToForm({ botUsername: 'bot', chatId: '42', TELEGRAM_BOT_TOKEN: 'SECRET' } as any)
+  assert.deepEqual(tg, { botUsername: 'bot', chatId: '42' })
+  assert.equal(JSON.stringify(tg).includes('SECRET'), false)
+  const wa = whatsappConfigToForm({ phoneNumberId: '111', WHATSAPP_ACCESS_TOKEN: 'SECRET' } as any)
+  assert.deepEqual(wa, { phoneNumberId: '111', businessAccountId: '' })
+  assert.equal(JSON.stringify(wa).includes('SECRET'), false)
+  const gc = googleChatConfigToForm({ space: 'spaces/A', GOOGLE_CHAT_WEBHOOK_URL: 'https://secret' } as any)
+  assert.deepEqual(gc, { space: 'spaces/A' })
+  assert.equal(JSON.stringify(gc).includes('secret'), false)
 })
