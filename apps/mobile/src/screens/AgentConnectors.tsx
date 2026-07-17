@@ -26,7 +26,7 @@
 // nothing here can sit in the boot path and throw at import (bootSafety.test.ts).
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { Api } from '../api'
 import {
   CONNECTOR_GROUPS,
