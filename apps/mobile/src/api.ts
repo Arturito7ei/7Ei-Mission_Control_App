@@ -420,6 +420,38 @@ export const Api = {
     }>(base, `/api/orgs/${orgId}/arturita/attachments/extract`, { token, method: 'POST', body: form })
   },
 
+  // ─── MOB-7a: speech → text, on the HOSTED leg ─────────────────────────────
+  // POST /api/orgs/:orgId/arturita/transcribe — the route MOB-5a added for exactly
+  // this caller (backend/src/routes/arturita-stt.ts says so at the top). The web
+  // reaches Whisper on 127.0.0.1:8790; a phone can reach no loopback but its own,
+  // so the hosted route IS the phone's only capture path.
+  //
+  // The multipart field MUST be `file` (STT_AUDIO_FIELD) — the route rejects any
+  // other fieldname with a 400 rather than guessing. `voice.test.ts` pins
+  // RECORDING_MIME to the route's ACCEPTED_AUDIO_MIMES so a clip can't 415.
+  //
+  // The audio never touches a log here, and the backend holds it in memory for the
+  // provider call only (AUDIO_RETENTION, PRD §7.8). The TRANSCRIPT is user content:
+  // it goes to the composer, never to a log sink.
+  //
+  // Errors carry a `code` the caller diagnoses through `voice.ts` — notably 503
+  // `not_configured`, which means no STT key is set on the deployment yet.
+  transcribe: (
+    base: string,
+    token: string,
+    orgId: string,
+    clip: { uri: string; name: string; mimeType: string },
+  ) => {
+    const form = new FormData()
+    // RN's FormData streams the file from `uri`; the bytes never pass through JS.
+    form.append('file', { uri: clip.uri, name: clip.name, type: clip.mimeType } as any)
+    return api<{ transcript: string; text: string; provider?: string; bytes?: number }>(
+      base,
+      `/api/orgs/${orgId}/arturita/transcribe`,
+      { token, method: 'POST', body: form },
+    )
+  },
+
   converse: (
     base: string,
     token: string,
