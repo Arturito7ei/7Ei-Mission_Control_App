@@ -271,9 +271,14 @@ export async function consumeOauthState(id: string): Promise<ConsumedState> {
   const res: any = await db.update(schema.agentOauthStates)
     .set({ usedAt: now })
     .where(and(eq(schema.agentOauthStates.id, id), /* still unused */ isNull(schema.agentOauthStates.usedAt)))
-  // drizzle/libsql returns rowsAffected; if another callback spent it first, bail.
-  const affected = res?.rowsAffected ?? res?.changes ?? res?.rows_affected
-  if (affected === 0) return { ok: false, reason: 'used' }
+  // FAIL-CLOSED single-use (matches claim.ts / join-approvals.ts): treat the state as
+  // consumed ONLY when the CAS affected EXACTLY one row. drizzle/libsql returns
+  // rowsAffected; a future driver that surfaced none of these keys would leave the
+  // count undefined — coercing to 0 so `!== 1` rejects, rather than falling open on the
+  // concurrent path (`undefined === 0` was false). The sequential `if (row.usedAt)`
+  // guard above still catches the common replay before we ever reach here.
+  const affected = Number(res?.rowsAffected ?? res?.changes ?? res?.rows_affected ?? 0)
+  if (affected !== 1) return { ok: false, reason: 'used' }
   return { ok: true, state: { ...row, usedAt: now } }
 }
 
