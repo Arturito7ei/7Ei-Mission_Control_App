@@ -102,16 +102,23 @@ test('[CONN-3] every non-available connector carries an honest note pointing at 
   }
 })
 
-// ─── Backend parity tripwire: client "available" set == backend AGENT_CONNECTORS ─
-
-test('[CONN-3] AVAILABLE_CONNECTOR_IDS matches the backend AGENT_CONNECTORS catalog', () => {
+// ─── Backend parity tripwire: client "available" set ⊆ backend AGENT_CONNECTORS ─
+//
+// A SUBSET check, not equality: the backend legitimately LEADS the client (a
+// connector ships in the backend catalog at its CONN-Na stage; the client enables
+// the row in the following CONN-Nb — github/jira land in the backend at CONN-4a, the
+// phone rows at CONN-4b). The dangerous drift is the other direction — the phone
+// offering a connectorId the backend lacks would POST an unknown id and 404 — and
+// THAT is what this fails on. Mirrors web/lib/agentConnectors.test.ts.
+test('[CONN-3] AVAILABLE_CONNECTOR_IDS is a subset of the backend AGENT_CONNECTORS catalog', () => {
   const src = readFileSync(new URL('../../../backend/src/services/agent-connectors.ts', import.meta.url), 'utf8')
   const block = /AGENT_CONNECTORS[^=]*=\s*\[([\s\S]*?)\n\]/.exec(src)
   assert.ok(block, 'could not locate the AGENT_CONNECTORS array in the backend source')
   const backendIds = [...block![1].matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1])
   assert.ok(backendIds.length > 0, 'backend catalog parsed empty — parity check would be vacuous')
-  assert.deepEqual([...AVAILABLE_CONNECTOR_IDS].sort(), [...backendIds].sort(),
-    'client "available" connectors drifted from the backend catalog — reconcile before merging')
+  const offeredButUnserved = [...AVAILABLE_CONNECTOR_IDS].filter((id) => !backendIds.includes(id))
+  assert.deepEqual(offeredButUnserved, [],
+    'phone offers a connector the backend catalog lacks — it would 404; reconcile before merging')
 })
 
 // ─── Masked-only display: the read state carries no credential ────────────────
