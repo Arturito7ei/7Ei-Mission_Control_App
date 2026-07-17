@@ -90,10 +90,20 @@ function useSessionStore() {
   const [session, setSession] = useState<Session | null>(null)
 
   useEffect(() => {
-    loadSession().then((s) => {
-      setSession(s)
-      setReady(true)
-    })
+    // A Keychain read can reject (device locked, entitlement missing). Without the
+    // catch, `ready` stays false forever and the app hangs on "Loading…" — a hang
+    // is a worse failure than a signed-out app, because it offers no way forward.
+    // Treat an unreadable session as no session: the operator lands on Connect and
+    // can sign in again.
+    loadSession()
+      .catch((e) => {
+        console.warn('[7Ei] could not read the stored session; starting signed out:', e)
+        return null
+      })
+      .then((s) => {
+        setSession(s)
+        setReady(true)
+      })
   }, [])
 
   const persist = useCallback(async (next: Session | null) => {
