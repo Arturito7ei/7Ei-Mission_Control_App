@@ -23,7 +23,8 @@ import {
   resolveVoiceState, toConverseRequest, toArturitaMessage,
   revealStepFor, routingBadge, type Message, type ConverseResponse,
   rejectAttachment, attachmentChipLabel, canSendTurn, ATTACH_ACCEPT,
-  type AttachedDoc,
+  rejectImage, imageChipLabel, imageMediaType, IMAGE_ACCEPT,
+  type AttachedDoc, type AttachedImage,
 } from './assistant.logic'
 import { provenanceChip, reactorChips } from './reactor.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
@@ -42,6 +43,29 @@ type Getter = () => Promise<string | null>
 let msgSeq = 0
 const nextId = () => `m${Date.now()}-${++msgSeq}`
 
+/**
+ * MOB-7b — read a picked image to RAW base64 (no `data:` prefix), which is what
+ * the /converse `image.data` contract takes.
+ *
+ * FileReader gives a data URI, so the prefix is stripped here — deliberately at
+ * the one place the image enters the app, rather than carried along and stripped
+ * somewhere later. The backend re-derives the media type from the `mediaType`
+ * field, not from the URI, so the prefix would be dead weight on the wire.
+ */
+function readAsBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onerror = () => reject(r.error ?? new Error('read failed'))
+    r.onload = () => {
+      const url = String(r.result ?? '')
+      const comma = url.indexOf(',')
+      if (comma < 0) return reject(new Error('unexpected reader output'))
+      resolve(url.slice(comma + 1))
+    }
+    r.readAsDataURL(file)
+  })
+}
+
 export default function AssistantPanel({ orgId, getToken }: { orgId: string; getToken: Getter }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [typed, setTyped] = useState('')
@@ -50,6 +74,13 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const [attachment, setAttachment] = useState<AttachedDoc | null>(null)
   const [attaching, setAttaching] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  // MOB-7b — the photo attached to the NEXT turn. Independent of `attachment`:
+  // a photo has no text to extract, so it is read to base64 here and rides the
+  // /converse call itself, reaching the model as an image block. The two can
+  // ride the same turn ("does this screenshot match the spec?").
+  const [image, setImage] = useState<AttachedImage | null>(null)
+  const [reading, setReading] = useState(false)
+  const photoRef = useRef<HTMLInputElement | null>(null)
   const [interim, setInterim] = useState('')
   const [supported, setSupported] = useState(false)
   // Built-in Web Speech STT feature-detects as present but can't actually work
@@ -224,34 +255,72 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     }
   }, [orgId, getToken])
 
+  // ── MOB-7b: attach a photo to the next turn ─────────────────────────────────
+  // No server round-trip on pick, unlike a document: there is nothing to extract,
+  // so the file is read to base64 right here and held until the turn is sent. The
+  // photo never touches the network until Send — and then only as part of the
+  // turn, which the backend keeps for the request and nothing longer.
+  const pickImage = useCallback(async (file: File) => {
+    setErr(null); setNotice(null)
+    const local = rejectImage({ name: file.name, size: file.size })
+    if (local) { setNotice({ tone: 'warn', text: local }); return }
+
+    const mediaType = imageMediaType(file)
+    setReading(true)
+    setImage({ name: file.name, size: file.size, mediaType })   // chip shows while reading
+    try {
+      const data = await readAsBase64(file)
+      setImage({ name: file.name, size: file.size, mediaType, data })
+    } catch {
+      setImage(null)
+      setNotice({ tone: 'warn', text: `I couldn't read “${file.name}”.` })
+    } finally {
+      setReading(false)
+      if (photoRef.current) photoRef.current.value = ''   // re-picking the same file must re-fire
+    }
+  }, [])
+
   // ── Send a turn to the conversational front door ─────────────────────────────
   const send = useCallback(async (bodyText: string, explicit: boolean) => {
     const message = bodyText.trim()
-    // A document alone is a valid turn ("read this"); text alone is the norm.
-    if (!canSendTurn({ typed: message, attachment, busy: thinking || attaching })) return
+    // A document or a photo alone is a valid turn ("read this" / "what's this?");
+    // text alone is the norm.
+    if (!canSendTurn({ typed: message, attachment, image, busy: thinking || attaching || reading })) return
     const sentAttachment = attachment
+    const sentImage = image
     setErr(null); setNotice(null); setShowConvo(true)
-    // The bubble names the document so the thread stays readable later — but the
-    // document's TEXT is never put in the transcript (it would re-enter the
-    // prompt as history on every later turn, and re-bill, for no benefit).
-    const bubbleText = sentAttachment
-      ? [message, `📎 ${attachmentChipLabel(sentAttachment)}`].filter(Boolean).join('\n\n')
-      : message
+    // The bubble names the document/photo so the thread stays readable later — but
+    // neither the document's TEXT nor the photo's BYTES go in the transcript (they
+    // would re-enter the prompt as history on every later turn, and re-bill, for
+    // no benefit).
+    const bubbleText = [
+      message,
+      sentAttachment ? `📎 ${attachmentChipLabel(sentAttachment)}` : '',
+      sentImage ? `🖼 ${imageChipLabel(sentImage)}` : '',
+    ].filter(Boolean).join('\n\n')
     const userMsg: Message = { id: nextId(), role: 'user', text: bubbleText }
     setMessages(m => [...m, userMsg])
     setAttachment(null)   // the attachment rides THIS turn only
+    setImage(null)        // …and so does the photo
     setThinking(true)
     const reqHistory = [...messages, userMsg]
-    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory, attachment: sentAttachment })
+    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory, attachment: sentAttachment, image: sentImage })
     const post = async (body: object) => api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
     // When the backend answered but no LLM was reachable (degraded/text_only),
     // surface the actionable fix (enable local Ollama, or add a free cloud key)
     // right under the transcript instead of leaving only a ⚠ badge on the bubble.
     const noticeIfDegraded = (r: ConverseResponse) => {
+      // A no-vision reply is degraded AND text_only, but "no language model was
+      // reachable" would be a lie about it — a model answered, it just can't see.
+      // Its own reply already names the fix, so don't talk over it.
+      if (r.code === 'no_vision_model') return
       if (r.degraded || r.reply?.provider === 'text_only') setNotice({ tone: 'warn', text: `No language model was reachable for that reply. ${NO_LLM_FIX_HINT} Open ⚙ Pipeline config below and “Run self-test” to check each leg.` })
     }
     try {
-      const resp = await post({ ...baseReq, deferAnswer: !!localLlm })
+      // A photo turn is never deferred to local Ollama: the local engine is
+      // text-only by default, so streaming there would drop the image silently.
+      // The backend enforces this too — this just keeps the request honest.
+      const resp = await post({ ...baseReq, deferAnswer: !!localLlm && !sentImage })
 
       // Delegate → the office runs it as a task (gated at A2 if destructive).
       if (resp.mode === 'delegate') {
@@ -421,7 +490,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
 
   // A document with no typed message is a valid turn — `send` reads the
   // attachment from state, so it still has something to work with.
-  const submitTyped = () => { const t = typed.trim(); if (!canSendTurn({ typed: t, attachment, busy: thinking || attaching })) return; setTyped(''); send(t, delegate) }
+  const submitTyped = () => { const t = typed.trim(); if (!canSendTurn({ typed: t, attachment, image, busy: thinking || attaching || reading })) return; setTyped(''); send(t, delegate) }
 
   const provenance = provenanceChip({ local: localLlm })
   const reactorChipRow = reactorChips({ provenance, captureLabel: sttEngine === 'none' ? '' : sttEngineLabel(sttEngine), voiceReplies })
@@ -548,9 +617,40 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             >✕</button>
           </div>
         )}
+        {/* ── Attached photo chip (MOB-7b) — thumbnail + name, removable ────── */}
+        {image && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: space.xs, alignSelf: 'flex-start',
+            background: 'var(--info-bg)', border: '1px solid var(--accent-line)',
+            borderRadius: tk.r.md, padding: `${space.xxs}px ${space.sm}px`,
+            fontSize: text.sm.fontSize, maxWidth: '100%',
+          }}>
+            {/* A real thumbnail, not a glyph: the operator must be able to see
+                WHICH photo is about to be sent, and it costs nothing — the bytes
+                are already in memory. Falls back to the glyph while reading. */}
+            {image.data
+              ? <img
+                  src={`data:${image.mediaType};base64,${image.data}`}
+                  alt={`Attached photo: ${image.name}`}
+                  style={{ width: 24, height: 24, objectFit: 'cover', borderRadius: tk.r.sm, flexShrink: 0 }}
+                />
+              : <span aria-hidden>🖼</span>}
+            <span style={{ color: tk.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {imageChipLabel(image)}
+            </span>
+            <span style={{ color: tk.muted }}>{reading ? '· reading…' : ''}</span>
+            <button
+              onClick={() => { setImage(null); setNotice(null) }}
+              aria-label={`Remove ${image.name}`}
+              style={{ background: 'transparent', border: 'none', color: tk.muted, cursor: 'pointer', padding: 0, fontSize: text.sm.fontSize }}
+            >✕</button>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: space.sm }}>
-          {/* The picker is hidden; the paperclip drives it (a bare file input
-              can't be styled to match the glass composer). */}
+          {/* The pickers are hidden; the paperclip/frame buttons drive them (a bare
+              file input can't be styled to match the glass composer). Two separate
+              inputs, not one: the OS dialog's filter is the first thing that tells
+              the operator what each button is for. */}
           <input
             ref={fileRef}
             type="file"
@@ -558,12 +658,25 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; if (f) pickAttachment(f) }}
           />
+          <input
+            ref={photoRef}
+            type="file"
+            accept={IMAGE_ACCEPT}
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) pickImage(f) }}
+          />
           <Button
             onClick={() => fileRef.current?.click()}
             disabled={attaching}
             aria-label="Attach a document"
             title="Attach a document (PDF, Word, Excel, PowerPoint, text…)"
           >📎</Button>
+          <Button
+            onClick={() => photoRef.current?.click()}
+            disabled={reading}
+            aria-label="Attach a photo"
+            title="Attach a photo — Arturita can see it (JPG, PNG, GIF, WebP)"
+          >🖼</Button>
           <TextInput
             value={typed}
             onChange={e => setTyped(e.target.value)}
@@ -572,7 +685,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             aria-label="Message Arturita"
             style={{ flex: 1 }}
           />
-          <Button variant="primary" disabled={!canSendTurn({ typed, attachment, busy: thinking || attaching })} onClick={submitTyped}>{thinking ? '…' : 'Send'}</Button>
+          <Button variant="primary" disabled={!canSendTurn({ typed, attachment, image, busy: thinking || attaching || reading })} onClick={submitTyped}>{thinking ? '…' : 'Send'}</Button>
         </div>
         <label style={{ ...s.toggle, alignSelf: 'flex-start' }}>
           <input type="checkbox" checked={delegate} onChange={e => setDelegate(e.target.checked)} />

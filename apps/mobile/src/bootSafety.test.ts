@@ -45,6 +45,7 @@ const NATIVE_PACKAGES = [
   'expo-av',
   'expo-document-picker',
   'expo-file-system',
+  'expo-image-picker',
   'expo-local-authentication',
   'expo-notifications',
   'expo-speech',
@@ -122,11 +123,14 @@ test('[MOB-7a] every native package in use is reached through lazyNativeModule',
 })
 
 test('[MOB-7a] the packages MOB-7a added are actually guarded, not just absent', () => {
-  // Pins the test to reality: these three ARE used, through the loader. If someone
+  // Pins the test to reality: these ARE used, through the loader. If someone
   // deletes the reactor or the voice legs, this fails and asks the question rather
   // than leaving a guard quietly protecting nothing.
+  //
+  // MOB-7b added expo-image-picker — a native module reached from the composer,
+  // i.e. squarely in the boot path — so it joins the list for the same reason.
   const all = FILES.map((f) => readFileSync(f, 'utf8')).join('\n')
-  for (const pkg of ['react-native-svg', 'expo-av', 'expo-speech', 'expo-file-system']) {
+  for (const pkg of ['react-native-svg', 'expo-av', 'expo-speech', 'expo-file-system', 'expo-image-picker']) {
     assert.match(
       all,
       new RegExp(`lazyNativeModule\\(\\s*['"]${pkg}['"]`),

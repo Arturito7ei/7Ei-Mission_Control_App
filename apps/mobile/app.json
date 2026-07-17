@@ -36,6 +36,13 @@
         {
           "faceIDPermission": "Confirm your identity to approve a dangerous action from your phone (MOB-4 step-up)."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach a photo to a Command Center message so Arturita can see it.",
+          "cameraPermission": "Take a photo to send to Arturita from the Command Center."
+        }
       ]
     ],
     "extra": {

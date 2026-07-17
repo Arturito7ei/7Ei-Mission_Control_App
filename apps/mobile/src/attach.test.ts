@@ -21,6 +21,9 @@ import {
   rejectAttachment as webReject,
   canSendTurn as webCanSend,
   toConverseRequest as webToConverseRequest,
+  IMAGE_EXTS as WEB_IMAGE_EXTS,
+  IMAGE_MAX_BYTES as WEB_IMAGE_MAX_BYTES,
+  rejectImage as webRejectImage,
 } from '../../../web/app/dashboard/assistant.logic.ts'
 import { CONVERSE_HISTORY_LIMIT } from './api.ts'
 import {
@@ -32,6 +35,10 @@ import {
   formatFileSize,
   rejectAttachment,
   toConverseAttachment,
+  IMAGE_EXTS,
+  IMAGE_MAX_BYTES,
+  rejectImage,
+  toConverseImage,
 } from './attach.ts'
 
 // ─── The mirror itself ───────────────────────────────────────────────────────
@@ -128,4 +135,64 @@ test('an unextracted document cannot be sent, and is not put on the wire', () =>
 test('extensions are read case-insensitively', () => {
   assert.equal(attachExtension('Report.PDF'), 'pdf')
   assert.equal(attachExtension('noext'), 'noext')
+})
+
+// ─── Photos (MOB-7b) — the same tripwire, for the image path ─────────────────
+// A photo shares no pipeline with a document, so it gets its own mirror of the
+// web's constants — and therefore its own pin against them. Same rule as above:
+// if the web changes a format or a limit and this file doesn't, the build fails
+// rather than the two clients quietly disagreeing about what a phone may send.
+
+test('[MOB-7b] the visible image formats are exactly the web’s', () => {
+  assert.deepEqual([...IMAGE_EXTS], [...WEB_IMAGE_EXTS])
+})
+
+test('[MOB-7b] the image size limit is exactly the web’s', () => {
+  assert.equal(IMAGE_MAX_BYTES, WEB_IMAGE_MAX_BYTES)
+})
+
+test('[MOB-7b] a rejected photo is rejected identically on both clients', () => {
+  const cases = [
+    { name: 'snap.jpg', size: 1000 },
+    { name: 'snap.png', size: 1000 },
+    { name: 'IMG_0042.heic', size: 1000 },        // the iPhone default — the likely one
+    { name: 'scan.tiff', size: 1000 },
+    { name: 'clip.mp4', size: 1000 },
+    { name: 'huge.jpg', size: WEB_IMAGE_MAX_BYTES + 1 },
+    { name: 'edge.jpg', size: WEB_IMAGE_MAX_BYTES },   // the boundary is inclusive on both
+    { name: 'empty.png', size: 0 },
+  ]
+  for (const c of cases) {
+    assert.equal(rejectImage(c), webRejectImage(c), `image rejection drift on "${c.name}"`)
+  }
+})
+
+test('[MOB-7b] a photo with no reported size is allowed through to the server', () => {
+  // The one deliberate divergence, same as the document path: the picker doesn't
+  // always report a size, and guessing would refuse a perfectly good photo. The
+  // TYPE gate still applies unconditionally, so nothing unreadable is uploaded.
+  assert.equal(rejectImage({ name: 'snap.jpg' }), null)
+  assert.match(rejectImage({ name: 'snap.heic' })!, /JPEG/i)
+})
+
+test('[MOB-7b] the send gate agrees with the web’s, photos included', () => {
+  const img = { name: 'p.jpg', size: 10, mediaType: 'image/jpeg' }
+  const cases = [
+    { typed: '', image: { ...img, data: 'QUJD' } },   // a read photo alone is sendable
+    { typed: '', image: img },                        // …still reading is not
+    { typed: 'hi', image: img },
+    { typed: '', image: { ...img, data: 'QUJD' }, busy: true },
+    { typed: '' },
+  ]
+  for (const c of cases) {
+    assert.equal(canSendTurn(c), webCanSend(c), `send-gate drift on ${JSON.stringify(c)}`)
+  }
+})
+
+test('[MOB-7b] the converse image field matches the web’s request builder', () => {
+  const img = { name: 'p.jpg', size: 9, mediaType: 'image/jpeg', data: 'QUJD' }
+  assert.deepEqual(toConverseImage(img), webToConverseRequest({ message: 'x', history: [], image: img }).image)
+  // an unread photo is omitted by both, rather than sent as an empty block
+  assert.equal(toConverseImage({ name: 'p.jpg', size: 9, mediaType: 'image/jpeg' }), undefined)
+  assert.equal(webToConverseRequest({ message: 'x', history: [], image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg' } }).image, undefined)
 })

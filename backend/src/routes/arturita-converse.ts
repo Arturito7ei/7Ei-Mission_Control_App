@@ -23,6 +23,7 @@ import { buildArturitaAgent } from '../services/arturita-session'
 import { decideConverseMode, buildConverseSystemPrompt } from '../services/arturita-converse'
 import { routeVoiceCommand } from '../services/voice-routing'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
+import { messageText } from '../services/llm-router'
 import { parseLlmChain, usableLlmChain, usableCloudProviders } from '../services/arturita-pipeline'
 import { resolveLlmCreds, keyAvailableFor } from '../services/custom-model'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
@@ -31,6 +32,10 @@ import {
   checkAttachment, clipAttachmentText, withAttachmentContext,
   MAX_ATTACHMENT_BYTES, SUPPORTED_ATTACHMENT_EXTS,
 } from '../services/converse-attachments'
+import {
+  base64Bytes, buildImageContent, checkImage, formatImageBytes, visionChain,
+  IMAGE_TOKEN_ALLOWANCE, MAX_IMAGE_BYTES, NO_VISION_MESSAGE, SUPPORTED_IMAGE_EXTS,
+} from '../services/converse-images'
 
 const ConverseBody = z.object({
   message: z.string(),
@@ -41,6 +46,16 @@ const ConverseBody = z.object({
     name: z.string().min(1).max(300),
     text: z.string(),
     truncated: z.boolean().optional(),
+  }).nullable().optional(),
+  /** MOB-7b: a photo the operator attached to this turn, as RAW base64 (no
+   *  `data:` prefix). Unlike a document there is no extract round-trip — the
+   *  pixels ARE the payload, so they ride the turn itself and reach the model as
+   *  a real image content block. It is held only for this request: never written
+   *  to the DB, never logged, and never added to `history`. */
+  image: z.object({
+    name: z.string().min(1).max(300),
+    mediaType: z.string().min(1).max(100),
+    data: z.string().min(1),
   }).nullable().optional(),
   /** the operator opted this turn into the agent flow (UI "delegate" toggle). */
   explicitDelegate: z.boolean().optional(),
@@ -90,16 +105,37 @@ async function buildContextBlock(orgId: string): Promise<string | null> {
   } catch { return null }
 }
 
+// MOB-7b: base64 inflates by 4/3, so a 3.75 MB photo is a 5 MB field — far past
+// Fastify's 1 MB default body limit, which would reject an image turn with a
+// bare 413 and no usable message. Lifted for THIS route only (the rest of the
+// API keeps the tight default), with headroom for the message + history that
+// ride alongside. The real image ceiling stays MAX_IMAGE_BYTES, enforced with a
+// clean message below; this is only the transport's outer bound.
+const CONVERSE_BODY_LIMIT = 8 * 1024 * 1024
+
 export async function arturitaConverseRoutes(app: FastifyInstance) {
-  app.post('/api/orgs/:orgId/arturita/converse', async (req, reply) => {
+  app.post('/api/orgs/:orgId/arturita/converse', { bodyLimit: CONVERSE_BODY_LIMIT }, async (req, reply) => {
     const { orgId } = req.params as any
     let b: z.infer<typeof ConverseBody>
     try { b = ConverseBody.parse(req.body ?? {}) } catch (e: any) { return reply.code(400).send({ error: e?.message ?? 'invalid body' }) }
 
     const message = String(b.message ?? '').trim()
-    // An attachment alone is a legitimate turn ("read this") — but there must be
-    // SOMETHING to act on.
-    if (!message && !b.attachment) return reply.code(400).send({ error: 'message is required' })
+    // An attachment or a photo alone is a legitimate turn ("read this" / "what is
+    // this?") — but there must be SOMETHING to act on.
+    if (!message && !b.attachment && !b.image) return reply.code(400).send({ error: 'message is required' })
+
+    // Gate the photo BEFORE any work: format and size, on the DECODED length so
+    // the limit means what it says. Rejections mirror the extract route's status
+    // codes (415 unsupported / 413 too large / 422 empty) so both clients can
+    // treat the two attach paths identically.
+    const image = b.image ?? null
+    if (image) {
+      const bad = checkImage({ mediaType: image.mediaType, bytes: base64Bytes(image.data) })
+      if (bad) {
+        const status = bad.code === 'too_large' ? 413 : bad.code === 'empty' ? 422 : 415
+        return reply.code(status).send({ error: bad.error, code: bad.code })
+      }
+    }
 
     // Re-clip server-side: the client already clips, but it is not the enforcer.
     const attachment = b.attachment
@@ -138,6 +174,10 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // for this turn cannot travel with them (persisting it is a separate story).
       // Say so rather than letting the operator believe the doc went with the task.
       if (attachment) ack += ` Note: “${attachment.name}” stays with this conversation — I didn't attach it to the task, so mention anything from it the office will need.`
+      // Same for a photo, and for the same reason: it is held for this turn only,
+      // so it cannot travel with work an agent runs later. Say so rather than let
+      // the operator believe the office can see it.
+      if (image) ack += ` Note: the photo “${image.name}” stays with this conversation — I didn't attach it to the task, so describe anything in it the office will need.`
       return {
         mode: 'delegate',
         routing: { trigger: decision.trigger, reason: decision.reason, workMode: route.workMode, destructive: decision.destructive, approvalType: decision.approvalType ?? null, isFollowUp: route.isFollowUp },
@@ -158,12 +198,28 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // The attached document rides on THIS turn only — delimited, after the
     // operator's question. It is never added to `history`, so it doesn't re-enter
     // the prompt (and re-bill) on every later turn of the thread.
-    const userContent = withAttachmentContext(message || 'Please read the attached document.', attachment)
+    const userText = withAttachmentContext(
+      message || (image ? 'Please look at the attached photo.' : 'Please read the attached document.'),
+      attachment,
+    )
+    // A photo turns the content into ordered PARTS (text + image block); without
+    // one the content stays a plain string, so a text-only turn builds exactly
+    // the request it built before this story.
+    const userContent = image
+      ? buildImageContent(userText, { name: image.name, mediaType: image.mediaType, data: image.data })
+      : userText
     const messages = [...history, { role: 'user' as const, content: userContent }]
 
     // J-prod: hand the built prompt back so the client streams tokens locally
     // (browser→Ollama). No LLM call here, no secrets in the payload.
-    if (b.deferAnswer) {
+    //
+    // A photo turn CANNOT defer: the local engine the browser streams from is
+    // whatever Ollama model the operator runs, which this endpoint can't inspect
+    // and which is text-only by default — precisely the silent-drop this story
+    // exists to prevent. So an image turn is answered server-side, where the
+    // chain is pruned to hops that can actually see. Deferring is a latency
+    // optimisation; being right outranks it.
+    if (b.deferAnswer && !image) {
       return {
         mode: 'answer',
         deferred: true,
@@ -179,13 +235,35 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // the live path never breaks when local Ollama / free-tier keys are absent.
     const deployCfg = (org?.deployConfig ?? {}) as Record<string, any>
     const keyAvailable = keyAvailableFor(deployCfg)  // shared with GET /arturita/llm-status
-    const chain = usableLlmChain({
+    const usable = usableLlmChain({
       entries: parseLlmChain(deployCfg),
       keyAvailable,
       guaranteed: { provider, model },
     })
+    // MOB-7b — an image turn runs ONLY on hops that can see. The default chain is
+    // free-first (local Ollama → groq), all text-only, ahead of the guaranteed
+    // Claude hop; without this prune the photo would reach a blind model, which
+    // errors at best and invents an answer at worst.
+    const chain = image ? visionChain(usable) : usable
+    if (image && chain.length === 0) {
+      // No configured model can see. The operator gets told, in the thread, with
+      // the fix — the same shape as NO_LLM_MESSAGE. Silently dropping the image
+      // and answering from the text alone is the one thing we must not do.
+      return {
+        mode: 'answer',
+        routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
+        degraded: true,
+        reply: { text: NO_VISION_MESSAGE, provider: 'text_only' },
+        error: 'no vision-capable model configured',
+        code: 'no_vision_model',
+      }
+    }
     const capUsd = parseCapUsd(org?.deployConfig as any, agent.id)
-    const inputTokens = estimateInputTokens([system, ...messages.map(m => m.content)])
+    // Price the TEXT of each message — `messageText` skips image parts, whose
+    // base64 would otherwise be counted as characters and wildly overstate the
+    // turn. The image's real cost is added as a flat allowance instead.
+    const inputTokens = estimateInputTokens([system, ...messages.map(messageText)])
+      + (image ? IMAGE_TOKEN_ALLOWANCE : 0)
 
     try {
       const fb = await streamLLMWithFallback({
@@ -335,7 +413,9 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
   })
 
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/converse', {
-    summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow)',
+    summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow). '
+      + `Optionally carries a document (\`attachment\`, text extracted via /attachments/extract) or a photo (\`image\`, raw base64; ${SUPPORTED_IMAGE_EXTS.join('/')}; ≤${formatImageBytes(MAX_IMAGE_BYTES)}) `
+      + 'which is passed to the model as a real image block. An image turn runs only on vision-capable hops; if none are configured the reply says so. Neither is stored.',
     tag: 'arturita', body: ConverseBody,
   })
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/attachments/extract', {
