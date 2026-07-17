@@ -168,6 +168,12 @@ export async function setupDatabase() {
     // Epic AG / AG5 — uploaded agent avatar (data URI). Null for every existing
     // agent, which keeps rendering its emoji exactly as before.
     `ALTER TABLE agents ADD COLUMN avatar_url TEXT`,
+    // Epic CONN / CONN-7 — per-agent per-connector TRUST level. Defaults to
+    // 'approval_required' so NOTHING changes for existing connectors: every WRITE /
+    // DESTRUCTIVE connector action still routes through the approval + step-up flow.
+    // 'auto_write' (owner-set) auto-approves WRITE actions for that (agent, connector);
+    // DESTRUCTIVE always needs approval regardless. Additive + reversible; never a secret.
+    `ALTER TABLE agent_connectors ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'approval_required'`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }
@@ -242,7 +248,7 @@ export async function setupDatabase() {
   // exactly as before. The UNIQUE index makes configure an upsert on
   // (org_id, agent_id, connector_id). Reversible: DROP TABLE agent_connectors.
   try {
-    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_connectors (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, connector_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'configured', config TEXT, account_label TEXT, secret_ref TEXT, use_org_connection INTEGER NOT NULL DEFAULT 0, last_tested_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_connectors (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, connector_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'configured', config TEXT, account_label TEXT, secret_ref TEXT, use_org_connection INTEGER NOT NULL DEFAULT 0, trust_level TEXT NOT NULL DEFAULT 'approval_required', last_tested_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
     await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_connectors_uniq ON agent_connectors(org_id, agent_id, connector_id)`)
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_connectors_agent ON agent_connectors(agent_id)`)
   } catch { /* already exists */ }

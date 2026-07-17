@@ -216,6 +216,7 @@ export const agentConnectors = sqliteTable('agent_connectors', {
   accountLabel: text('account_label'),                         // masked/derived display label (never a secret)
   secretRef: text('secret_ref'),                               // key into `secrets` (scope='agent', scopeId=agentId); NULL when no credential
   useOrgConnection: integer('use_org_connection', { mode: 'boolean' }).notNull().default(false), // inherit the org-level connection (decision A)
+  trustLevel: text('trust_level').notNull().default('approval_required'), // CONN-7 containment: 'approval_required' (default) | 'auto_write'. Owner-only; auto_write auto-approves WRITE actions for this (agent,connector) — DESTRUCTIVE always needs approval. NEVER a secret (an enum).
   lastTestedAt: integer('last_tested_at', { mode: 'timestamp' }),
   lastError: text('last_error'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),

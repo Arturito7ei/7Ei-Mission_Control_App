@@ -556,12 +556,80 @@ of scope** (no official API)._
   socket (SSRF-free by construction); encryption at rest; owner gate binds (member 403,
   cross-tenant 404); disconnect purge. The `connector:` capability containment is still CONN-7.
 
-### CONN-7 — Enforce the `connector:` capability + trust/approval model (≈ 4–6 d)
-- Make the reserved `connector:<action>` namespace **real**: gate which connectors an
-  agent may actually use behind its capability caps + trust tier (`low_trust_review`
-  routes powerful connector use through the existing approvals/`dangerous-approvals` path).
-- **SR focus:** this is the "an agent holding a real Gmail/GitHub token is powerful"
-  containment stage — the highest-value security review of the epic.
+### CONN-7 — Connector containment: capability + trust + approval model ✅ SHIPPED
+_As-built on `conn-7-connector-containment`. Backend policy + enforcement + web + mobile
+trust toggle in one PR. This DEFINES and ENFORCES the policy CONN-8 (execution) MUST
+consult before running any connector action — **CONN-7 itself does NOT execute
+connectors.** The confirmed, operator-approved model: **READ runs freely; WRITE/SEND
+needs approval by default via the EXISTING dangerous-approval + step-up flow; a per-agent
+per-connector owner-set TRUST toggle can auto-approve WRITEs for a trusted pair; but
+DESTRUCTIVE actions ALWAYS need approval, even when trusted.** Fail-closed throughout._
+
+- **The action TAXONOMY** (`services/connector-authz.ts` `CONNECTOR_ACTION_TAXONOMY`) —
+  the data map CONN-8 consults. Per connector, action verbs classify into READ / WRITE /
+  DESTRUCTIVE, plus a `defaultClass` for verbs not in any set:
+
+  | Connector | READ | WRITE / SEND | DESTRUCTIVE | default (unrecognized) |
+  |---|---|---|---|---|
+  | **github** | read/get/list/search, get_issue, get_repo… | create/update/comment/push/commit, issue.create, pr.create… | delete, force_push, repo.delete, branch.delete… | **unknown** (fail-closed) |
+  | **jira** | read/get/search/jql, get_issue… | create/transition/comment/assign, issue.create… | delete, issue.delete | **unknown** |
+  | **google** (Gmail/Cal/Drive) | read/get/list/search, list_messages, list_files… | send/create/update/reply/share/upload, create_event… | delete/trash/empty_trash, delete_file… | **unknown** |
+  | **telegram / whatsapp / google_chat** | read/get/get_updates… | **send/send_message/post/reply** | delete_message… | **write** (comms = send) |
+  | **mcp** (custom) | — | — (all tool calls) | (keyword-guarded) | **write** (a tool call is WRITE by default) |
+
+  A DESTRUCTIVE-keyword guard (`delete|destroy|drop|purge|remove|wipe|revoke|truncate`)
+  is the backstop: a stray `delete_*`/`purge_*` on ANY connector is forced to DESTRUCTIVE
+  even if not explicitly listed — a trusted connector can never auto-approve it. Write/read
+  keyword fallbacks map sensible unrecognized verbs; otherwise the connector `defaultClass`
+  applies. **mcp defaults to WRITE** (unknown tool → approval unless trusted); everyone else
+  defaults to **unknown → needs_approval EVEN when trusted** (the fail-closed choice).
+- **The TRUST column** — additive `trust_level` on `agent_connectors`
+  (`'approval_required'` default | `'auto_write'`), idempotent migration in `db/setup.ts`
+  (added to BOTH the `CREATE TABLE` and the ALTER list — the ALTER runs before the CREATE on
+  a fresh DB, so the column must be in the CREATE too). Owner-set via a new owner-gated
+  `PUT …/connectors/:cid/trust` (enum-validated, 404 on an unconfigured connector). It is an
+  ENUM, **never a secret** — added to `PUBLIC_CONNECTOR_FIELDS` (returnable), and the
+  column-classification test still passes.
+- **Capability enforcement** — the reserved `connector:` namespace is now REAL:
+  `hasConnectorCapability(permissions, connectorId)` requires `connector:<id>` (or
+  `connector:*` / `*`) via `governance2.isCapabilityAllowed`. Absent → **deny**.
+  `agent-permissions.ts` already accepted `connector:<action>` caps as writable (the
+  namespace was reserved there), so owners can grant them today.
+- **The enforcement service** — `authorizeConnectorAction({orgId, agentId, connectorId,
+  action})` → `{ decision: allow | needs_approval | deny, reason, classification,
+  approvalId? }`. Pure core `decideConnectorAuthorization`: capability check (deny if
+  missing) → connector-configured check (deny if not) → READ→allow → DESTRUCTIVE/unknown→
+  needs_approval (trust ignored) → WRITE→allow-if-`auto_write`-else-needs_approval. On
+  `needs_approval` it **files an `approval_requests` row of the new dangerous type
+  `connector_action`** via `prepareApprovalRecord` (machine-rendered summary, never model
+  prose) — so it lands in the operator's Inbox and **requires the SAME step-up**
+  (`x-arturita-session` fresh session) the phone/desk already enforce on the
+  `/approvals/:id/decide` gate. A missing/cross-tenant agent, unknown connector, or blank
+  action all resolve to **deny** — never a silent allow.
+- **Reused, not rebuilt** — `dangerous-approvals.ts` gained one type
+  (`'connector_action'`) + one renderer; the decide route's step-up gate
+  (`isDangerousType(type) || payload.requiresStepUp`) already binds it. No parallel
+  approval mechanism.
+- **UI (web + mobile)** — an owner-only per-connector **Write trust** toggle in the
+  Connectors accordion ("Require approval for writes" ↔ "Auto-approve writes (trusted)")
+  with an explicit note that **destructive actions always require approval**. Shown for any
+  CONFIGURED connector; read-only surface stays owner-gated (the backend is the enforcer).
+  Mobile mirrors it (SDK 54 / react 19.1.0 / boot-safe, RN-core only); Google on the phone
+  stays config-only (its trust is set from the web dashboard, mirroring CONN-5).
+- **Tests** — `backend/src/tests/connector-authz.test.ts` (24): taxonomy read/write/
+  destructive + fail-closed-unknown + destructive-keyword override; the pure decision
+  matrix; `authorizeConnectorAction` files the approval + no credential leaks into the card;
+  write-trusted→allow but destructive-trusted→needs_approval; missing-cap→deny;
+  not-configured→deny; cross-tenant→deny; **no step-up bypass** (`decideApproval` refuses
+  approve without a fresh session); owner-only trust toggle (member→403), invalid enum→400,
+  unconfigured→404, cross-tenant→404; every backend connector has a taxonomy entry. Client
+  parity: `TRUST_LEVELS` + `isTrusted` mirrored web⇄mobile (cross-platform tripwire agrees).
+- **SR focus (met):** fail-closed decision (deny/needs_approval on any ambiguity), DESTRUCTIVE
+  never bypassed by trust, unknown-action never auto-approved on a known provider, capability
+  required to use a connector at all, the approval routes through the EXISTING step-up gate
+  (no cheaper path), owner-only trust, tenant-scoped, no secret in the trust enum or the
+  approval card. **CONN-8 must call `authorizeConnectorAction` first and only proceed on
+  `allow`.**
 
 ### CONN-8 — Full tool invocation / MCP execution bridge (planned; ≈ larger, own epic)
 - **This is where a connected connector becomes CALLABLE at runtime, not just stored.**
@@ -573,6 +641,13 @@ of scope** (no official API)._
   capability + trust tier (CONN-7). CONN-1's data model deliberately does not preclude
   this — the `config` already holds `{ name, transport, url|command, args }`, the secret
   is resolvable at agent scope, and nothing here needs migrating to add execution.
+- **The containment CONTRACT with CONN-7 (now shipped):** CONN-8 MUST call
+  `authorizeConnectorAction({orgId, agentId, connectorId, action})`
+  (`services/connector-authz.ts`) BEFORE running ANY connector action, and:
+  **`allow`** → proceed; **`needs_approval`** → hold the action until the returned
+  `approvalId` is approved through the Inbox + step-up gate; **`deny`** → drop it. The
+  policy (capability → classification → trust) already exists and is tested — CONN-8 is
+  purely the *invocation* plumbing on top of that gate.
 - Flagged as its **own epic**, sequenced after the capability/containment work (CONN-7).
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
@@ -653,7 +728,8 @@ will grow and the accordion wants room.
 | Masked, never-leak read projection pattern | **Exists** (`toPublicOrg` allow-list) |
 | Owner-gate on org-scoped agent path | **Exists** (`requireOrgRole('owner')`) |
 | Google OAuth (org-level) | **Exists** (`google-auth.ts`) |
-| `connector:` capability namespace | **Reserved, not enforced** |
+| `connector:` capability namespace | **Enforced** — CONN-7 (`hasConnectorCapability` → `connector:<id>` required to use a connector; absent → deny) |
+| Per-connector TRUST + approval containment | **SHIPPED** — CONN-7 (`trust_level` column, `authorizeConnectorAction`: READ→allow / WRITE→approval-unless-`auto_write` / DESTRUCTIVE→always-approval / unknown→fail-closed; routed through the existing `connector_action` dangerous-approval + step-up; owner-only web+mobile trust toggle) |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
 | GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** — backend CONN-4a (keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN`), web+mobile UI rows CONN-4b |
 | Per-agent OAuth (agentId scope, encrypted tokens, PKCE + single-use state) | **SHIPPED** — CONN-5 (`agent_oauth_tokens` + `agent_oauth_states`; web full flow, mobile config-only) |

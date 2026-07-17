@@ -9,7 +9,9 @@ import {
   AGENT_CONNECTORS, getAgentConnector, validateConnectorConfig,
   toPublicConnector, connectorEnvKeys, primarySecretKey,
   connectorSecretEntries, connectorAccountLabel, isAtlassianHost,
+  isValidTrustLevel, TRUST_LEVELS,
 } from '../services/agent-connectors'
+import { authorizeConnectorAction } from '../services/connector-authz'
 import {
   buildAgentAuthUrl, createOauthState, scopesForServices, hasAnyService,
   normalizeServices, ensureFreshAgentGoogleToken, deleteAgentGoogleToken,
@@ -129,7 +131,7 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
       return {
         connectorId: meta.id, name: meta.name, category: meta.category,
         authType: meta.authType, icon: meta.icon, docsUrl: meta.docsUrl,
-        ...(row ? toPublicConnector(row) : { status: 'not_configured', config: null, accountLabel: null, useOrgConnection: false, lastTestedAt: null, lastError: null }),
+        ...(row ? toPublicConnector(row) : { status: 'not_configured', config: null, accountLabel: null, useOrgConnection: false, trustLevel: 'approval_required', lastTestedAt: null, lastError: null }),
       }
     })
     return { connectors }
@@ -145,7 +147,7 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
       where: and(eq(schema.agentConnectors.orgId, orgId), eq(schema.agentConnectors.agentId, agentId), eq(schema.agentConnectors.connectorId, cid)),
     })
     const base = { connectorId: meta.id, name: meta.name, category: meta.category, authType: meta.authType, icon: meta.icon, docsUrl: meta.docsUrl }
-    if (!row) return { connector: { ...base, status: 'not_configured', config: null, accountLabel: null, useOrgConnection: false, lastTestedAt: null, lastError: null } }
+    if (!row) return { connector: { ...base, status: 'not_configured', config: null, accountLabel: null, useOrgConnection: false, trustLevel: 'approval_required', lastTestedAt: null, lastError: null } }
     return { connector: { ...base, ...toPublicConnector(row) } }
   })
 
@@ -320,6 +322,56 @@ export async function agentConnectorRoutes(app: FastifyInstance) {
       try { await deleteAgentGoogleToken(orgId, agentId) } catch { /* purge is best-effort; row already deleted */ }
     }
     reply.code(204)
+  })
+
+  // ─── Trust level (owner-gated) — CONN-7 containment ───────────────────────────
+  //
+  // Set the per-agent per-connector TRUST for a CONFIGURED connector:
+  //   'approval_required' (default) — every WRITE/DESTRUCTIVE action routes through
+  //                                   the approval + step-up flow.
+  //   'auto_write'                  — WRITE actions are auto-approved for this pair;
+  //                                   DESTRUCTIVE actions STILL require approval.
+  // Owner-only (the enforcer is the backend); the value is an ENUM, never a secret.
+  app.put('/api/orgs/:orgId/agents/:agentId/connectors/:cid/trust', owner, async (req, reply) => {
+    const { orgId, agentId, cid } = req.params as any
+    const meta = getAgentConnector(cid)
+    if (!meta) return reply.code(404).send({ error: 'Unknown connector' })
+    if (!(await agentInOrg(orgId, agentId))) return reply.code(404).send({ error: 'Agent not found' })
+    const trustLevel = ((req.body ?? {}) as any).trustLevel
+    if (!isValidTrustLevel(trustLevel)) {
+      return reply.code(400).send({ error: `trustLevel must be one of: ${TRUST_LEVELS.join(', ')}` })
+    }
+    const existing = await db.query.agentConnectors.findFirst({
+      where: and(eq(schema.agentConnectors.orgId, orgId), eq(schema.agentConnectors.agentId, agentId), eq(schema.agentConnectors.connectorId, cid)),
+    })
+    if (!existing) return reply.code(404).send({ error: 'Connector not configured' })
+    await db.update(schema.agentConnectors)
+      .set({ trustLevel, updatedAt: new Date() })
+      .where(eq(schema.agentConnectors.id, existing.id))
+    const row = await db.query.agentConnectors.findFirst({ where: eq(schema.agentConnectors.id, existing.id) })
+    return { connector: { connectorId: meta.id, name: meta.name, category: meta.category, authType: meta.authType, ...toPublicConnector(row!) } }
+  })
+
+  // ─── Authorize a connector action (owner-gated) — CONN-7 enforcement chokepoint ─
+  //
+  // The policy CONN-8's execution bridge MUST consult before running a connector
+  // action. Returns { decision: allow | needs_approval | deny, reason, classification
+  // } and, when needs_approval, the pending approval_requests id (filed as a dangerous
+  // `connector_action` type → shows in the Inbox + requires step-up to approve). This
+  // route exercises the SAME `authorizeConnectorAction` service CONN-8 calls directly;
+  // it does NOT execute anything. Owner-gated + tenant-scoped like every sibling.
+  app.post('/api/orgs/:orgId/agents/:agentId/connectors/:cid/authorize', owner, async (req, reply) => {
+    const { orgId, agentId, cid } = req.params as any
+    const meta = getAgentConnector(cid)
+    if (!meta) return reply.code(404).send({ error: 'Unknown connector' })
+    if (!(await agentInOrg(orgId, agentId))) return reply.code(404).send({ error: 'Agent not found' })
+    const b = (req.body ?? {}) as any
+    const action = typeof b.action === 'string' ? b.action : ''
+    const result = await authorizeConnectorAction({
+      orgId, agentId, connectorId: cid, action,
+      target: typeof b.target === 'string' ? b.target : null,
+    })
+    return result
   })
 
   // ─── Google OAuth start (owner-gated) — CONN-5 ────────────────────────────────

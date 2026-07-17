@@ -684,4 +684,21 @@ export const Api = {
       `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}`,
       { token, method: 'DELETE' },
     ),
+
+  // PUT …/trust — CONN-7: set the owner-only per-connector trust level
+  // ('approval_required' | 'auto_write'). Answers with the masked row (the trust
+  // ENUM is public; never a secret). Owner-gated on the backend (the real enforcer).
+  setAgentConnectorTrust: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    connectorId: string,
+    trustLevel: 'approval_required' | 'auto_write',
+  ) =>
+    api<{ connector: PublicConnectorState }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}/trust`,
+      { token, method: 'PUT', body: JSON.stringify({ trustLevel }) },
+    ).then((r) => r.connector),
 }

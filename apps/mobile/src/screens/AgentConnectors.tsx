@@ -53,6 +53,7 @@ import {
   validateGoogleChatConfig,
   googleServicesFromConfig,
   googleServicesSummary,
+  isTrusted,
   type DisplayConnector,
   type McpFormInput,
   type McpTransport,
@@ -62,6 +63,7 @@ import {
   type WhatsappFormInput,
   type GoogleChatFormInput,
   type PublicConnectorState,
+  type TrustLevel,
 } from '../agentConnectors'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Loading } from '../ui'
@@ -352,7 +354,95 @@ function ConnectorRow({
       {available && expanded && conn.id === GOOGLE_CHAT_CONNECTOR_ID ? (
         <GoogleChatConfig orgId={orgId} agentId={agentId} apiUrl={apiUrl} getToken={getToken} state={state} onState={onState} onDone={() => setExpanded(false)} />
       ) : null}
+
+      {/* CONN-7 — owner-only trust toggle, shown for any CONFIGURED, expandable
+          connector (Google is web-only on the phone, so it has no expand + no toggle
+          here — trust it from the web dashboard, mirroring CONN-5). */}
+      {available && expanded && configured && !isGoogle ? (
+        <TrustToggle orgId={orgId} agentId={agentId} apiUrl={apiUrl} connectorId={conn.id} getToken={getToken} state={state} onState={onState} />
+      ) : null}
     </View>
+  )
+}
+
+// ─── Trust toggle (CONN-7 containment) — owner-only per-connector ─────────────
+//
+// "Require approval for writes" ↔ "Auto-approve writes (trusted)". The stronger policy
+// stays explicit: DESTRUCTIVE actions ALWAYS require approval, even when trusted. The
+// whole surface is owner-gated + the backend PUT is owner-gated (the real enforcer).
+// The value is a returnable ENUM — never a secret.
+function TrustToggle({
+  orgId,
+  agentId,
+  apiUrl,
+  connectorId,
+  getToken,
+  state,
+  onState,
+}: {
+  orgId: string
+  agentId: string
+  apiUrl: string
+  connectorId: string
+  getToken: () => Promise<string | null>
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+}) {
+  const trusted = isTrusted(state)
+  const [busy, setBusy] = useState<TrustLevel | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const current: TrustLevel = state?.trustLevel === 'auto_write' ? 'auto_write' : 'approval_required'
+
+  const setTrust = async (level: TrustLevel) => {
+    if (busy || current === level) return
+    setErr(null)
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy(level)
+    try {
+      const connector = await Api.setAgentConnectorTrust(apiUrl, token, orgId, agentId, connectorId, level)
+      onState(connector)
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not update trust.')
+    }
+    setBusy(null)
+  }
+
+  const Opt = ({ level, label }: { level: TrustLevel; label: string }) => {
+    const on = current === level
+    return (
+      <Pressable
+        onPress={() => setTrust(level)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: on, disabled: busy !== null }}
+        disabled={busy !== null}
+        style={[s.trustOpt, on && s.trustOptOn]}
+      >
+        <Text style={[s.trustOptText, on && s.trustOptTextOn]}>
+          {on ? '◉ ' : '○ '}
+          {label}
+        </Text>
+      </Pressable>
+    )
+  }
+
+  return (
+    <Card style={s.form}>
+      <View style={s.trustHead}>
+        <Text style={s.fieldLabel}>Write trust</Text>
+        {trusted ? <Chip label="Trusted" tone="warn" glyph="●" /> : null}
+      </View>
+      <Opt level="approval_required" label="Require approval for writes" />
+      <Opt level="auto_write" label="Auto-approve writes (trusted)" />
+      <Text style={s.fieldHint}>
+        Read actions always run freely. When trusted, this agent’s write/send actions on this connector run without approval.
+        Destructive actions always require approval, even when trusted.
+      </Text>
+      {err ? <Banner kind="error">{err}</Banner> : null}
+    </Card>
   )
 }
 
@@ -1306,4 +1396,16 @@ const s = StyleSheet.create({
   segmentTextOn: { color: '#08131F', fontWeight: '800' },
   okMsg: { color: theme.green, fontSize: font.sm, fontWeight: '600' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
+  trustHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  trustOpt: {
+    borderWidth: 1,
+    borderColor: theme.s3,
+    borderRadius: radius.md,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    backgroundColor: 'transparent',
+  },
+  trustOptOn: { borderColor: theme.blue, backgroundColor: theme.s2 },
+  trustOptText: { color: theme.textDim, fontSize: font.sm, fontWeight: '600' },
+  trustOptTextOn: { color: theme.text, fontWeight: '800' },
 })
