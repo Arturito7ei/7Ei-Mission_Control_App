@@ -147,6 +147,36 @@ test('[CONN7-TAX] AUDIT: destructive verb survives camelCase / no-separator spel
   assert.equal(classifyConnectorAction('mcp', 'dropdown_options'), 'write')
 })
 
+test('[CONN7-TAX] AUDIT+: casing / plural / spacing / benign-substring edge cases', () => {
+  // All-caps, PascalCase, plural, and odd spacing must all still surface the verb.
+  for (const a of ['DELETE', 'DeleteFile', 'PurgeAll', 'deletes', 'drops',
+    'delete  file', 'delete.all.records', 'force-delete', 'DROP TABLE', 'WipeDisk']) {
+    assert.equal(classifyConnectorAction('mcp', a), 'destructive', `mcp '${a}' must be destructive`)
+  }
+  // More benign words that CONTAIN a destructive substring but are not the verb token.
+  for (const a of ['backdrop', 'eavesdrop', 'redeliver', 'removable_media_list', 'address_get']) {
+    assert.notEqual(classifyConnectorAction('mcp', a), 'destructive', `mcp '${a}' must NOT be destructive`)
+  }
+  // A normal WRITE (send) on a comms connector stays WRITE, so auto_write CAN allow it.
+  assert.equal(classifyConnectorAction('telegram', 'send_message'), 'write')
+  assert.equal(decideConnectorAuthorization({
+    hasCapability: true, connectorConfigured: true,
+    classification: classifyConnectorAction('telegram', 'send_message'), trustLevel: 'auto_write',
+  }).decision, 'allow')
+})
+
+test('[CONN7-AUTHZ] AUDIT: a camelCase destructive action on a TRUSTED mcp still needs approval (end-to-end)', async () => {
+  // Configure mcp for AGENT and trust it (auto_write), then a camelCase destructive
+  // action must STILL file an approval — proving the fix holds through the real service.
+  await app.inject({ method: 'POST', url: url(ORG, AGENT, '/mcp'), payload: { config: { name: 'srv', transport: 'http', url: 'https://mcp.example.com' } } })
+  const t = await app.inject({ method: 'PUT', url: url(ORG, AGENT, '/mcp/trust'), payload: { trustLevel: 'auto_write' } })
+  assert.equal(t.statusCode, 200, t.body)
+  const r = await authorizeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'mcp', action: 'deleteEverything' })
+  assert.equal(r.classification, 'destructive')
+  assert.equal(r.decision, 'needs_approval')
+  assert.ok(r.approvalId, 'a trusted mcp destructive action must still file an approval')
+})
+
 test('[CONN7-CAP] connector capability grammar + wildcard matching', () => {
   assert.equal(connectorCapability('github'), 'connector:github')
   assert.equal(hasConnectorCapability(['connector:github'], 'github'), true)
