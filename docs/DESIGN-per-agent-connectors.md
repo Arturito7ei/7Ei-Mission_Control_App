@@ -395,6 +395,49 @@ mobile accordion rows over this same contract._
   audit-log hook covers the mutating routes. The powerful-capability containment
   (`connector:` cap + trust) is still CONN-7 — until then, owner-configured + least-priv.
 
+#### CONN-4b — GitHub + Jira WEB + MOBILE accordion rows ✅ SHIPPED
+_As-built on `conn-4b-github-jira-ui`. Client-only; enables the CONN-4a connectors
+in the accordion on BOTH surfaces over the same contract — no backend change._
+
+- **Available-set:** `github` + `jira` moved from the "coming soon" set to the
+  AVAILABLE set in BOTH client catalogs (`web/lib/agentConnectors.ts` +
+  `apps/mobile/src/agentConnectors.ts`, kept field-for-field identical). Their rows
+  now render a real inline config form instead of a disabled "coming soon" note.
+  The available-set is now `[github, jira, mcp]` on both clients.
+- **GitHub form** (`GithubConfig`, both surfaces): optional `username` (non-secret
+  display label) + a **write-only Personal Access Token**. Saves via
+  `POST …/connectors/github` `{ config: { username? }, secret: PAT }`. Masked status
+  + `accountLabel`, **Test** (CONN-4a's real `api.github.com/user` check), Disconnect.
+- **Jira form** (`JiraConfig`, both surfaces): `baseUrl` (URL input, validated) +
+  `email` (email input) as non-secret config + a **write-only API token**. Saves via
+  `POST …/connectors/jira` `{ config: { baseUrl, email }, secret: token }`. Test
+  (CONN-4a's Atlassian-host check), Disconnect.
+- **Client-side validation mirrors the CONN-4a backend zod** (`validateGithubConfig`
+  / `validateJiraConfig` in both catalog modules): github username ≤120; jira
+  baseUrl a valid URL ≤2048 + email valid ≤320; the token is required only on a
+  FIRST configure (blank on re-configure keeps the stored token). The server stays
+  the final validator (`.strict()`).
+- **SECURITY (identical to custom MCP):** the token field is WRITE-ONLY
+  (`type=password` on web / `secureTextEntry` on mobile), seeded from `''` and NEVER
+  from a read, cleared after a successful save; blank-on-save preserves the stored
+  token. The API returns only masked status + non-secret config (username / baseUrl
+  / email + accountLabel) — the token is **never displayed**. Tests assert
+  `githubConfigToForm` / `jiraConfigToForm` cannot surface a credential even if one
+  leaks into `config`.
+- **Owner-gating + 403** identical to the existing rows: the list GET is owner-gated
+  (403 on load → read-only note), a mutating 403 preserves edits incl. the typed
+  secret; the backend is the real gate.
+- **Parity tripwires updated:** the client available-set now includes github/jira and
+  the **SUBSET** tripwire (client ⊆ backend `AGENT_CONNECTORS`) stays green; the
+  cross-platform test still asserts the phone == the desk field-for-field, now also
+  agreeing on the github/jira validators; form-validation tests for github/jira added
+  to both clients.
+- **Verify:** web `npm run build` + `npm test` (239/239) green; `apps/mobile`
+  `npm test` (280/280) + `npm run typecheck` + `npm run export` (boot-safe) green.
+  Additive to `web/**` + `apps/mobile/**` + docs. **SDK 54 / react 19.1.0 / boot-safe
+  untouched** (RN core inputs only). **This completes GitHub + Jira as usable per-agent
+  connectors on both surfaces.**
+
 ### CONN-5 — Per-agent Google OAuth (its own stage) (≈ 5–8 d)
 - Agent-scoped OAuth token storage (decision B: `agentId` on `oauth_tokens` or new table);
   `state` carries `orgId + agentId` (signed/PKCE); reuse refresh/ensure-fresh.
@@ -512,7 +555,7 @@ will grow and the accordion wants room.
 | Google OAuth (org-level) | **Exists** (`google-auth.ts`) |
 | `connector:` capability namespace | **Reserved, not enforced** |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
-| GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** (CONN-4a) — keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN` |
+| GitHub (PAT) + Jira (basic) real at agent scope via env injection | **SHIPPED** — backend CONN-4a (keys `GITHUB_TOKEN` / `JIRA_BASE_URL`+`JIRA_EMAIL`+`JIRA_API_TOKEN`), web+mobile UI rows CONN-4b |
 | Per-agent OAuth (agentId scope, PKCE, mobile completion) | **New** (CONN-5) |
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |

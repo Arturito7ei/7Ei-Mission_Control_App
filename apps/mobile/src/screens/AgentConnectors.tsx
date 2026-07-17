@@ -2,10 +2,11 @@
 // of the web's ConnectorsTab (CONN-2) over the SAME CONN-1 contract (no backend
 // change). Grouped by category exactly as the operator listed them
 // (Communication / IT-Project / Google / Custom MCP); each category a collapsible
-// section, each connector a row with a colorblind-safe status chip. Only the
-// custom MCP server is REAL in v1 (the CONN-1 pilot) — add/configure/test/delete;
-// every other connector is a disabled "coming soon" / "out of scope" row (the
-// backend catalog holds only `mcp`, so wiring them would 404 — we never fake a
+// section, each connector a row with a colorblind-safe status chip. As of CONN-4b
+// THREE connectors are REAL — custom MCP (the CONN-1 pilot), GitHub (PAT) and Jira
+// (basic), the two CONN-4a made real via the agent-secrets env path —
+// add/configure/test/delete; every other connector is a disabled "coming soon" /
+// "out of scope" row (the backend 404s an unknown connectorId — we never fake a
 // save). The accordion idiom follows MemoryScreen's collapsible tree (MOB-6e).
 //
 // SECURITY — a stored credential is NEVER shown. The read projection carries no
@@ -31,12 +32,20 @@ import { Api } from '../api'
 import {
   CONNECTOR_GROUPS,
   MCP_CONNECTOR_ID,
+  GITHUB_CONNECTOR_ID,
+  JIRA_CONNECTOR_ID,
   isConfigured,
   mcpConfigToForm,
   validateMcpConfig,
+  githubConfigToForm,
+  validateGithubConfig,
+  jiraConfigToForm,
+  validateJiraConfig,
   type DisplayConnector,
   type McpFormInput,
   type McpTransport,
+  type GithubFormInput,
+  type JiraFormInput,
   type PublicConnectorState,
 } from '../agentConnectors'
 import { font, radius, space, theme } from '../theme'
@@ -155,7 +164,7 @@ export function ConnectorsSection({
     <Section>
       <Text style={s.blurb}>
         Connect this agent to external services. Credentials are stored encrypted at agent scope and are never shown back
-        — only their connection status. Only the custom MCP server is configurable today; the rest arrive in later stages.
+        — only their connection status. GitHub, Jira and custom MCP servers are configurable today; the rest arrive in later stages.
       </Text>
 
       <View style={{ gap: space.md }}>
@@ -269,6 +278,28 @@ function ConnectorRow({
 
       {available && expanded && conn.id === MCP_CONNECTOR_ID ? (
         <McpConfig
+          orgId={orgId}
+          agentId={agentId}
+          apiUrl={apiUrl}
+          getToken={getToken}
+          state={state}
+          onState={onState}
+          onDone={() => setExpanded(false)}
+        />
+      ) : null}
+      {available && expanded && conn.id === GITHUB_CONNECTOR_ID ? (
+        <GithubConfig
+          orgId={orgId}
+          agentId={agentId}
+          apiUrl={apiUrl}
+          getToken={getToken}
+          state={state}
+          onState={onState}
+          onDone={() => setExpanded(false)}
+        />
+      ) : null}
+      {available && expanded && conn.id === JIRA_CONNECTOR_ID ? (
+        <JiraConfig
           orgId={orgId}
           agentId={agentId}
           apiUrl={apiUrl}
@@ -465,6 +496,354 @@ function McpConfig({
       <Text style={s.fieldHint}>
         Stored encrypted at agent scope and injected into this agent’s runtime. It is never displayed back — leave blank to
         keep the existing token.
+      </Text>
+
+      {err ? <Banner kind="error">{err}</Banner> : null}
+      {msg ? <Text style={s.okMsg}>{msg}</Text> : null}
+      {configured && lastTested && !msg ? <Text style={s.fieldHint}>Last tested {lastTested}.</Text> : null}
+
+      <View style={s.actions}>
+        <Button
+          title={busy === 'save' ? 'Saving…' : configured ? 'Save changes' : 'Connect'}
+          tone="primary"
+          busy={busy === 'save'}
+          disabled={busy !== null}
+          onPress={save}
+        />
+        {configured ? (
+          <Button title={busy === 'test' ? 'Testing…' : 'Test'} tone="ghost" busy={busy === 'test'} disabled={busy !== null} onPress={test} />
+        ) : null}
+        {configured ? (
+          <Button
+            title={busy === 'delete' ? 'Removing…' : 'Disconnect'}
+            tone="danger"
+            busy={busy === 'delete'}
+            disabled={busy !== null}
+            onPress={remove}
+          />
+        ) : null}
+      </View>
+    </Card>
+  )
+}
+
+// ─── GitHub (PAT) config form (CONN-4a, real via the agent-secrets env path) ──
+//
+// Same shape and security invariants as McpConfig: the PAT is WRITE-ONLY
+// (secureTextEntry, seeded from '' never a read, cleared after a successful save,
+// blank on save keeps the stored token). The only NON-secret config is an optional
+// username label. The backend requires a token on FIRST configure — so the form
+// blocks a first save with no token, but allows a blank token on re-configure.
+function GithubConfig({
+  orgId,
+  agentId,
+  apiUrl,
+  getToken,
+  state,
+  onState,
+  onDone,
+}: {
+  orgId: string
+  agentId: string
+  apiUrl: string
+  getToken: () => Promise<string | null>
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<GithubFormInput>(() => githubConfigToForm(state?.config))
+  const [secret, setSecret] = useState('') // the PAT — WRITE-ONLY, never seeded from a read
+  const [busy, setBusy] = useState<null | 'save' | 'test' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const save = async () => {
+    setErr(null)
+    setMsg(null)
+    const valid = validateGithubConfig(form)
+    if (valid.ok !== true) {
+      setErr(valid.error)
+      return
+    }
+    if (!configured && !secret.trim()) {
+      setErr('A personal access token is required to connect GitHub.')
+      return
+    }
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('save')
+    try {
+      const body: { config: Record<string, unknown>; secret?: string } = {
+        config: valid.config as unknown as Record<string, unknown>,
+      }
+      if (secret.trim()) body.secret = secret.trim() // only sent when the operator typed one
+      const connector = await Api.saveAgentConnector(apiUrl, token, orgId, agentId, GITHUB_CONNECTOR_ID, body)
+      onState(connector)
+      setSecret('') // clear the write-only field after success
+      setForm(githubConfigToForm(connector.config))
+      setMsg('Saved.')
+    } catch (e: any) {
+      setErr(`${e?.message ?? 'Could not save this connector.'} Your changes are still here.`)
+    }
+    setBusy(null)
+  }
+
+  const test = async () => {
+    setErr(null)
+    setMsg(null)
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('test')
+    try {
+      const r = await Api.testAgentConnector(apiUrl, token, orgId, agentId, GITHUB_CONNECTOR_ID)
+      setMsg(r.ok ? `✓ ${r.detail ?? 'OK'}` : `✗ ${r.detail ?? 'failed'}`)
+      if (state) onState({ ...state, lastTestedAt: r.testedAt ? Date.parse(r.testedAt) : Date.now(), lastError: r.ok ? null : (r.detail ?? 'failed') })
+    } catch (e: any) {
+      setErr(e?.message ?? 'Test failed.')
+    }
+    setBusy(null)
+  }
+
+  const remove = async () => {
+    setErr(null)
+    setMsg(null)
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('delete')
+    try {
+      await Api.deleteAgentConnector(apiUrl, token, orgId, agentId, GITHUB_CONNECTOR_ID)
+      onState(null)
+      onDone()
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not disconnect.')
+      setBusy(null)
+    }
+  }
+
+  const lastTested = rel(state?.lastTestedAt ?? null)
+
+  return (
+    <Card style={s.form}>
+      <Field label="Username · optional · display label">
+        <TextInput
+          value={form.username}
+          onChangeText={(t) => setForm((f) => ({ ...f, username: t }))}
+          placeholder="e.g. octocat"
+          placeholderTextColor={theme.textFaint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={s.input}
+        />
+      </Field>
+
+      <Field label="Personal access token · write-only">
+        <TextInput
+          value={secret}
+          onChangeText={setSecret}
+          placeholder={configured ? 'Leave blank to keep the stored token' : 'ghp_… / github_pat_…'}
+          placeholderTextColor={theme.textFaint}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="off"
+          textContentType="none"
+          style={s.input}
+        />
+      </Field>
+      <Text style={s.fieldHint}>
+        Stored encrypted at agent scope as GITHUB_TOKEN and injected into this agent’s runtime. It is never displayed back —
+        leave blank to keep the existing token.
+      </Text>
+
+      {err ? <Banner kind="error">{err}</Banner> : null}
+      {msg ? <Text style={s.okMsg}>{msg}</Text> : null}
+      {configured && lastTested && !msg ? <Text style={s.fieldHint}>Last tested {lastTested}.</Text> : null}
+
+      <View style={s.actions}>
+        <Button
+          title={busy === 'save' ? 'Saving…' : configured ? 'Save changes' : 'Connect'}
+          tone="primary"
+          busy={busy === 'save'}
+          disabled={busy !== null}
+          onPress={save}
+        />
+        {configured ? (
+          <Button title={busy === 'test' ? 'Testing…' : 'Test'} tone="ghost" busy={busy === 'test'} disabled={busy !== null} onPress={test} />
+        ) : null}
+        {configured ? (
+          <Button
+            title={busy === 'delete' ? 'Removing…' : 'Disconnect'}
+            tone="danger"
+            busy={busy === 'delete'}
+            disabled={busy !== null}
+            onPress={remove}
+          />
+        ) : null}
+      </View>
+    </Card>
+  )
+}
+
+// ─── Jira (basic) config form (CONN-4a, real via the agent-secrets env path) ──
+//
+// Same security invariants: the API token is WRITE-ONLY. The NON-secret config is
+// baseUrl + email (both returnable and shown). The backend requires a token on
+// FIRST configure; blank on re-configure keeps the stored token.
+function JiraConfig({
+  orgId,
+  agentId,
+  apiUrl,
+  getToken,
+  state,
+  onState,
+  onDone,
+}: {
+  orgId: string
+  agentId: string
+  apiUrl: string
+  getToken: () => Promise<string | null>
+  state: PublicConnectorState | null
+  onState: (s: PublicConnectorState | null) => void
+  onDone: () => void
+}) {
+  const configured = isConfigured(state)
+  const [form, setForm] = useState<JiraFormInput>(() => jiraConfigToForm(state?.config))
+  const [secret, setSecret] = useState('') // the API token — WRITE-ONLY, never seeded from a read
+  const [busy, setBusy] = useState<null | 'save' | 'test' | 'delete'>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const setF = (k: keyof JiraFormInput, v: string) => setForm((f) => ({ ...f, [k]: v }))
+
+  const save = async () => {
+    setErr(null)
+    setMsg(null)
+    const valid = validateJiraConfig(form)
+    if (valid.ok !== true) {
+      setErr(valid.error)
+      return
+    }
+    if (!configured && !secret.trim()) {
+      setErr('An API token is required to connect Jira.')
+      return
+    }
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('save')
+    try {
+      const body: { config: Record<string, unknown>; secret?: string } = {
+        config: valid.config as unknown as Record<string, unknown>,
+      }
+      if (secret.trim()) body.secret = secret.trim()
+      const connector = await Api.saveAgentConnector(apiUrl, token, orgId, agentId, JIRA_CONNECTOR_ID, body)
+      onState(connector)
+      setSecret('')
+      setForm(jiraConfigToForm(connector.config))
+      setMsg('Saved.')
+    } catch (e: any) {
+      setErr(`${e?.message ?? 'Could not save this connector.'} Your changes are still here.`)
+    }
+    setBusy(null)
+  }
+
+  const test = async () => {
+    setErr(null)
+    setMsg(null)
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('test')
+    try {
+      const r = await Api.testAgentConnector(apiUrl, token, orgId, agentId, JIRA_CONNECTOR_ID)
+      setMsg(r.ok ? `✓ ${r.detail ?? 'OK'}` : `✗ ${r.detail ?? 'failed'}`)
+      if (state) onState({ ...state, lastTestedAt: r.testedAt ? Date.parse(r.testedAt) : Date.now(), lastError: r.ok ? null : (r.detail ?? 'failed') })
+    } catch (e: any) {
+      setErr(e?.message ?? 'Test failed.')
+    }
+    setBusy(null)
+  }
+
+  const remove = async () => {
+    setErr(null)
+    setMsg(null)
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy('delete')
+    try {
+      await Api.deleteAgentConnector(apiUrl, token, orgId, agentId, JIRA_CONNECTOR_ID)
+      onState(null)
+      onDone()
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not disconnect.')
+      setBusy(null)
+    }
+  }
+
+  const lastTested = rel(state?.lastTestedAt ?? null)
+
+  return (
+    <Card style={s.form}>
+      <Field label="Site URL">
+        <TextInput
+          value={form.baseUrl}
+          onChangeText={(t) => setF('baseUrl', t)}
+          placeholder="https://your-team.atlassian.net"
+          placeholderTextColor={theme.textFaint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={s.input}
+        />
+      </Field>
+
+      <Field label="Email">
+        <TextInput
+          value={form.email}
+          onChangeText={(t) => setF('email', t)}
+          placeholder="you@example.com"
+          placeholderTextColor={theme.textFaint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          style={s.input}
+        />
+      </Field>
+
+      <Field label="API token · write-only">
+        <TextInput
+          value={secret}
+          onChangeText={setSecret}
+          placeholder={configured ? 'Leave blank to keep the stored token' : 'Atlassian API token'}
+          placeholderTextColor={theme.textFaint}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="off"
+          textContentType="none"
+          style={s.input}
+        />
+      </Field>
+      <Text style={s.fieldHint}>
+        Stored encrypted at agent scope as JIRA_API_TOKEN (with JIRA_BASE_URL / JIRA_EMAIL) and injected into this agent’s
+        runtime. The token is never displayed back — leave blank to keep the existing one.
       </Text>
 
       {err ? <Banner kind="error">{err}</Banner> : null}

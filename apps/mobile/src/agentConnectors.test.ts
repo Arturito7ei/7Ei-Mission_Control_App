@@ -26,12 +26,18 @@ import {
   CONNECTOR_GROUPS,
   AVAILABLE_CONNECTOR_IDS,
   MCP_CONNECTOR_ID,
+  GITHUB_CONNECTOR_ID,
+  JIRA_CONNECTOR_ID,
   isAvailableConnector,
   findDisplayConnector,
   isConfigured,
   parseArgs,
   validateMcpConfig,
   mcpConfigToForm,
+  validateGithubConfig,
+  githubConfigToForm,
+  validateJiraConfig,
+  jiraConfigToForm,
   type McpFormInput,
 } from './agentConnectors.ts'
 
@@ -41,6 +47,8 @@ import {
   AVAILABLE_CONNECTOR_IDS as WEB_AVAILABLE,
   MCP_CONNECTOR_ID as WEB_MCP_ID,
   validateMcpConfig as webValidateMcpConfig,
+  validateGithubConfig as webValidateGithubConfig,
+  validateJiraConfig as webValidateJiraConfig,
 } from '../../../web/lib/agentConnectors.ts'
 
 // ─── Cross-platform parity: the phone == the desk ─────────────────────────────
@@ -69,6 +77,26 @@ test('[CONN-3] validateMcpConfig agrees with the web across representative input
   }
 })
 
+test('[CONN-4b] validateGithubConfig agrees with the web across representative inputs', () => {
+  const cases = [{ username: '' }, { username: '  octocat  ' }, { username: 'x'.repeat(121) }]
+  for (const c of cases) {
+    assert.deepEqual(validateGithubConfig(c), webValidateGithubConfig(c), `github verdict drift for ${JSON.stringify(c)}`)
+  }
+})
+
+test('[CONN-4b] validateJiraConfig agrees with the web across representative inputs', () => {
+  const cases = [
+    { baseUrl: '', email: 'a@b.co' },
+    { baseUrl: 'not-a-url', email: 'a@b.co' },
+    { baseUrl: 'https://x.atlassian.net', email: '' },
+    { baseUrl: 'https://x.atlassian.net', email: 'not-an-email' },
+    { baseUrl: '  https://x.atlassian.net  ', email: '  me@x.co  ' },
+  ]
+  for (const c of cases) {
+    assert.deepEqual(validateJiraConfig(c), webValidateJiraConfig(c), `jira verdict drift for ${JSON.stringify(c)}`)
+  }
+})
+
 // ─── Grouping: the operator's four categories, in order, with their connectors ─
 
 test('[CONN-3] the accordion renders the operator’s four categories in order', () => {
@@ -85,14 +113,19 @@ test('[CONN-3] each category lists exactly the connectors the operator named, in
   assert.deepEqual(byTitle['Custom MCP servers'], ['Custom MCP Server'])
 })
 
-test('[CONN-3] only the custom MCP server is available in v1; everything else is disabled', () => {
-  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [MCP_CONNECTOR_ID])
+test('[CONN-4b] github, jira and the custom MCP server are available; the rest disabled', () => {
+  // CONN-4b enables the two CONN-4a token/basic connectors alongside the CONN-1 mcp
+  // pilot. Order follows the groups: IT/Project (github, jira) then Custom (mcp).
+  assert.deepEqual(AVAILABLE_CONNECTOR_IDS, [GITHUB_CONNECTOR_ID, JIRA_CONNECTOR_ID, MCP_CONNECTOR_ID])
   assert.equal(isAvailableConnector('mcp'), true)
-  assert.equal(isAvailableConnector('github'), false)
+  assert.equal(isAvailableConnector('github'), true)
+  assert.equal(isAvailableConnector('jira'), true)
   assert.equal(isAvailableConnector('telegram'), false)
+  assert.equal(findDisplayConnector('github')?.availability, 'available')
+  assert.equal(findDisplayConnector('jira')?.availability, 'available')
   // Signal is the only one flagged out-of-scope (vs merely coming-soon).
   assert.equal(findDisplayConnector('signal')?.availability, 'out_of_scope')
-  assert.equal(findDisplayConnector('github')?.availability, 'coming_soon')
+  assert.equal(findDisplayConnector('telegram')?.availability, 'coming_soon')
 })
 
 test('[CONN-3] every non-available connector carries an honest note pointing at its stage', () => {
@@ -178,4 +211,31 @@ test('[CONN-3] validateMcpConfig: arg count and length limits mirror the backend
 test('[CONN-3] parseArgs: one per line, trimmed, blanks dropped', () => {
   assert.deepEqual(parseArgs('  a \n\n b\nc  '), ['a', 'b', 'c'])
   assert.deepEqual(parseArgs(''), [])
+})
+
+// ─── GitHub + Jira config validation — mirror the backend zod schemas ─────────
+
+test('[CONN-4b] validateGithubConfig: username optional, trimmed, capped at 120', () => {
+  assert.deepEqual(validateGithubConfig({ username: '' }), { ok: true, config: {} })
+  assert.deepEqual(validateGithubConfig({ username: '  octocat  ' }), { ok: true, config: { username: 'octocat' } })
+  assert.equal(validateGithubConfig({ username: 'x'.repeat(121) }).ok, false)
+})
+
+test('[CONN-4b] validateJiraConfig: baseUrl valid URL, email required + valid, length caps', () => {
+  assert.equal(validateJiraConfig({ baseUrl: '', email: 'a@b.co' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'not-a-url', email: 'a@b.co' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.atlassian.net', email: 'not-an-email' }).ok, false)
+  assert.equal(validateJiraConfig({ baseUrl: 'https://x.atlassian.net', email: 'a'.repeat(320) + '@b.co' }).ok, false)
+  const r = validateJiraConfig({ baseUrl: '  https://x.atlassian.net  ', email: '  me@x.co  ' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.ok && r.config, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
+})
+
+test('[CONN-4b] github/jira config-to-form never surfaces a credential leaked into config', () => {
+  const gh = githubConfigToForm({ username: 'octocat', GITHUB_TOKEN: 'ghp_SECRET' } as any)
+  assert.deepEqual(gh, { username: 'octocat' })
+  assert.equal(JSON.stringify(gh).includes('ghp_SECRET'), false)
+  const ji = jiraConfigToForm({ baseUrl: 'https://x.atlassian.net', email: 'me@x.co', JIRA_API_TOKEN: 'SECRET' } as any)
+  assert.deepEqual(ji, { baseUrl: 'https://x.atlassian.net', email: 'me@x.co' })
+  assert.equal(JSON.stringify(ji).includes('SECRET'), false)
 })
