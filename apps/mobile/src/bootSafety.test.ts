@@ -23,7 +23,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-const SRC = new URL('.', import.meta.url).pathname
+// The scan roots at the PACKAGE, not at src/. App.tsx and index.ts live outside
+// src/ and are the boot path's first two frames — index.ts registers App.tsx,
+// which imports navigation.tsx. Rooting at src/ left the two files a native
+// value-import is *most* likely to be added to unscanned, so the guard passed on
+// a mutation planted in App.tsx. Anything not source (node_modules, dist, the
+// Expo build output) is skipped by name.
+const PKG = new URL('..', import.meta.url).pathname
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.expo', 'assets', 'android', 'ios'])
 
 /**
  * Packages that resolve a native module at import. Importing any of these for
@@ -45,6 +52,7 @@ const NATIVE_PACKAGES = [
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
+    if (SKIP_DIRS.has(entry)) return []
     const full = join(dir, entry)
     if (statSync(full).isDirectory()) return sourceFiles(full)
     if (!/\.tsx?$/.test(entry) || /\.test\.tsx?$/.test(entry)) return []
@@ -52,7 +60,7 @@ function sourceFiles(dir: string): string[] {
   })
 }
 
-const FILES = sourceFiles(SRC)
+const FILES = sourceFiles(PKG)
 
 test('[MOB-7a] the scan actually sees the source tree', () => {
   // A guard that silently matches nothing is worse than no guard: it reads as a
@@ -60,6 +68,11 @@ test('[MOB-7a] the scan actually sees the source tree', () => {
   assert.ok(FILES.length > 10, `expected a populated src tree, found ${FILES.length} files`)
   assert.ok(FILES.some((f) => f.endsWith('CommandCenterScreen.tsx')))
   assert.ok(FILES.some((f) => f.endsWith('Reactor.tsx')))
+  // The boot path's entry frames, which live OUTSIDE src/. These two assertions
+  // are the ones that keep the scan rooted at the package: re-root it at src/ and
+  // they fail rather than letting the blind spot return quietly.
+  assert.ok(FILES.some((f) => f.endsWith('App.tsx')), 'App.tsx is not being scanned')
+  assert.ok(FILES.some((f) => f.endsWith('index.ts')), 'index.ts is not being scanned')
 })
 
 test('[MOB-7a] no native package is imported for its VALUE anywhere in src', () => {
@@ -74,7 +87,7 @@ test('[MOB-7a] no native package is imported for its VALUE anywhere in src', () 
       const re = new RegExp(`^\\s*import\\s+(?!type\\s)[^\\n]*?['"]${pkg}['"]`, 'm')
       const bare = new RegExp(`^\\s*import\\s+['"]${pkg}['"]`, 'm')
       if (re.test(src) || bare.test(src)) {
-        offenders.push(`${file.replace(SRC, '')} imports "${pkg}" for its value`)
+        offenders.push(`${file.replace(PKG, '')} imports "${pkg}" for its value`)
       }
     }
   }
@@ -101,7 +114,7 @@ test('[MOB-7a] every native package in use is reached through lazyNativeModule',
       assert.equal(
         requires.length,
         wrapped.length,
-        `${file.replace(SRC, '')} requires "${pkg}" outside lazyNativeModule — a missing module would throw at the tap instead of degrading`,
+        `${file.replace(PKG, '')} requires "${pkg}" outside lazyNativeModule — a missing module would throw at the tap instead of degrading`,
       )
     }
   }
