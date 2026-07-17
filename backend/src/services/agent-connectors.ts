@@ -25,17 +25,43 @@ export interface AgentConnectorMeta {
   docsUrl: string
   /** Whether a POST/PUT may carry an encrypted credential for this connector. */
   hasSecret: boolean
+  /** Whether the credential is REQUIRED to configure (unless inheriting the org
+   *  connection). MCP's secret is optional; a GitHub/Jira connector with no
+   *  credential is not real, so the write is rejected. */
+  secretRequired?: boolean
 }
 
 /**
- * The agent-connector catalog. CONN-1 ships ONE config-only connector end-to-end —
- * a custom MCP server — because it exercises the whole path (NON-secret config write,
- * agent-scoped secret write, masked read, test, delete) WITHOUT needing OAuth.
- * GitHub (PAT) / Jira (basic) / Telegram (token) land in later stages (CONN-4/CONN-6);
- * they are intentionally NOT in the catalog yet so no half-built connector is
- * reachable. Validate every inbound `connectorId` against this list.
+ * The agent-connector catalog. CONN-1 shipped ONE config-only connector — a custom
+ * MCP server — because it exercised the whole path (NON-secret config write,
+ * agent-scoped secret write, masked read, test, delete) WITHOUT OAuth. CONN-4a adds
+ * the two token/basic connectors that become REAL immediately via the existing
+ * agent-secrets env-injection path (see CONNECTOR_ENV_KEYS below): GitHub (PAT) and
+ * Jira (basic). Google (OAuth) and the comms connectors land in later stages and are
+ * intentionally NOT in the catalog yet, so no half-built connector is reachable.
+ * Validate every inbound `connectorId` against this list.
  */
 export const AGENT_CONNECTORS: AgentConnectorMeta[] = [
+  {
+    id: 'github',
+    name: 'GitHub',
+    category: 'Dev',
+    authType: 'token',
+    icon: '🐙',
+    docsUrl: 'https://github.com/settings/tokens',
+    hasSecret: true, // the PAT — stored agent-scoped under GITHUB_TOKEN
+    secretRequired: true,
+  },
+  {
+    id: 'jira',
+    name: 'Atlassian Jira',
+    category: 'Project',
+    authType: 'basic',
+    icon: '🔷',
+    docsUrl: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+    hasSecret: true, // the API token — stored agent-scoped under JIRA_API_TOKEN
+    secretRequired: true,
+  },
   {
     id: 'mcp',
     name: 'Custom MCP Server',
@@ -69,7 +95,26 @@ const McpConfigSchema = z.object({
   .refine(c => c.transport !== 'http' || !!c.url, { message: 'http transport requires a url', path: ['url'] })
   .refine(c => c.transport !== 'stdio' || !!c.command, { message: 'stdio transport requires a command', path: ['command'] })
 
+// GitHub (PAT): the only NON-secret config is an optional display label for the
+// account/username. The PAT itself travels in the request body's `secret` field and
+// is encrypted into an agent-scoped `GITHUB_TOKEN` secret — never into `config`.
+const GithubConfigSchema = z.object({
+  username: z.string().trim().min(1).max(120).optional(),
+}).strict()
+
+// Jira (basic auth = email:apiToken): `baseUrl` (the Atlassian site, a validated
+// URL) and `email` are NON-secret and returnable; the API token travels in `secret`
+// and is encrypted into an agent-scoped `JIRA_API_TOKEN` secret. `baseUrl` + `email`
+// are ALSO mirrored into agent-scoped secrets (JIRA_BASE_URL / JIRA_EMAIL) so the
+// runtime receives all three as env — see connectorSecretEntries.
+const JiraConfigSchema = z.object({
+  baseUrl: z.string().trim().url().max(2048),
+  email: z.string().trim().email().max(320),
+}).strict()
+
 const CONFIG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  github: GithubConfigSchema,
+  jira: JiraConfigSchema,
   mcp: McpConfigSchema,
 }
 
@@ -86,9 +131,107 @@ export function validateConnectorConfig(connectorId: string, raw: unknown): Vali
 
 /** The `secrets` key for an agent-scoped connector credential. Deterministic so a
  *  disconnect can find and delete exactly the row a connect wrote. Scope + scopeId
- *  (agent) already isolate it per agent, so the key need not embed the agent id. */
+ *  (agent) already isolate it per agent, so the key need not embed the agent id.
+ *  Used for connectors whose credential has no established runtime env-var name
+ *  (custom MCP); GitHub/Jira use the runtime-expected names via CONNECTOR_ENV_KEYS. */
 export function connectorSecretKey(connectorId: string): string {
   return `CONNECTOR_${connectorId.toUpperCase()}_SECRET`
+}
+
+// ─── The execution contract: env-var KEYS the runtime injects ─────────────────
+//
+// THIS IS THE WIRE THAT MAKES A CONNECTOR REAL. `GET /api/agent/secrets` returns
+// `resolveSecretsForAgent(...)` — a bag keyed by each `secrets` row's `key` — and the
+// adapters inject that bag VERBATIM as env (`os.environ[str(k)] = str(v)` in
+// cc_adapter.py / mc_adapter.py). So storing an agent-scoped secret under key
+// `GITHUB_TOKEN` means the agent's runtime receives a `GITHUB_TOKEN` env var, which
+// its own git/gh tooling reads (the backend's own skills.ts already reads
+// `process.env.GITHUB_TOKEN`). The keys below are therefore the names the runtime
+// expects, not arbitrary storage keys.
+//
+//   github → GITHUB_TOKEN                            (matches the org connector's secretKey
+//                                                     + backend skills.ts consumer)
+//   jira   → JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN
+//            (conventional basic-auth env; the backend has NO in-repo Jira env
+//             consumer — the org Jira path uses a JIRA_CONNECTION JSON blob — so
+//             these are the standard names, documented for operator confirmation in
+//             docs/DESIGN-per-agent-connectors.md §CONN-4a.)
+//   mcp    → CONNECTOR_MCP_SECRET                     (no established runtime name)
+//
+// Jira's baseUrl/email are non-secret yet still written into the (encrypted) secret
+// store: env injection is the ONLY channel to the runtime — `config` is not injected —
+// so all three MUST live here for Jira to actually work. `config` still holds
+// baseUrl/email too, as the returnable display source of truth.
+export const CONNECTOR_ENV_KEYS: Record<string, readonly string[]> = {
+  github: ['GITHUB_TOKEN'],
+  jira: ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'],
+  mcp: [connectorSecretKey('mcp')],
+}
+
+/** The agent-scoped env keys a connector writes (for purge-on-disconnect). */
+export function connectorEnvKeys(connectorId: string): readonly string[] {
+  return CONNECTOR_ENV_KEYS[connectorId] ?? []
+}
+
+/** The single credential key recorded as the row's `secretRef` (the "has a
+ *  credential" pointer). For multi-key connectors it is the sensitive one. */
+export function primarySecretKey(connectorId: string): string | null {
+  if (connectorId === 'github') return 'GITHUB_TOKEN'
+  if (connectorId === 'jira') return 'JIRA_API_TOKEN'
+  if (connectorId === 'mcp') return connectorSecretKey('mcp')
+  return null
+}
+
+/**
+ * The `{ envKey: value }` entries to write into the agent-scoped secret store for a
+ * configure/update. Pure. NON-secret entries (Jira baseUrl/email) always derive from
+ * the validated config; the sensitive credential entry is included only when a new
+ * `secret` is supplied (so a re-configure that omits the token keeps the stored one).
+ */
+export function connectorSecretEntries(
+  connectorId: string,
+  config: Record<string, unknown>,
+  secret: string | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  const cred = secret?.trim() || undefined
+  if (connectorId === 'github') {
+    if (cred) out.GITHUB_TOKEN = cred
+  } else if (connectorId === 'jira') {
+    if (typeof config.baseUrl === 'string') out.JIRA_BASE_URL = config.baseUrl
+    if (typeof config.email === 'string') out.JIRA_EMAIL = config.email
+    if (cred) out.JIRA_API_TOKEN = cred
+  } else if (connectorId === 'mcp') {
+    if (cred) out[connectorSecretKey('mcp')] = cred
+  }
+  return out
+}
+
+/** A masked, credential-free display label derived from the NON-secret config. */
+export function connectorAccountLabel(
+  connectorId: string,
+  config: Record<string, unknown>,
+): string | null {
+  if (connectorId === 'github') return typeof config.username === 'string' ? config.username : null
+  if (connectorId === 'jira') return typeof config.email === 'string' ? config.email : null
+  if (connectorId === 'mcp') return typeof config.name === 'string' ? config.name : null
+  return null
+}
+
+/**
+ * SSRF guard for the live `test` check: is this URL an Atlassian Cloud host? The
+ * backend only ever dials KNOWN provider hosts (api.github.com is hardcoded;
+ * Jira must be `*.atlassian.net`), never an arbitrary user-supplied URL. A
+ * self-hosted Jira (any other host) is allowed as config but its live test is
+ * skipped rather than dialed. Pure.
+ */
+export function isAtlassianHost(rawUrl: string): boolean {
+  try {
+    const h = new URL(rawUrl).hostname.toLowerCase()
+    return h === 'atlassian.net' || h.endsWith('.atlassian.net')
+  } catch {
+    return false
+  }
 }
 
 // ─── The client-safe projection (twin of toPublicOrg) ────────────────────────
