@@ -13,6 +13,7 @@ import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRou
 import { knowledgeRoutes } from './routes/knowledge'
 import { commsRoutes, commsWebhookRoutes } from './routes/comms'
 import { connectorRoutes } from './routes/connectors'
+import { agentConnectorRoutes } from './routes/agent-connectors'
 import { notificationRoutes } from './routes/notifications'
 import { jiraRoutes } from './routes/jira'
 import { jiraWebhookRoutes, jiraEventRoutes } from './routes/jira-webhook'
@@ -189,6 +190,7 @@ async function start() {
     await secured.register(scheduledRoutes)
     await secured.register(credentialRoutes)
     await secured.register(connectorRoutes)
+    await secured.register(agentConnectorRoutes)  // Epic CONN — per-agent connectors (owner-gated)
     // MCA-85 auth hardening — these route groups are org/agent-scoped (they read
     // or mutate tenant data, or act on the org's behalf) and were previously
     // registered public. They now require a Clerk JWT like the rest of the app.
