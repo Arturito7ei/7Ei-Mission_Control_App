@@ -8,7 +8,40 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { mapReasoningEffort } from './model-profile'
 
-export interface LLMMessage { role: 'user' | 'assistant'; content: string }
+// ─── Multimodal content ──────────────────────────────────────────────────────
+// MOB-7b. A message's content is EITHER a plain string (every caller before this
+// story, and still the overwhelming majority) or an ordered list of parts. The
+// union is what keeps this additive: the string branch below builds a request
+// byte-identical to the one it built before, so no existing agent, eval or
+// provider call changes shape. Only a turn that actually carries an image takes
+// the parts branch.
+//
+// The neutral shape is deliberately NOT any provider's wire format — each of the
+// three transports below maps it to its own (Anthropic content blocks · OpenAI
+// image_url data-URIs · Gemini inline_data). Picking one provider's format as the
+// "native" one would force the other two to reverse-engineer it.
+//
+// `data` is RAW base64 — no `data:` URI prefix. The prefix is a transport detail
+// that only OpenAI wants, so it is added there rather than carried around and
+// stripped twice.
+export interface LLMTextPart { type: 'text'; text: string }
+export interface LLMImagePart { type: 'image'; mediaType: string; data: string }
+export type LLMContentPart = LLMTextPart | LLMImagePart
+
+export interface LLMMessage { role: 'user' | 'assistant'; content: string | LLMContentPart[] }
+
+/** The text of a message, whatever shape its content is in — for token
+ *  estimation and logging, which must never touch image bytes. */
+export function messageText(m: LLMMessage): string {
+  if (typeof m.content === 'string') return m.content
+  return m.content.filter((p): p is LLMTextPart => p.type === 'text').map(p => p.text).join('\n')
+}
+
+/** Does any message in this turn carry an image? Drives the vision-hop pruning
+ *  in converse-images.ts. */
+export function hasImageContent(messages: LLMMessage[]): boolean {
+  return messages.some(m => typeof m.content !== 'string' && m.content.some(p => p.type === 'image'))
+}
 export interface LLMStreamOpts {
   provider: string
   model: string
@@ -126,6 +159,46 @@ export const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
   ollama:   'http://localhost:11434/v1',
 }
 
+// ─── Per-provider content mapping (MOB-7b) ───────────────────────────────────
+// Each mapper is a pure function and each SHORT-CIRCUITS on a string, returning
+// it untouched. That short-circuit is the compatibility guarantee: a text-only
+// turn produces the exact object these transports built before this story.
+
+/** Anthropic content blocks. The SDK takes these natively, so this is a
+ *  near-1:1 rename (`mediaType` → `media_type`) into its `source` envelope. */
+export function toAnthropicContent(content: string | LLMContentPart[]): any {
+  if (typeof content === 'string') return content
+  return content.map(p =>
+    p.type === 'text'
+      ? { type: 'text', text: p.text }
+      : { type: 'image', source: { type: 'base64', media_type: p.mediaType, data: p.data } },
+  )
+}
+
+/** OpenAI-compatible content parts. Images ride as a `data:` URI in `image_url`
+ *  — the same field a hosted URL would use, which is why the prefix is built
+ *  here and nowhere else. */
+export function toOpenAIContent(content: string | LLMContentPart[]): any {
+  if (typeof content === 'string') return content
+  return content.map(p =>
+    p.type === 'text'
+      ? { type: 'text', text: p.text }
+      : { type: 'image_url', image_url: { url: `data:${p.mediaType};base64,${p.data}` } },
+  )
+}
+
+/** Gemini `parts`. Unlike the other two this has no string form at all — a text
+ *  message is already `[{ text }]` today, so the string branch reproduces
+ *  exactly what the old `parts: [{ text: m.content }]` built. */
+export function toGeminiParts(content: string | LLMContentPart[]): any[] {
+  if (typeof content === 'string') return [{ text: content }]
+  return content.map(p =>
+    p.type === 'text'
+      ? { text: p.text }
+      : { inline_data: { mime_type: p.mediaType, data: p.data } },
+  )
+}
+
 // ─ Anthropic stream ────────────────────────────────────────────────────
 async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
   const client = new Anthropic({ apiKey: opts.orgApiKey ?? process.env.ANTHROPIC_API_KEY })
@@ -139,7 +212,7 @@ async function streamAnthropic(opts: LLMStreamOpts): Promise<LLMResult> {
     model: opts.model,
     max_tokens: maxTokens,
     system: opts.system,
-    messages: opts.messages,
+    messages: opts.messages.map(m => ({ role: m.role, content: toAnthropicContent(m.content) })),
     ...(budget ? { thinking: { type: 'enabled', budget_tokens: budget } } : {}),
   } as any)
   let output = ''
@@ -188,7 +261,7 @@ async function streamOpenAICompatible(opts: LLMStreamOpts, provider: string): Pr
     stream_options: { include_usage: true },
     messages: [
       { role: 'system', content: opts.system },
-      ...opts.messages,
+      ...opts.messages.map(m => ({ role: m.role, content: toOpenAIContent(m.content) })),
     ],
     ...(reason.openaiReasoningEffort ? { reasoning_effort: reason.openaiReasoningEffort } : {}),
   }
@@ -236,7 +309,7 @@ async function streamGemini(opts: LLMStreamOpts): Promise<LLMResult> {
 
   const contents = opts.messages.map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
+    parts: toGeminiParts(m.content),
   }))
 
   // P2 reasoning effort → Gemini thinkingConfig.thinkingBudget (2.5-class models;

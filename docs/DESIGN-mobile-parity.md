@@ -646,6 +646,59 @@ Uses the **SDK 54** API — `new File(uri).delete()`, guarded by `exists` — ra
 
 ---
 
+### 6.5 MOB-7b — photo attach: Arturita can actually SEE (as built)
+
+**The story:** the operator attaches a photo (library or camera) to a Command Center turn and Arturita *looks at it*. Built on the phone **and** the web in one PR, per the standing parity rule.
+
+**The investigation that shaped it — the default chain would have dropped the photo.** The obvious build (accept an image, put it in the turn) would have shipped a feature that silently fails on the operator's own machine. The reason is `DEFAULT_LLM_CHAIN` (`services/arturita-pipeline.ts`):
+
+| # | Hop | Sees images? |
+|---|---|---|
+| 1 | `ollama/llama3.2:3b` (local, keyless → **always kept in the chain**) | ❌ |
+| 2 | `ollama/qwen3:8b` | ❌ |
+| 3 | `groq/llama-3.3-70b-versatile` | ❌ |
+| 4 | `google/gemini-2.5-flash` | ✅ (needs a key) |
+| — | *guaranteed* `anthropic/claude-sonnet-4-20250514` (the agent's own model) | ✅ |
+
+**On Fly it works by accident:** the Ollama hops fail against a non-existent `localhost:11434`, the breaker trips, and the turn lands on Claude. **On a self-hosted backend with Ollama running, hop 1 answers** — and a text-only model handed an image either errors or, worse, *confidently answers about nothing*. So the answer to "does the deployed default model support vision?" is **yes** — but only because the hops in front of it happen to be broken in production, which is not a property to build on.
+
+**Hence `visionChain`** (`services/converse-images.ts`): an image turn is pruned to hops that can actually see, and if none remain the operator is **told** (`NO_VISION_MESSAGE`, naming the two fixes) rather than answered at. `supportsVision` is an **allowlist and fails closed** — the failure modes aren't symmetric. Guess "blind" about a sighted model and the operator gets a clear message and can reorder the chain; guess "sighted" about a blind one and Arturita invents an answer about an image she never received, which erodes trust in every other answer she gives.
+
+**Why a photo is NOT a document** (and shares none of CC-ATT's pipeline): the document path *extracts text* and fences it into the turn. There is nothing to extract from pixels — they **are** the payload. So a photo carries as a real content block (`LLMImagePart`) and the model's vision reads it. One "attachment" concept covering both would mean a field that sometimes means text and sometimes means bytes, and a fence that is meaningless for one of them.
+
+**Contract:** `POST …/arturita/converse` gains an optional `image: { name, mediaType, data }` — **raw base64, no `data:` prefix**. No extract round-trip; the photo rides the turn itself. Per-route `bodyLimit` of 8 MB (Fastify's default is **1 MB**, which a base64 photo blows past with a bare 413); the real cap is `MAX_IMAGE_BYTES`, enforced with a readable message.
+
+**Why `3.75 MB` and not a round number:** base64 inflates by 4/3 and Anthropic caps an *encoded* image at 5 MB. 3.75 × 4/3 = exactly 5. Rounding it up to a friendlier 5 MB would make every large photo fail **at the provider**, with an error the operator can't act on. A test pins the arithmetic.
+
+**HEIC — the iPhone default — is refused by name, deliberately.** No major vision API accepts it, and transcoding it server-side would put an image codec in the request path for a case that need not exist: `expo-image-picker` at `quality: 0.7` **re-encodes to JPEG on the way out**, so the phone never produces HEIC here. The same re-encode drops a 12 MP shot from ~3 MB to a few hundred KB. A HEIC arriving from elsewhere (dragged out of Photos on a Mac) gets a rejection naming the fix, not "unsupported".
+
+**Never persisted, never logged** — and both are *tested*, not asserted in prose: the route test greps the real captured Fastify log stream for the image's base64, and checks no knowledge item or task carries it. The image lives for the request and no longer; it never enters `history` (which would re-bill it every turn), and a **delegated** photo turn says so plainly, exactly as the document path does.
+
+**Prompt injection:** no nonce fence, on purpose — a fence is a *text* construct and the payload is pixels; there is no string an image could contain that closes a delimiter. A photo whose *pixels* depict instructions is the real (exotic) vector, so the text part carries a standing read-don't-obey line. Blast radius is CC-ATT's and bounded the same way: routing reads the **operator's typed message only**, and the image never enters history.
+
+**A photo turn is never deferred.** `deferAnswer` hands the prompt back for the browser to stream from local Ollama — text-only by default, i.e. precisely the silent drop this story exists to prevent. Both clients stop asking, and the backend enforces it regardless. Deferring is a latency optimisation; being right outranks it.
+
+| Surface | What shipped |
+|---|---|
+| **Backend** | `services/converse-images.ts` (pure: gate · `supportsVision` · `visionChain` · `buildImageContent`). `llm-router.ts` widened: `LLMMessage.content` is now `string \| LLMContentPart[]`, with a mapper per provider (Anthropic `source` blocks · OpenAI `image_url` data-URI · Gemini `inline_data`). **Every mapper short-circuits on a string**, so a text turn builds the request it always did. |
+| **Mobile** | 🖼 beside 📎 → an action sheet offering **Photo Library** and **Take a Photo**, each with its own permission ask. Permission-denied is a *normal answer*: it names Settings when `canAskAgain` is false. Removable chip with a **real thumbnail** (the bytes are already in memory — the operator should see *which* photo is about to go). `expo-image-picker` ~17.0.11 **from `bundledNativeModules.json`**, loaded via `lazyNativeModule` + `import type`, and added to `bootSafety.test.ts`'s `NATIVE_PACKAGES`. |
+| **Web** | 🖼 beside 📎, its own hidden `<input accept>`, `FileReader` → base64, same thumbnail chip, same limits. |
+
+**Parity tripwires** (the rule: a hand-copied constant gets a test, or it drifts): `attach.test.ts` now also pins `IMAGE_EXTS`, `IMAGE_MAX_BYTES`, `rejectImage` wording, the photo-aware `canSendTurn`, and the converse `image` field against `web/app/dashboard/assistant.logic.ts`. *Proven to bite:* changing the mobile limit to 5 MB fails two tests.
+
+**One trap recorded:** a no-vision reply is `degraded: true` **and** `provider: 'text_only'` — the exact shape both clients already render as *"No language model was reachable"*. That would be a **lie**: a model answered, it just can't see, and it would send the operator to fix the wrong thing. Hence the `code: 'no_vision_model'` discriminator, which both clients check *before* the generic degraded branch.
+
+**Verified:** backend **1405/1405** (+35) · evals **11/11** · web **222/222** + `npm run build` · mobile **221/221** · all three typechecks clean · `expo export` bundles. **SDK 54 untouched, react/react-dom still exactly 19.1.0** (overrides untouched, `reactVersion.test.ts` green). *Mutation-proven, not assumed:* dropping the image from the turn, removing the vision prune, and a module-scope value-import of `expo-image-picker` each fail the tests written for them.
+
+**Deferred (deliberately):**
+- **One photo per turn.** Both clients are single-slot, mirroring the document path. The backend contract takes one `image`; a list is a shape change on both clients plus a token-cost story.
+- **Vision through a `custom` provider.** Its model names are arbitrary, so `supportsVision` has nothing to match on and fails closed. An operator with a vision-capable custom endpoint can't use it — honest, and fixable later with an explicit per-entry `vision: true` flag on the chain entry.
+- **Server-side HEIC transcode.** Covered above: the picker's re-encode makes it unnecessary from the phone, and a codec in the request path is a real cost for an edge that mostly doesn't exist.
+- **A photo on a delegated task.** Same boundary as the document attach — the reply says the photo stays with the conversation. Persisting it onto a task is its own story, on both clients.
+- **Voice + photo together** is unaffected; the two paths don't interact.
+
+---
+
 ## 7. Expo Go now vs operator-gated
 
 **Doable in Expo Go today — no Expo/EAS account, no operator action:** **every MOB-6 story (6a–6k)** and **MOB-5b, 5c, 5d** (5c gated on the *backend* story 5a, not on a dev build).

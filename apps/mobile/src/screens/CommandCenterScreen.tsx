@@ -32,6 +32,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -47,10 +49,14 @@ import {
 import type * as AvNS from 'expo-av'
 import type * as DocumentPickerNS from 'expo-document-picker'
 import type * as FileSystemNS from 'expo-file-system'
+import type * as ImagePickerNS from 'expo-image-picker'
 import type * as SpeechNS from 'expo-speech'
 import { Api } from '../api'
 import { useAuth } from '../auth'
-import { attachmentChipLabel, canSendTurn, rejectAttachment, toConverseAttachment, type AttachedDoc } from '../attach'
+import {
+  attachmentChipLabel, canSendTurn, imageChipLabel, rejectAttachment, rejectImage,
+  toConverseAttachment, toConverseImage, type AttachedDoc, type AttachedImage,
+} from '../attach'
 import { lazyNativeModule } from '../nativeModule'
 import { provenanceChip, reactorChips, resolveVoiceState } from '../reactor'
 import { font, radius, space, theme } from '../theme'
@@ -76,6 +82,10 @@ import Reactor from './Reactor'
 const getDocumentPicker = lazyNativeModule(
   'expo-document-picker',
   () => require('expo-document-picker') as typeof DocumentPickerNS,
+)
+const getImagePicker = lazyNativeModule(
+  'expo-image-picker',
+  () => require('expo-image-picker') as typeof ImagePickerNS,
 )
 const getAv = lazyNativeModule('expo-av', () => require('expo-av') as typeof AvNS)
 const getSpeech = lazyNativeModule('expo-speech', () => require('expo-speech') as typeof SpeechNS)
@@ -129,6 +139,12 @@ export default function CommandCenterScreen() {
   // parse over cellular.
   const [attachment, setAttachment] = useState<AttachedDoc | null>(null)
   const [attaching, setAttaching] = useState(false)
+  // MOB-7b — the photo attached to the NEXT turn, mirroring the web. Separate
+  // from `attachment`: a photo has no text to extract, so it never touches
+  // /attachments/extract — the picker hands back base64 and it rides the
+  // /converse call itself, where the model's vision reads it.
+  const [image, setImage] = useState<AttachedImage | null>(null)
+  const [reading, setReading] = useState(false)
   const [notice, setNotice] = useState<VoiceNotice | null>(null)
   const scroller = useRef<ScrollView>(null)
 
@@ -211,6 +227,119 @@ export default function CommandCenterScreen() {
   // filter would grey out files the office can read perfectly well. The type GATE
   // is unchanged and runs on the picked file, so an unreadable one is refused with
   // the same wording the web uses, just a moment later.
+  // ── MOB-7b: attach a photo (library or camera) ──────────────────────────────
+  // Both sources funnel through here because everything after "which picker"
+  // is identical: same permission shape, same cancel, same gate, same state. The
+  // launch fn is the only difference, so it is the only thing that varies.
+  //
+  // `base64: true` + `quality: 0.7` is doing two jobs at once, and the first is
+  // the important one: an iPhone photo is natively HEIC, which no vision API
+  // accepts. Asking the picker for a quality < 1 makes it re-encode to JPEG on
+  // the way out, so the HEIC problem is solved before it exists — no transcoding
+  // in our code, no image codec on the backend. The same re-encode drops a 12 MP
+  // shot from ~3 MB to a few hundred KB, comfortably under IMAGE_MAX_BYTES.
+  const attachPhoto = useCallback(
+    async (
+      source: 'library' | 'camera',
+      launch: (P: typeof ImagePickerNS) => Promise<ImagePickerNS.ImagePickerResult>,
+      requestPermission: (P: typeof ImagePickerNS) => Promise<{ granted: boolean; canAskAgain?: boolean }>,
+    ) => {
+      setError(null)
+      setNotice(null)
+      const ImagePicker = getImagePicker()
+      if (!ImagePicker) {
+        setError("This app build can't open the photo picker. You can still send a message.")
+        return
+      }
+
+      // Permission first. A denial is a normal answer, not an error — say what to
+      // do about it rather than leaving the operator tapping a dead button.
+      let perm: { granted: boolean; canAskAgain?: boolean }
+      try {
+        perm = await requestPermission(ImagePicker)
+      } catch {
+        setError(`Couldn't ask for ${source === 'camera' ? 'camera' : 'photo'} permission.`)
+        return
+      }
+      if (!perm.granted) {
+        setNotice({
+          tone: 'warn',
+          text: perm.canAskAgain === false
+            ? `7Ei doesn't have ${source === 'camera' ? 'camera' : 'photo library'} access. Enable it in Settings → 7Ei Mission Control, then try again.`
+            : `I need ${source === 'camera' ? 'camera' : 'photo library'} access to attach a photo.`,
+        })
+        return
+      }
+
+      let picked: ImagePickerNS.ImagePickerResult
+      try {
+        picked = await launch(ImagePicker)
+      } catch {
+        setError(`Couldn't open the ${source === 'camera' ? 'camera' : 'photo library'}.`)
+        return
+      }
+      if (picked.canceled) return
+      const asset = picked.assets?.[0]
+      if (!asset) return
+
+      // The picker names a camera shot after its cache file; give it something the
+      // operator would recognise in the chip and the transcript.
+      const name = asset.fileName ?? (source === 'camera' ? 'photo.jpg' : 'image.jpg')
+      const mediaType = asset.mimeType ?? 'image/jpeg'
+      const local = rejectImage({ name, size: asset.fileSize ?? undefined })
+      if (local) {
+        setNotice({ tone: 'warn', text: local })
+        return
+      }
+      if (!asset.base64) {
+        setError("Couldn't read that photo.")
+        return
+      }
+      // The gate above runs on the size the picker REPORTS, which iOS often
+      // omits. base64 is the only length we always have, so re-check the real
+      // payload — otherwise an oversized photo sails past and dies at the server.
+      const bytes = Math.floor((asset.base64.length * 3) / 4)
+      const tooBig = rejectImage({ name, size: bytes })
+      if (tooBig) {
+        setNotice({ tone: 'warn', text: tooBig })
+        return
+      }
+
+      setReading(false)
+      setImage({ name, size: bytes, mediaType, data: asset.base64 })
+    },
+    [],
+  )
+
+  const pickFromLibrary = useCallback(
+    () => attachPhoto(
+      'library',
+      (P) => P.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, base64: true, allowsMultipleSelection: false }),
+      (P) => P.requestMediaLibraryPermissionsAsync(),
+    ),
+    [attachPhoto],
+  )
+
+  const takePhoto = useCallback(
+    () => attachPhoto(
+      'camera',
+      (P) => P.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7, base64: true }),
+      (P) => P.requestCameraPermissionsAsync(),
+    ),
+    [attachPhoto],
+  )
+
+  /** The 🖼 button offers both sources — one control, not two, so the composer
+   *  doesn't grow a button per source. Cancel is an explicit option because an
+   *  iOS action sheet's backdrop tap is not obvious to everyone. */
+  const offerPhotoSources = useCallback(() => {
+    Alert.alert('Attach a photo', 'Arturita can see the photo you send.', [
+      { text: 'Photo Library', onPress: () => { void pickFromLibrary() } },
+      { text: 'Take a Photo', onPress: () => { void takePhoto() } },
+      { text: 'Cancel', style: 'cancel' },
+    ])
+  }, [pickFromLibrary, takePhoto])
+
   const pickAttachment = useCallback(async () => {
     setError(null)
     setNotice(null)
@@ -286,7 +415,7 @@ export default function CommandCenterScreen() {
     // applies, and the same one the backend enforces. This runs BEFORE the token
     // check so an empty Send stays a silent no-op instead of raising an error
     // about a connection the operator wasn't using yet.
-    if (!canSendTurn({ typed: text, attachment, busy: busy || attaching })) return
+    if (!canSendTurn({ typed: text, attachment, image, busy: busy || attaching || reading })) return
     const token = await getToken()
     // Same reason as pickAttachment: a silent return here is a Send that visibly
     // does nothing.
@@ -299,16 +428,24 @@ export default function CommandCenterScreen() {
     setInput('')
     setShowConvo(true) // the web opens the transcript on the first turn
     const sent = attachment
+    const sentImage = image
     setAttachment(null) // the attachment rides THIS turn only
+    setImage(null)      // …and so does the photo
     const history = messages.map((m) => ({ role: m.role, content: m.content }))
-    // The bubble shows the attachment the way the web does: the operator's words
-    // plus a 📎 line, so the thread records what the turn actually carried.
-    const bubble = sent ? [text, `📎 ${attachmentChipLabel(sent)}`].filter(Boolean).join('\n\n') : text
+    // The bubble shows what the turn carried the way the web does: the operator's
+    // words plus a 📎/🖼 line. The photo's BYTES never enter the transcript — it
+    // is `history` on the next turn, and re-sending the image every turn would
+    // re-bill it for no benefit.
+    const bubble = [
+      text,
+      sent ? `📎 ${attachmentChipLabel(sent)}` : '',
+      sentImage ? `🖼 ${imageChipLabel(sentImage)}` : '',
+    ].filter(Boolean).join('\n\n')
     const next = [...messages, { role: 'user' as const, content: bubble }]
     setMessages(next)
     setBusy(true)
     try {
-      const r = await Api.converse(apiUrl, token, orgId, text, history, toConverseAttachment(sent))
+      const r = await Api.converse(apiUrl, token, orgId, text, history, toConverseAttachment(sent), toConverseImage(sentImage))
       const via =
         r.mode === 'delegate'
           ? {
@@ -316,7 +453,11 @@ export default function CommandCenterScreen() {
               tone: 'delegate' as const,
               glyph: '⇢',
             }
-          : r.degraded
+          : r.code === 'no_vision_model'
+            // Degraded, but NOT "no LLM" — a model answered, it just can't see.
+            // Saying "no LLM" would send the operator to fix the wrong thing.
+            ? { label: "degraded · model can't see images", tone: 'warn' as const, glyph: '•' }
+            : r.degraded
             ? { label: 'degraded · no LLM', tone: 'warn' as const, glyph: '•' }
             : {
                 label: [r.reply?.provider, r.reply?.model].filter(Boolean).join(' · ') || 'answer',
@@ -436,7 +577,7 @@ export default function CommandCenterScreen() {
     else startRecording()
   }, [listening, transcribing, startRecording, stopRecordingAndSend])
 
-  const canSend = canSendTurn({ typed: input, attachment, busy: busy || attaching })
+  const canSend = canSendTurn({ typed: input, attachment, image, busy: busy || attaching || reading })
   const talkDisabled = !canPushToTalk(captureEngine) || transcribing || busy
 
   return (
@@ -609,6 +750,40 @@ export default function CommandCenterScreen() {
         </View>
       ) : null}
 
+      {/* ── Attached photo chip (MOB-7b) — thumbnail + name, removable ─────── */}
+      {image ? (
+        <View style={s.attachRow}>
+          {/* A real thumbnail, not a glyph: the operator must be able to see
+              WHICH photo is about to be sent, and the bytes are already in
+              memory so it costs nothing. */}
+          {image.data ? (
+            <Image
+              source={{ uri: `data:${image.mediaType};base64,${image.data}` }}
+              style={s.attachThumb}
+              accessibilityLabel={`Attached photo: ${image.name}`}
+            />
+          ) : (
+            <Text style={s.attachGlyph} accessibilityElementsHidden>
+              🖼
+            </Text>
+          )}
+          <Text style={s.attachLabel} numberOfLines={1} ellipsizeMode="middle">
+            {imageChipLabel(image)}
+          </Text>
+          <Text
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${image.name}`}
+            onPress={() => {
+              setImage(null)
+              setNotice(null)
+            }}
+            style={s.attachRemove}
+          >
+            ✕
+          </Text>
+        </View>
+      ) : null}
+
       <View style={s.composer}>
         <Pressable
           accessibilityRole="button"
@@ -619,6 +794,19 @@ export default function CommandCenterScreen() {
           style={[s.attachBtn, (attaching || busy) && { opacity: 0.4 }]}
         >
           <Text style={s.attachBtnText}>📎</Text>
+        </Pressable>
+        {/* MOB-7b — one photo control offering both sources (library / camera),
+            mirroring the web's 🖼 button. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Attach a photo"
+          accessibilityHint="Choose from your photo library or take a new photo"
+          accessibilityState={{ disabled: reading || busy }}
+          disabled={reading || busy}
+          onPress={offerPhotoSources}
+          style={[s.attachBtn, (reading || busy) && { opacity: 0.4 }]}
+        >
+          <Text style={s.attachBtnText}>🖼</Text>
         </Pressable>
         <TextInput
           style={s.input}
@@ -757,6 +945,13 @@ const s = StyleSheet.create({
     fontSize: font.base,
     fontWeight: '800',
     padding: space.md,
+  },
+  // MOB-7b — the photo chip's thumbnail, sized to the chip's text line.
+  attachThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: radius.sm,
+    resizeMode: 'cover',
   },
   // CC-ATT — the chip sits directly above the composer, like the web's.
   attachRow: {

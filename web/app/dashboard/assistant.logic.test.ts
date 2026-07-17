@@ -7,6 +7,7 @@ import {
   revealNext, isRevealComplete, revealStepFor, routingBadge,
   rejectAttachment, attachmentChipLabel, canSendTurn, formatFileSize,
   ATTACH_EXTS, ATTACH_ACCEPT, ATTACH_MAX_BYTES,
+  rejectImage, imageChipLabel, imageMediaType, IMAGE_EXTS, IMAGE_ACCEPT, IMAGE_MAX_BYTES,
   type Message, type ConverseResponse,
 } from './assistant.logic.ts'
 
@@ -183,4 +184,86 @@ test('[CC-ATT] toConverseRequest carries an extracted attachment, and only then'
   // the existing contract is untouched
   assert.equal(withDoc.message, 'read this')
   assert.equal(withDoc.explicitDelegate, false)
+})
+
+// ─── Photos (MOB-7b) ─────────────────────────────────────────────────────────
+// A photo rides the /converse call itself as base64 and reaches the model as a
+// real image block — there is no extract round-trip, because there is no text to
+// extract. Same courtesy-check contract as the document gate above: fail in the
+// composer, with the fix named, rather than after the upload.
+
+test('[MOB-7b] rejectImage accepts every format the vision providers read', () => {
+  for (const ext of IMAGE_EXTS) {
+    assert.equal(rejectImage({ name: `snap.${ext}`, size: 1000 }), null, `${ext} should attach`)
+  }
+})
+
+test('[MOB-7b] rejectImage names the formats on an unsupported file', () => {
+  const r = rejectImage({ name: 'scan.tiff', size: 1000 })
+  assert.match(r!, /\.tiff/)
+  assert.match(r!, /jpg|jpeg/)          // tells the operator what WOULD work
+})
+
+test('[MOB-7b] rejectImage gives HEIC — the iPhone default — the actual fix', () => {
+  // The most likely rejection in production: a photo dragged out of Photos on a
+  // Mac is HEIC. "Unsupported" alone would read as "photos don't work".
+  const r = rejectImage({ name: 'IMG_0042.heic', size: 1000 })
+  assert.match(r!, /JPEG/i)
+})
+
+test('[MOB-7b] rejectImage states the real limit, and the boundary is inclusive', () => {
+  assert.equal(rejectImage({ name: 'big.jpg', size: IMAGE_MAX_BYTES }), null, 'the boundary is inclusive')
+  const r = rejectImage({ name: 'big.jpg', size: IMAGE_MAX_BYTES + 1 })
+  assert.match(r!, /3\.8 MB/)
+  assert.match(rejectImage({ name: 'empty.png', size: 0 })!, /empty/)
+})
+
+test('[MOB-7b] the image limit stays under the provider’s base64 ceiling', () => {
+  // Mirrors the backend's reasoning: base64 inflates by 4/3 and Anthropic caps an
+  // encoded image at 5 MB. Rounding this up to a friendlier 5 MB would make every
+  // large photo fail at the provider instead of in the composer.
+  assert.ok(IMAGE_MAX_BYTES * (4 / 3) <= 5 * 1024 * 1024)
+})
+
+test('[MOB-7b] imageMediaType trusts the browser, falls back to the extension', () => {
+  assert.equal(imageMediaType({ name: 'a.png', type: 'image/png' }), 'image/png')
+  // some browsers leave `type` blank on a drag-drop
+  assert.equal(imageMediaType({ name: 'a.png', type: '' }), 'image/png')
+  assert.equal(imageMediaType({ name: 'a.jpg' }), 'image/jpeg')
+  // `image/jpg` is not a real media type — normalise it, or the server 415s a
+  // perfectly good JPEG.
+  assert.equal(imageMediaType({ name: 'a.jpg', type: 'image/jpg' }), 'image/jpeg')
+})
+
+test('[MOB-7b] canSendTurn: a fully-read photo alone is a valid turn', () => {
+  const img = { name: 'p.jpg', size: 10, mediaType: 'image/jpeg' }
+  // a photo still being read has no bytes yet → cannot send
+  assert.equal(canSendTurn({ typed: '', image: img }), false)
+  assert.equal(canSendTurn({ typed: '', image: { ...img, data: 'QUJD' } }), true)
+  assert.equal(canSendTurn({ typed: '', image: { ...img, data: 'QUJD' }, busy: true }), false)
+  // the document gate is untouched
+  assert.equal(canSendTurn({ typed: '', attachment: { name: 'a.pdf', size: 1, text: 'b' } }), true)
+  assert.equal(canSendTurn({ typed: '' }), false)
+})
+
+test('[MOB-7b] toConverseRequest carries a read photo, and only then', () => {
+  const base = { message: 'what is this?', history: [] }
+  assert.equal(toConverseRequest(base).image, undefined)
+  // a picked-but-unread photo must not be sent as an empty block
+  assert.equal(toConverseRequest({ ...base, image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg' } }).image, undefined)
+
+  const withImg = toConverseRequest({ ...base, image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg', data: 'QUJD' } })
+  assert.deepEqual(withImg.image, { name: 'p.jpg', mediaType: 'image/jpeg', data: 'QUJD' })
+  // the existing contract is untouched
+  assert.equal(withImg.message, 'what is this?')
+  assert.equal(withImg.attachment, undefined)
+})
+
+test('[MOB-7b] a document and a photo can ride the same turn', () => {
+  const r = toConverseRequest({
+    message: 'compare these', history: [],
+    attachment: { name: 'a.pdf', size: 1, text: 'spec' },
+    image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg', data: 'QUJD' },
+  })
+  assert.ok(r.attachment && r.image, 'the two attach paths are independent, not exclusive')
 })

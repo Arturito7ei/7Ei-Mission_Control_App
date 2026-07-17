@@ -80,11 +80,101 @@ export function attachmentChipLabel(doc: AttachedDoc): string {
   return doc.truncated ? `${base} · truncated` : base
 }
 
-/** A send is allowed when there is text OR a fully-extracted document. */
-export function canSendTurn(input: { typed: string; attachment?: AttachedDoc | null; busy?: boolean }): boolean {
+// ─── Photos (MOB-7b) ─────────────────────────────────────────────────────────
+// The MIRROR of the web's photo decisions (assistant.logic.ts § Photos), pinned
+// by attach.test.ts exactly as the document constants above are.
+//
+// A photo is NOT a document and shares none of the pipeline above: there is no
+// text to extract, so there is no /attachments/extract round-trip. The picker
+// hands back base64, it rides the /converse call itself, and the model's VISION
+// reads it. Backend enforcer:
+//   backend/src/services/converse-images.ts → MAX_IMAGE_BYTES · SUPPORTED_IMAGE_EXTS
+
+/** Formats every vision provider reads. Mirrors the web's IMAGE_EXTS. */
+export const IMAGE_EXTS = ['gif', 'jpeg', 'jpg', 'png', 'webp'] as const
+
+/**
+ * Mirrors the web's IMAGE_MAX_BYTES (backend MAX_IMAGE_BYTES). Not round on
+ * purpose: base64 inflates by 4/3 and the provider caps an encoded image at
+ * 5 MB, so the raw ceiling is 3/4 of that. Kept as the expression, not the
+ * literal, so the reason survives.
+ *
+ * The phone rarely approaches it — the picker re-encodes to JPEG at quality 0.7,
+ * which puts a 12 MP iPhone photo in the few-hundred-KB range. This is the
+ * backstop, not the norm.
+ */
+export const IMAGE_MAX_BYTES = Math.floor(3.75 * 1024 * 1024)
+
+/**
+ * The photo attached to the NEXT turn. `data` is absent until the picker returns
+ * — the chip shows immediately so the operator sees the photo register, and
+ * `canSendTurn` holds Send until the bytes are actually in hand.
+ */
+export interface AttachedImage {
+  name: string
+  /** bytes; undefined when the picker doesn't report a size. */
+  size?: number
+  /** media type, e.g. `image/jpeg`. */
+  mediaType: string
+  /** RAW base64 — no `data:` prefix. Absent until the picker returns. */
+  data?: string
+}
+
+/**
+ * Why this photo can't be attached, or null if it can. `size` is optional for the
+ * same platform reason as rejectAttachment: the picker doesn't always report one,
+ * and an unknown size skips the check rather than guessing — the server is the
+ * real enforcer and answers with the same wording.
+ */
+export function rejectImage(file: { name: string; size?: number }): string | null {
+  const ext = attachExtension(file.name)
+  if (!(IMAGE_EXTS as readonly string[]).includes(ext)) {
+    // HEIC earns its own sentence — it is what an iPhone photo natively IS, so
+    // this is the rejection an operator is most likely to meet.
+    const heic = ext === 'heic' || ext === 'heif'
+      ? ` iPhone photos are HEIC by default — re-save it as JPEG first.`
+      : ''
+    return `I can't see .${ext} images. Try one of: ${IMAGE_EXTS.join(', ')}.${heic}`
+  }
+  if (file.size == null) return null
+  if (file.size <= 0) return `“${file.name}” is empty.`
+  if (file.size > IMAGE_MAX_BYTES) {
+    return `“${file.name}” is ${formatFileSize(file.size)} — the limit is ${formatFileSize(IMAGE_MAX_BYTES)}. A smaller or more compressed copy will work.`
+  }
+  return null
+}
+
+/** The photo chip's label: name + size. */
+export function imageChipLabel(img: AttachedImage): string {
+  return img.size == null ? img.name : `${img.name} · ${formatFileSize(img.size)}`
+}
+
+/**
+ * A send is allowed when there is text, a fully-extracted document, or a
+ * fully-read photo. Mirrors the web's canSendTurn — pinned by attach.test.ts,
+ * so the two clients agree on what counts as a sendable turn.
+ */
+export function canSendTurn(input: {
+  typed: string
+  attachment?: AttachedDoc | null
+  image?: AttachedImage | null
+  busy?: boolean
+}): boolean {
   if (input.busy) return false
   if (input.typed.trim().length > 0) return true
-  return !!input.attachment?.text
+  if (input.attachment?.text) return true
+  return !!input.image?.data
+}
+
+/**
+ * The `image` field for POST /arturita/converse — the same shape the web's
+ * `toConverseRequest` builds. Only a photo that actually carries bytes is worth
+ * sending; an empty one would cost a round-trip to be refused.
+ */
+export function toConverseImage(
+  img: AttachedImage | null | undefined,
+): { name: string; mediaType: string; data: string } | undefined {
+  return img?.data?.trim() ? { name: img.name, mediaType: img.mediaType, data: img.data } : undefined
 }
 
 /**

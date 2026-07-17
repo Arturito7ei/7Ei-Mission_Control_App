@@ -122,11 +122,90 @@ export function attachmentChipLabel(doc: AttachedDoc): string {
   return doc.truncated ? `${base} · truncated` : base
 }
 
-/** A send is allowed when there is text OR a fully-extracted document. */
-export function canSendTurn(input: { typed: string; attachment?: AttachedDoc | null; busy?: boolean }): boolean {
+// ─── Photos (MOB-7b) ─────────────────────────────────────────────────────────
+// A photo is NOT a document and does not share the pipeline above. A document is
+// turned into text by /attachments/extract and fenced into the turn; a photo has
+// no text to extract — the pixels are the payload — so it rides the /converse
+// call itself as base64 and reaches the model as a real image block, which its
+// vision reads. Hence a separate field, separate state and separate limits.
+//
+// ⚠️ MIRRORS THE SERVER, exactly as the document constants above do, and for the
+// same reason (no import path from the web bundle into `backend/`). The server
+// re-checks both, so drift here costs a worse message, never a bypass. Change it
+// there FIRST:
+//   backend/src/services/converse-images.ts → MAX_IMAGE_BYTES · SUPPORTED_IMAGE_EXTS
+
+/** Extensions every vision provider accepts. Mirrors SUPPORTED_IMAGE_EXTS. */
+export const IMAGE_EXTS = ['gif', 'jpeg', 'jpg', 'png', 'webp'] as const
+
+/** The `accept` attribute for the photo picker — filters the OS dialog. */
+export const IMAGE_ACCEPT = IMAGE_EXTS.map(e => `.${e}`).join(',')
+
+/**
+ * Mirrors MAX_IMAGE_BYTES in backend/src/services/converse-images.ts. Not a
+ * round number on purpose: base64 inflates by 4/3 and Anthropic caps an encoded
+ * image at 5 MB, so the raw ceiling is 3/4 of that. Keep the expression rather
+ * than the literal — it is the reason the number is what it is.
+ */
+export const IMAGE_MAX_BYTES = Math.floor(3.75 * 1024 * 1024)
+
+export interface AttachedImage {
+  name: string
+  size: number
+  /** the image's media type, e.g. `image/jpeg`. */
+  mediaType: string
+  /** RAW base64 — no `data:` prefix. Absent until the file has been read. */
+  data?: string
+}
+
+/**
+ * Why this photo can't be attached, or null if it can. Phrased for the operator,
+ * naming the limit or the formats — the same contract as rejectAttachment.
+ */
+export function rejectImage(file: { name: string; size: number }): string | null {
+  const ext = attachExtension(file.name)
+  if (!(IMAGE_EXTS as readonly string[]).includes(ext)) {
+    // HEIC gets its own sentence: it is what an iPhone photo IS, so an operator
+    // hitting this needs "convert it", not "that's not an image".
+    const heic = ext === 'heic' || ext === 'heif'
+      ? ` iPhone photos are HEIC by default — re-save it as JPEG first.`
+      : ''
+    return `I can't see .${ext} images. Try one of: ${IMAGE_EXTS.join(', ')}.${heic}`
+  }
+  if (file.size <= 0) return `“${file.name}” is empty.`
+  if (file.size > IMAGE_MAX_BYTES) {
+    return `“${file.name}” is ${formatFileSize(file.size)} — the limit is ${formatFileSize(IMAGE_MAX_BYTES)}. A smaller or more compressed copy will work.`
+  }
+  return null
+}
+
+/** The photo chip's label under the composer: name + size. */
+export function imageChipLabel(img: AttachedImage): string {
+  return `${img.name} · ${formatFileSize(img.size)}`
+}
+
+/** The media type for a picked image, from the browser's own type when it gave
+ *  one, else inferred from the extension (some browsers leave `type` blank). */
+export function imageMediaType(file: { name: string; type?: string }): string {
+  const t = (file.type ?? '').trim().toLowerCase()
+  if (t.startsWith('image/')) return t === 'image/jpg' ? 'image/jpeg' : t
+  const ext = attachExtension(file.name)
+  return ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
+}
+
+/** A send is allowed when there is text, a fully-extracted document, or a
+ *  fully-read photo. Each alone is a legitimate turn: "read this", "what's
+ *  this?". A half-loaded attachment of either kind is not. */
+export function canSendTurn(input: {
+  typed: string
+  attachment?: AttachedDoc | null
+  image?: AttachedImage | null
+  busy?: boolean
+}): boolean {
   if (input.busy) return false
   if (input.typed.trim().length > 0) return true
-  return !!input.attachment?.text
+  if (input.attachment?.text) return true
+  return !!input.image?.data
 }
 
 // ─── Conversation model ──────────────────────────────────────────────────────
@@ -165,6 +244,10 @@ export interface ConverseResponse {
   degraded?: boolean
   reply?: { text?: string; provider?: string; model?: string } | null
   error?: string
+  /** MOB-7b: `no_vision_model` — a photo was sent but no configured model can
+   *  see. Distinguishes "a model answered but is blind" from "no model at all",
+   *  which are degraded in the same way but need different things said. */
+  code?: string
   /** J-prod: answer deferred to the client for local streaming (browser→Ollama). */
   deferred?: boolean
   prompt?: { system?: string; messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> } | null
@@ -179,12 +262,15 @@ export function toConverseRequest(input: {
   historyLimit?: number
   /** CC-ATT: the document attached to THIS turn (already extracted to text). */
   attachment?: AttachedDoc | null
+  /** MOB-7b: the photo attached to THIS turn (already read to base64). */
+  image?: AttachedImage | null
 }): {
   message: string
   explicitDelegate: boolean
   existingThreadId: string | null
   history: Array<{ role: 'user' | 'assistant'; content: string }>
   attachment?: { name: string; text: string; truncated: boolean }
+  image?: { name: string; mediaType: string; data: string }
 } {
   const limit = input.historyLimit ?? 10
   const history = input.history
@@ -196,12 +282,18 @@ export function toConverseRequest(input: {
   const att = input.attachment?.text?.trim()
     ? { name: input.attachment.name, text: input.attachment.text, truncated: !!input.attachment.truncated }
     : undefined
+  // Same rule for the photo: a picked-but-unread image has no bytes to send, and
+  // an empty image block would cost a round-trip to be refused.
+  const img = input.image?.data?.trim()
+    ? { name: input.image.name, mediaType: input.image.mediaType, data: input.image.data }
+    : undefined
   return {
     message: input.message.trim(),
     explicitDelegate: !!input.explicitDelegate,
     existingThreadId: input.existingThreadId ?? null,
     history,
     ...(att ? { attachment: att } : {}),
+    ...(img ? { image: img } : {}),
   }
 }
 

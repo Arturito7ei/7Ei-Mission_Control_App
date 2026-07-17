@@ -188,6 +188,10 @@ export type ConverseResult = {
   taskId?: string
   degraded?: boolean
   error?: string
+  /** MOB-7b: `no_vision_model` — a photo was sent but no configured model can
+   *  see it. Degraded like a no-LLM reply, but for a different reason and with a
+   *  different fix, so the two must not be reported to the operator as one. */
+  code?: string
 }
 
 export const Api = {
@@ -462,6 +466,11 @@ export const Api = {
     // backend fences it into this turn's prompt only — it never enters history,
     // so it can't re-enter (and re-bill) later turns.
     attachment?: { name: string; text: string; truncated: boolean },
+    // MOB-7b: the photo attached to THIS turn, as RAW base64 (no `data:` prefix).
+    // Unlike a document there is no extract round-trip — pixels have no text to
+    // extract — so it rides the turn itself and reaches the model as an image
+    // block. Held for the request only: never stored, never in history.
+    image?: { name: string; mediaType: string; data: string },
   ) =>
     api<ConverseResult>(base, `/api/orgs/${orgId}/arturita/converse`, {
       token,
@@ -471,6 +480,7 @@ export const Api = {
         history: history.slice(-CONVERSE_HISTORY_LIMIT),
         deferAnswer: false,
         ...(attachment ? { attachment } : {}),
+        ...(image ? { image } : {}),
       }),
     }),
 
