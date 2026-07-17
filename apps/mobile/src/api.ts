@@ -21,6 +21,10 @@ import type { OrgAgentLite } from './org'
 import type { GovAgentLite, PolicyLite, RevisionLite } from './governance'
 import type { ConnectorRowLite } from './connectors'
 import type { OrgSettingsLite } from './settings'
+// MOB-7d — the agent-editor wire shapes live in the pure module that reads them
+// (agentEdit.ts), imported here so there is ONE definition of the skills payload,
+// not a second the client could drift from.
+import type { SkillsPayload } from './agentEdit'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -99,7 +103,22 @@ export type Agent = {
   llmModel?: string | null
   heartbeatStatus?: string | null
   trustMode?: string | null
+  // MOB-7d — the rest of the editable row (GET /api/agents/:id returns the whole
+  // row, so these arrive already; typed here so the editor can prefill and the
+  // roster can supply `reportsTo` for the cycle check). All optional/back-compat.
+  title?: string | null
+  jobDescription?: string | null
+  contactChannel?: string | null
+  reportsTo?: string | null
+  primaryModel?: string | null
+  cheapModel?: string | null
+  cheapModelEnabled?: boolean | number | null
+  reasoningEffort?: string | null
 }
+
+/** MOB-7d — a selectable model, as `GET …/available-models` returns it (web's
+ *  ConfigurationTab uses the same route to populate its Model picker). */
+export type ModelOption = { id: string; label: string; provider: string; tier: string; custom?: boolean }
 
 /**
  * MOB-6b — a task row as the Task Log reads it. The backend returns the whole
@@ -511,4 +530,86 @@ export const Api = {
       method: 'DELETE',
       body: JSON.stringify({ userId, token: expoToken }),
     }),
+
+  // ─── MOB-7d — the agent-settings EDITOR (owner-gated writes) ───────────────
+  // Every route below is `requireOrgRole('owner')` on the backend (the SAME
+  // owner-gated, field-allow-listed, validated routes the web's agent-detail tabs
+  // call — NOT the legacy unvalidated `PATCH /api/agents/:id`). The phone offers
+  // them only to an org owner (auth `orgRole`), and the backend 403 is the real
+  // enforcer. Bodies are built by agentEdit.ts so the client validates a form the
+  // same way the server will. NONE of these send or surface a secret.
+
+  // PUT …/config — identity + adapter + primary model. Mirrors ConfigurationTab.
+  updateAgentConfig: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    body: Record<string, unknown>,
+  ) =>
+    api<{ agent: Agent }>(base, `/api/orgs/${orgId}/agents/${agentId}/config`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }).then((r) => r.agent),
+
+  // PUT …/model-profile — primary/cheap model + reasoning effort. A model swap
+  // changes spend + capability, so the screen CONFIRMS before calling this.
+  // The route answers `{ agentId, profile, resolved }` — NOT `{ agent }` (the web
+  // re-loads the roster after this call rather than reading the body). Return the
+  // authoritative `profile` so the screen reconciles the row from the server's
+  // answer; reading a non-existent `.agent` here yielded `undefined` and blanked
+  // the agent on a SUCCESSFUL save (audit MOB-7d fix).
+  updateModelProfile: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    body: { primaryModel: string; cheapModel: string; cheapModelEnabled: boolean; reasoningEffort: string },
+  ) =>
+    api<{
+      agentId: string
+      profile: { primaryModel: string | null; cheapModel: string | null; cheapModelEnabled: boolean; reasoningEffort: string | null }
+    }>(base, `/api/orgs/${orgId}/agents/${agentId}/model-profile`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }).then((r) => r.profile),
+
+  // PUT …/trust — the trust MODE (boundary editing stays on the desk). Safety-
+  // critical, so the screen CONFIRMS before calling this. The route answers
+  // `{ agentId, trustMode, boundary }` — NOT `{ agent }` — so return the new
+  // `trustMode` for the screen to reconcile (same audit fix as model-profile).
+  updateAgentTrust: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    body: { trustMode: string },
+  ) =>
+    api<{ agentId: string; trustMode: string; boundary: unknown }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/trust`,
+      { token, method: 'PUT', body: JSON.stringify(body) },
+    ).then((r) => r.trustMode),
+
+  // GET …/skills — the split payload the SkillsTab renders (member-readable).
+  agentSkills: (base: string, token: string, orgId: string, agentId: string) =>
+    api<SkillsPayload>(base, `/api/orgs/${orgId}/agents/${agentId}/skills`, { token }),
+
+  // PUT …/skills — the WHOLE selection (install + uninstall are one idempotent
+  // write); the server answers with the new split, which replaces the optimistic one.
+  updateAgentSkills: (base: string, token: string, orgId: string, agentId: string, skills: string[]) =>
+    api<SkillsPayload>(base, `/api/orgs/${orgId}/agents/${agentId}/skills`, {
+      token,
+      method: 'PUT',
+      body: JSON.stringify({ skills }),
+    }),
+
+  // GET …/available-models — populates the Model picker. Member-readable; the phone
+  // degrades to a free-text model field if this fails (as the web does).
+  availableModels: (base: string, token: string, orgId: string) =>
+    api<{ models: ModelOption[] }>(base, `/api/orgs/${orgId}/available-models`, { token }).then(
+      (r) => r.models ?? [],
+    ),
 }

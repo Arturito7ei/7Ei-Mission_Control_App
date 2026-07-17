@@ -236,7 +236,7 @@ Do **not** pixel-port these.
 | Story | Screen | Endpoints | Effort | Dev build? |
 |---|---|---|---|---|
 | **MOB-6a** | ✅ **SHIPPED** (`mob-6a-nav-shell`) — **Nav shell.** See §6.1 for the as-built. | — | **M** | No |
-| **MOB-6b** | ✅ **SHIPPED** (`mob-6b-agent-detail-tasks`) — **Agent detail + the Task Log.** The roster no longer dead-ends, and `tasks` is a real screen. Read-only; Runs/Budget/Instructions/Skills/Config tabs and the write actions deferred to **MOB-6b2**. As-built: **§6.4**. | `/api/agents/:aid`, `…/agents/:aid/overview`, `…/tasks`, `…/approvals` | **M** | No |
+| **MOB-6b** | ✅ **SHIPPED** (`mob-6b-agent-detail-tasks`) — **Agent detail + the Task Log.** The roster no longer dead-ends, and `tasks` is a real screen. Read-only; Runs/Budget/Instructions/Skills/Config tabs and the write actions deferred to **MOB-6b2**. As-built: **§6.4**. ✅ **The editable Config/Model/Trust/Skills surface has since shipped in MOB-7d** (owner-gated writes, §6.10). | `/api/agents/:aid`, `…/agents/:aid/overview`, `…/tasks`, `…/approvals` | **M** | No |
 | **MOB-6c** | **Task detail** — the read-only drawer behind a log row (the web's `TaskDrawer`). The Tasks *list* shipped in 6b (§6.4); this is what a row opens. | `/api/tasks/:id`, `…/timeline` | **S** | No |
 | **MOB-6d** | ✅ **SHIPPED** (`mob-6d-costs-activity`) — **Costs + Budgets + Activity.** Spend at a glance, the caps beside it, and the event feed. All read-only. Also fixed the roster-glyph drift the 6b audit flagged. As-built: **§6.5**. | `…/tasks`, `…/agents`, `…/budgets`, `…/timeline` (**not** `…/usage` / `…/preflight` — this row guessed wrong; see §6.5) | **S** | No |
 | **MOB-6e** | ✅ **SHIPPED** (`mob-6e-memory-org`) — **Memory + Org.** The vault **tree + note reader** (not the graph) and the **indented org tree** (not the canvas). Both read-only. **Absorbed MOB-6g**: the two are the same problem — a heavy web view whose value is a hierarchy rather than its canvas — so they shipped as one story. As-built: **§6.6**. | `…/memory/tree`, `…/memory/file`, `…/orgchart` | **M** | No |
@@ -738,6 +738,35 @@ Uses the **SDK 54** API — `new File(uri).delete()`, guarded by `exists` — ra
 - **Pictures in the Costs / Governance / Activity actor** — emoji there mirrors the web; a picture would diverge. Revisit only if the web adds pictures there first.
 - **Avatars in the Task Log cell** — that cell is a single text projection (`taskLog.ts`), and the web's task rows don't show a picture either. Left as the emoji-in-text it is.
 - **Enriching the Activity feed with real pictures** by joining the roster — possible (the roster carries `avatarUrl`), but it diverges from the web's emoji-only timeline and adds a fetch; not done.
+
+---
+
+### 6.10 MOB-7d — the agent detail becomes EDITABLE (as built)
+
+MOB-6b (§6.4) shipped the agent detail read view and named the deferral: *"Instructions is owner-gated markdown editing and Configuration is the agent's editable surface: desk work → MOB-6b2."* MOB-7d is that write layer — the first place the phone **changes an agent**, not just shows it.
+
+**The whole editing surface is OWNER-ONLY, and that is the backend's rule, not the phone's.** Every route the web's agent-detail edit tabs use is `requireOrgRole('owner')`, and the phone calls *those exact routes* — never the legacy unvalidated `PATCH /api/agents/:id`. So "can I edit this agent" is one question — am I the org owner — and the phone learns the answer from `/api/orgs` (`memberRole`, now threaded through the session/auth as `orgRole`). A known **member** sees the read-only screen the desk shows them; an **owner** gets the Edit affordance; a caller whose role is genuinely **unknown** (a pasted token whose orgs were never listed with a role) is offered Edit *with a caution* and the backend's 403 is the real enforcer. The phone never *weakens* a gate — at most it declines to offer what the server would refuse anyway.
+
+| Section | Route (method) | Fields | Gate | Confirm? |
+|---|---|---|---|---|
+| Identity & adapter | `PUT …/agents/:id/config` | name, role, title, description, icon emoji, email, reports-to, adapter/runtime | owner | no |
+| Model profile | `PUT …/agents/:id/model-profile` | primary model, cheap model + enable, reasoning effort | owner | **yes** (spend + capability) |
+| Trust tier | `PUT …/agents/:id/trust` | trustMode (standard ⇄ low_trust_review) | owner | **yes** (containment) |
+| Skills | `GET`/`PUT …/agents/:id/skills` | the whole skill selection (install = untick/tick, one idempotent write) | owner (PUT) | no (save-as-you-go, optimistic + rollback) |
+
+**Client-side validation mirrors the server, message-for-message.** `agentEdit.ts` re-implements `validateConfigPatch`'s caps and wording (name ≤100, role ≤200, description ≤4000, contact ≤200, icon ≤4 code points, the runtime enum) and its `wouldCycle` reports-to check, so a caught error reads identically to a server-caught one and the round-trip is saved — but the server is still the final validator. A model swap and a trust change each pass through a native confirm (`Alert`) whose copy names the *direction* (raising vs removing containment are opposite risks). **A failed save never loses edits:** the form stays, the error (400/403/409/network, surfaced through the api client) is named, and the server's response — not an optimistic guess — is what replaces on-screen state (skills roll the checkbox back on failure).
+
+**Model editing lives in ONE place (Model profile), not two.** The web sets the primary model in *both* ConfigurationTab (via the config route's `llmModel`/`primaryModel`) and GovernancePanel (via model-profile). On a phone that dual control is a foot-gun, so the phone's config Save omits the model entirely and the Model-profile section owns primary + cheap + effort over the model-profile route (which writes `primaryModel` too; the executor resolves `primaryModel || llmModel`). Same data reached, one control.
+
+**Deferred, each a deferral rather than a gap** (named in `agentEdit.ts` `DEFERRED_EDITS_NOTE`, so the screen can *say* it):
+- **The instructions bundle** (`…/files`) — a multi-file markdown editor; genuinely desk-scale. → a follow-up story.
+- **Avatar photo upload** — the *icon emoji* is editable (via config); the *picture* (image-pick + downscale to the 256 KB cap) is deferred, as MOB-7b/7c's display work was.
+- **The trust BOUNDARY** (projects/tasks/agents multiselect) — the phone edits the trust *mode* only; the boundary set is a desk multiselect.
+- **⚠️ Per-agent permissions — deferred AND flagged as a finding.** The web edits per-agent permissions via `PATCH /api/agents/:id/permissions`, which is **member-gated, not owner-gated, and unvalidated** on the backend (as is the legacy `PATCH /api/agents/:id`). Shipping an owner-gate for permissions *on the phone* would be a **client-only** gate over a server that lets any member write — exactly the anti-pattern the brief said to flag rather than ship. So the phone does not edit permissions, and this is raised for the auditor: the enforcement hole is server-side and pre-existing.
+
+**Parity tripwires** (`agentEdit.test.ts`, 26 tests): imports the *dep-free* real sources and asserts the phone's copies agree — `backend/src/services/agent-config.ts` (`CONFIG_FIELDS`, `RUNTIMES`, `wouldCycle`, and `validateConfigPatch`'s accept/reject verdicts + wording), `web/lib/agentSkills.ts` (`selectionOf`/`nextSelection`/`optimisticSplit`), `web/lib/trust.ts` (`TRUST_MODES`). `REASONING_EFFORTS` can't be import-pinned (its source, `model-profile.ts`, imports the model catalogue and isn't dep-free), so it's asserted against the literal `['low','medium','high']` and documented as a copy — the same honest-copy pattern governance.ts uses for `CAP_HINTS`. All three backend/web modules are import-free, so Mobile CI (which installs `apps/mobile` only) runs the tripwires rather than silently dropping the file.
+
+**Verified:** mobile **254/254** (+26) · typecheck clean · `expo export` bundles (1290 modules). **SDK 54 untouched, react/react-dom still exactly 19.1.0** (`reactVersion.test.ts` green), **boot-safe** (`bootSafety.test.ts` green — only RN-core `Alert`/`Modal`/`Switch`/`TextInput` used, no native module added, none imported lazily-or-otherwise that could throw at boot). Strictly additive to `apps/mobile/**`; **no backend/web/desktop source touched, no backend route added, no gate weakened.**
 
 ---
 
