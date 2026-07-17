@@ -106,6 +106,19 @@ surface-wide and fail-closed.
   (`/api/agent/*`) is a separate token-authed scope, proven unaffected. Object-level
   scoping (a member reading a foreign record *within* their own org path) is a separate
   authz concern, still open.
+- **Owner, not just member, for the safety-critical agent-write controls.** Config, trust,
+  model-profile, skills — and now **per-agent permissions** — all sit at
+  `/api/orgs/:orgId/agents/:agentId/*` behind `requireOrgRole('owner')` + validation.
+  `PUT …/permissions` was the odd one out: it lived on the `/api/agents/:agentId/permissions`
+  tail (member-gated by the surface hook) and took `body.permissions` straight into
+  `db.update` after a bare `.map(String)`, so **any member could rewrite any agent's
+  capability caps to arbitrary strings**. Re-pathed to the org-scoped owner-gated form and
+  validated against the capability vocabulary (`services/agent-permissions.ts`: `*`, a known
+  bare cap `machine_exec`, or `<known-ns>:<action|*>` for `memory`/`attachment`/`connector`,
+  the namespaces actually enforced at runtime). Empty/absent list still stores `[]` →
+  allow-all, semantics unchanged; a member now 403s and an unknown cap 400s. The legacy
+  `PATCH /api/agents/:agentId` drops `permissions` from its body so it can't be a side door.
+  Route-driven proof in `tests/agent-permissions-authz.test.ts`.
 
 ### 4a. Packaged-profile identity — the loopback local operator (Epic H / H6)
 
