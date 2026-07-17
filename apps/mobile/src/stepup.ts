@@ -20,7 +20,18 @@
 // rather than crashing the Inbox. NEVER log the step-up token (it never reaches
 // this module) or any biometric material.
 
-import * as LocalAuthentication from 'expo-local-authentication'
+// TYPE-only: erased at compile time. expo-local-authentication runs
+// requireNativeModule('ExpoLocalAuthentication') in its module body, so a VALUE
+// import here would throw at IMPORT on a host without it — and this module is in
+// the boot path (InboxScreen → StepUpModal → stepup.ts), so that throw would blank
+// the app before React mounts. Pulled in lazily at the gate instead.
+import type * as LocalAuthenticationNS from 'expo-local-authentication'
+import { lazyNativeModule } from './nativeModule'
+
+const getLocalAuth = lazyNativeModule(
+  'expo-local-authentication',
+  () => require('expo-local-authentication') as typeof LocalAuthenticationNS,
+)
 import type { Approval } from './api'
 
 // The word the operator must type in the fallback modal to confirm a dangerous
@@ -72,6 +83,9 @@ export interface BiometricProbe {
  *  error (module missing, native unavailable) → `usable:false`, so the caller
  *  falls back to typed confirmation rather than skipping the gate. */
 export async function probeBiometric(): Promise<BiometricProbe> {
+  const LocalAuthentication = getLocalAuth()
+  // Absent module → same fail-closed answer as absent hardware: typed confirmation.
+  if (!LocalAuthentication) return { usable: false, label: '' }
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync()
     const enrolled = await LocalAuthentication.isEnrolledAsync()
@@ -99,6 +113,8 @@ export type BiometricResult =
  *  without a biometric enrolled can still confirm with its passcode. Fail-closed:
  *  any thrown error → `unavailable` (caller re-routes to typed confirmation). */
 export async function runBiometricGate(prompt: string): Promise<BiometricResult> {
+  const LocalAuthentication = getLocalAuth()
+  if (!LocalAuthentication) return { ok: false, reason: 'unavailable' }
   try {
     const res = await LocalAuthentication.authenticateAsync({
       promptMessage: prompt,

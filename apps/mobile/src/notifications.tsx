@@ -21,7 +21,14 @@
 //
 // See docs/DESIGN-mobile-expo.md §4 and §14 (MOB-3 as-built).
 
-import * as Notifications from 'expo-notifications'
+// TYPE-only: erased at compile time. A VALUE import of expo-notifications is
+// itself a native side effect — its module body resolves
+// requireNativeModule('ExpoNotificationsHandlerModule') AND constructs a
+// LegacyEventEmitter over it at module scope. Since App.tsx imports this file,
+// that ran at BOOT: a host that doesn't carry the module would throw during module
+// evaluation and blank the app before React mounts (where the ErrorBoundary can't
+// reach). Pulled in lazily at each point of use instead.
+import type * as NotificationsNS from 'expo-notifications'
 import React, {
   createContext,
   useCallback,
@@ -33,21 +40,42 @@ import React, {
 import { Api } from './api'
 import { useAuth } from './auth'
 import { EAS_PROJECT_ID, pushRemoteConfigured } from './config'
+import { lazyNativeModule } from './nativeModule'
+
+const getNotifications = lazyNativeModule(
+  'expo-notifications',
+  () => require('expo-notifications') as typeof NotificationsNS,
+)
 
 // Where a notification tap should land. Kept in sync with App.tsx's TabKey.
 export type PushRouteTarget = 'command' | 'inbox' | 'agents' | 'status'
 
 // Foreground behaviour — show a banner + play a sound even when the app is open,
-// so an approval-needed push is visible while you're already in the app. Set once
-// at module load (before any React render), per Expo's guidance.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-})
+// so an approval-needed push is visible while you're already in the app.
+//
+// This USED to run at module load, per Expo's guidance. It no longer does: a
+// top-level call into a native module is a boot-path throw waiting to happen, and
+// module load is exactly where such a throw is invisible (no render → no
+// ErrorBoundary → white screen). PushProvider now installs it from an effect, which
+// still lands well before any notification can arrive — the handler only matters
+// once a push is delivered, and the provider mounts at sign-in. Idempotent, and
+// fail-soft: no notifications module simply means no foreground handler.
+function installForegroundHandler(): void {
+  const N = getNotifications()
+  if (!N) return
+  try {
+    N.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    })
+  } catch (e) {
+    console.warn('[7Ei] could not install the foreground notification handler:', e)
+  }
+}
 
 type PermState = 'granted' | 'denied' | 'undetermined' | 'unknown'
 
@@ -91,6 +119,8 @@ export type PushApi = {
 const Ctx = createContext<PushApi | null>(null)
 
 async function readPermission(): Promise<PermState> {
+  const Notifications = getNotifications()
+  if (!Notifications) return 'unknown'
   try {
     const p = await Notifications.getPermissionsAsync()
     if (p.granted) return 'granted'
@@ -105,6 +135,8 @@ async function readPermission(): Promise<PermState> {
 // whole "graceful in Expo Go" contract.
 async function obtainExpoToken(): Promise<string | null> {
   if (!pushRemoteConfigured()) return null
+  const Notifications = getNotifications()
+  if (!Notifications) return null
   try {
     const t = await Notifications.getExpoPushTokenAsync({ projectId: EAS_PROJECT_ID })
     return t?.data ?? null
@@ -123,6 +155,12 @@ export function PushProvider({ children }: { children: React.ReactNode }) {
     ...INITIAL,
     userKnown: !!userId,
   }))
+
+  // Install the foreground handler here rather than at module load — see
+  // installForegroundHandler. Once per mount; the call is idempotent.
+  useEffect(() => {
+    installForegroundHandler()
+  }, [])
 
   // What we last registered, so we can de-register exactly on sign-out / change.
   const registeredRef = useRef<{ apiUrl: string; userId: string; token: string } | null>(null)
@@ -160,8 +198,15 @@ export function PushProvider({ children }: { children: React.ReactNode }) {
         let perm = await readPermission()
         if (perm !== 'granted' && request) {
           try {
-            const r = await Notifications.requestPermissionsAsync()
-            perm = r.granted ? 'granted' : r.status === 'denied' ? 'denied' : 'undetermined'
+            const N = getNotifications()
+            const r = await N?.requestPermissionsAsync()
+            perm = !r
+              ? 'unknown'
+              : r.granted
+                ? 'granted'
+                : r.status === 'denied'
+                  ? 'denied'
+                  : 'undetermined'
           } catch {
             perm = 'unknown'
           }
@@ -235,6 +280,11 @@ export function PushProvider({ children }: { children: React.ReactNode }) {
 
   const sendTest = useCallback(async () => {
     patch({ error: null })
+    const Notifications = getNotifications()
+    if (!Notifications) {
+      patch({ error: "This app build can't send notifications." })
+      return
+    }
     try {
       let perm = await readPermission()
       if (perm !== 'granted') {
@@ -297,6 +347,10 @@ export function useNotificationRouting(onRoute: (t: PushRouteTarget) => void): v
   onRouteRef.current = onRoute
 
   useEffect(() => {
+    const Notifications = getNotifications()
+    // No notifications module → no taps to route. Nothing to wire, nothing to throw.
+    if (!Notifications) return
+
     let cancelled = false
     // Cold start: launched from a notification tap.
     Notifications.getLastNotificationResponseAsync()
