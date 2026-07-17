@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AGENT_TABS, AGENT_TAB_LABEL, DEFAULT_AGENT_TAB, agentRouteHash, isAgentTab, parseAgentRoute } from './agentRoute.ts'
 
-test('[AG1] the six Paperclip agent tabs are exposed in render order, each with a label', () => {
-  assert.deepEqual([...AGENT_TABS], ['dashboard', 'instructions', 'skills', 'configuration', 'runs', 'budget'])
+test('[AG1] the agent tabs are exposed in render order, each with a label (CONN-2 adds Connectors)', () => {
+  assert.deepEqual([...AGENT_TABS], ['dashboard', 'instructions', 'skills', 'configuration', 'connectors', 'runs', 'budget'])
   for (const t of AGENT_TABS) assert.ok(AGENT_TAB_LABEL[t], `missing label for ${t}`)
 })
 

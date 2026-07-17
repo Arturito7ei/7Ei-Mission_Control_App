@@ -6,7 +6,7 @@
 // routing contract is unit-testable under `node --test` (web has no jest/vitest)
 // and the page only wires it to `location.hash`.
 
-export const AGENT_TABS = ['dashboard', 'instructions', 'skills', 'configuration', 'runs', 'budget'] as const
+export const AGENT_TABS = ['dashboard', 'instructions', 'skills', 'configuration', 'connectors', 'runs', 'budget'] as const
 
 export type AgentTab = (typeof AGENT_TABS)[number]
 
@@ -16,6 +16,7 @@ export const AGENT_TAB_LABEL: Record<AgentTab, string> = {
   instructions: 'Instructions',
   skills: 'Skills',
   configuration: 'Configuration',
+  connectors: 'Connectors',
   runs: 'Runs',
   budget: 'Budget',
 }
