@@ -286,11 +286,48 @@ _As-built on `conn-2-web-connectors-accordion`._
 - **Verify:** web `npm run build` + `tsc --noEmit` + `npm test` (234/234) green. Additive
   to `web/**` + docs. **Parity: CONN-3 mirrors this to the phone** over the same contract.
 
-### CONN-3 — Mobile accordion mirror (≈ 2–3 d)
-- `apps/mobile` connectors section on `AgentDetailScreen` (or a dedicated screen) mirroring
-  CONN-2 over the **same contract**; local expandable; owner-gated via `orgRole` (MOB-7d
-  pattern). Parity tripwire importing the backend registry (as MOB-6f already does).
-- **SR focus:** read-only masked data only; no secret in logs; SDK 54 / Expo Go boot-safe.
+### CONN-3 — Mobile accordion mirror ✅ SHIPPED
+_As-built on `conn-3-mobile-connectors-accordion`._
+- **New owner-gated Connectors section** on `AgentDetailScreen` (`apps/mobile/src/screens/
+  AgentDetailScreen.tsx`), rendered by `ConnectorsSection` in the new
+  `screens/AgentConnectors.tsx`, placed directly under the Configuration/Settings block.
+  Mirrors CONN-2 over the **same CONN-1 contract** (no backend change): the same
+  owner-gated `/api/orgs/:orgId/agents/:agentId/connectors[...]` verbs, added to the mobile
+  api client (`api.ts`: `agentConnectors` / `saveAgentConnector` / `testAgentConnector` /
+  `deleteAgentConnector`).
+- **Accordion grouped by category exactly as the operator listed** — a local collapsible
+  (the MOB-6e MemoryScreen idiom, not a new dep): Communication (Google Chat · Telegram ·
+  WhatsApp · Signal), IT / Project management (GitHub · Jira), Google Services (Google
+  Calendar · Gmail · Google Drive), Custom MCP servers (opens by default). Each connector is
+  a row with a colorblind-safe status **Chip** (✓ Connected / ○ Not connected / ⋯ Coming
+  soon / — Out of scope).
+- **Real in v1 = custom MCP only.** Inline config panel: name, transport (http|stdio via a
+  segmented control), url **or** command + args (one per line), and an **optional
+  write-only** token (`secureTextEntry`). `POST …/connectors/mcp` (configure), masked status
+  Chip + `accountLabel`, `POST …/test`, `DELETE` (Disconnect). Optimistic edits reconcile to
+  the server's masked row; a failed save keeps the operator's edits (incl. the typed secret).
+- **Everything else is a disabled "Coming soon" / "Out of scope" row** with the same honest
+  stage note as the web (GitHub/Jira → CONN-4, Google trio → CONN-5, Telegram/WhatsApp/Google
+  Chat → CONN-6, **Signal out of scope**). No fake saves — the UI only ever POSTs `mcp`.
+- **Pure logic + parity** — `apps/mobile/src/agentConnectors.ts` is a parity-pinned mirror of
+  `web/lib/agentConnectors.ts` (catalog, `AVAILABLE_CONNECTOR_IDS`, `validateMcpConfig`).
+  `agentConnectors.test.ts` (+18) covers grouping, the available-set, masked-only display,
+  MCP validation, and TWO tripwires: (1) a **cross-platform** import of the dep-free web
+  module asserting the phone's groups + validation verdicts equal the desk's, and (2) a
+  **backend text-read** of `AGENT_CONNECTORS` asserting the client "available" set can't
+  drift from the server catalog.
+- **SR focus (met):** the client **never renders a secret** — the read projection carries no
+  credential (not even a `secretRef`), the token input is `secureTextEntry` / write-only,
+  seeded from `''` (never a read), cleared after a successful save, and blank-on-save keeps
+  the stored token; a test asserts the read state never carries secret/token/secretRef.
+  **Owner-gate:** the list GET is itself owner-gated, so a **403 on load** → a clean
+  read-only "owner-only" note; a known member gets that note without a round-trip; the phone
+  offers the surface to an owner OR when the role is genuinely unknown (fail-OPEN to the
+  backend gate, MOB-7d pattern). The backend remains the enforcer.
+- **Verify:** `apps/mobile` `npm test` (275/275) + `npm run typecheck` (clean) + `npm run
+  export` (bundles, boot-safe) green. Additive to `apps/mobile/**` + docs. **SDK 54 / react
+  19.1.0 / boot-safe untouched** (RN core inputs only — no native module). **This completes
+  the web+mobile parity for the connectors accordion.**
 
 ### CONN-4 — Token/basic connectors: GitHub + Jira at agent scope (≈ 3–4 d)
 - Add GitHub (PAT) and Jira (basic) to the agent catalog; reuse `tokenTestRequest` +
@@ -418,7 +455,7 @@ will grow and the accordion wants room.
 | `connector:` capability namespace | **Reserved, not enforced** |
 | `agent_connectors` table + agent connector API | **New** (CONN-1) |
 | Per-agent OAuth (agentId scope, PKCE, mobile completion) | **New** (CONN-5) |
-| Accordion UI, web + mobile | **Web SHIPPED** (CONN-2, local expandable — no shared Accordion primitive); mobile CONN-3 |
+| Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Backend MCP/tool invocation | **New, separate epic** (CONN-8) |
 
 _End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3

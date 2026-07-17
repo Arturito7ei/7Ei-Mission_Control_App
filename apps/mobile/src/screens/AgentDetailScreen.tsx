@@ -79,6 +79,7 @@ import {
   type SkillsPayload,
   type TrustModeLite,
 } from '../agentEdit'
+import { ConnectorsSection } from './AgentConnectors'
 import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
 import { formatCost, formatTokens, NONE } from '../taskLog'
 import { font, radius, space, theme } from '../theme'
@@ -231,6 +232,18 @@ export default function AgentDetailScreen({ agentId }: { agentId: string }) {
             onDone={() => setEditing(false)}
           />
         )
+      ) : null}
+
+      {/* ── Connectors (CONN-3) — owner-gated accordion, mirrors the web tab ── */}
+      {agent && orgId ? (
+        <ConnectorsSection
+          orgId={orgId}
+          agentId={agentId}
+          apiUrl={apiUrl}
+          getToken={getToken}
+          canView={canOfferEdit}
+          roleUnknown={roleUnknown}
+        />
       ) : null}
 
       {/* ── Latest run ─────────────────────────────────────────────────────── */}

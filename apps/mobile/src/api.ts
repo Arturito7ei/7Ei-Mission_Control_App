@@ -25,6 +25,12 @@ import type { OrgSettingsLite } from './settings'
 // (agentEdit.ts), imported here so there is ONE definition of the skills payload,
 // not a second the client could drift from.
 import type { SkillsPayload } from './agentEdit'
+// CONN-3 — the per-agent connector wire shape is defined in the pure module that
+// reads it (agentConnectors.ts, itself a parity-pinned mirror of the web's), so
+// there is ONE definition of the MASKED connector projection. NOTE the security
+// invariant it encodes: the read shape carries NO secret / token / secretRef —
+// only status + non-secret config + a derived label. A credential is WRITE-ONLY.
+import type { PublicConnectorState } from './agentConnectors'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -611,5 +617,71 @@ export const Api = {
   availableModels: (base: string, token: string, orgId: string) =>
     api<{ models: ModelOption[] }>(base, `/api/orgs/${orgId}/available-models`, { token }).then(
       (r) => r.models ?? [],
+    ),
+
+  // ─── CONN-3 — per-agent connectors (owner-gated, MASKED reads) ─────────────
+  // The SAME owner-gated, org-scoped-path routes the web's ConnectorsTab (CONN-2)
+  // calls, over the SAME CONN-1 contract — no backend change. Every verb is
+  // `requireOrgRole('owner')` on the backend, and the LIST GET is itself owner-
+  // gated, so a 403 on load = definitively not an owner (the screen renders a
+  // clean owner-only note instead of a scary error). The backend is the real gate.
+  //
+  // NONE of these ever returns a secret: reads are the `toPublicConnector`
+  // allow-list (no credential, not even a secretRef). A credential is WRITE-ONLY —
+  // sent up in the POST body's `secret` field, encrypted at agent scope, and never
+  // read back. NEVER log a request body that may carry `secret`.
+
+  // GET list — the catalog × this agent's state, masked.
+  agentConnectors: (base: string, token: string, orgId: string, agentId: string) =>
+    api<{ connectors: PublicConnectorState[] }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connectors`,
+      { token },
+    ).then((r) => r.connectors ?? []),
+
+  // POST — configure (create or replace). `body.config` is the NON-secret config;
+  // `body.secret` (optional, write-only) is the credential, sent ONLY when the
+  // operator typed one — blank keeps the stored token. Answers with the masked row.
+  saveAgentConnector: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    connectorId: string,
+    body: { config: Record<string, unknown>; secret?: string; useOrgConnection?: boolean },
+  ) =>
+    api<{ connector: PublicConnectorState }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}`,
+      { token, method: 'POST', body: JSON.stringify(body) },
+    ).then((r) => r.connector),
+
+  // POST …/test — a credential-free connectivity check (CONN-1 does NOT dial the
+  // arbitrary MCP URL from the backend — SSRF deferred); records the attempt.
+  testAgentConnector: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    connectorId: string,
+  ) =>
+    api<{ ok: boolean; detail?: string | null; testedAt?: string }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}/test`,
+      { token, method: 'POST', body: '{}' },
+    ),
+
+  // DELETE — disconnect: removes the row AND its agent-scoped secret. 204 → {}.
+  deleteAgentConnector: (
+    base: string,
+    token: string,
+    orgId: string,
+    agentId: string,
+    connectorId: string,
+  ) =>
+    api<Record<string, never>>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}`,
+      { token, method: 'DELETE' },
     ),
 }
