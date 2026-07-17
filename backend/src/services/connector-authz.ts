@@ -287,41 +287,75 @@ export async function authorizeConnectorAction(
     return decided
   }
 
-  // needs_approval → file a dangerous `connector_action` approval. prepareApprovalRecord
-  // machine-renders the summary from the structured action (never model prose) and
-  // stamps requiresStepUp:true, so the decide route demands a fresh session to approve.
+  const filed = await fileConnectorActionApproval({
+    orgId, agentId, connectorId, connectorName: meta.name, action, classification, target: input.target ?? null,
+  })
+  if (!filed.ok) {
+    // A payload we can't render is itself a fail-closed signal — hold the action but
+    // do NOT auto-file a malformed card; surface the reason.
+    return { ...decided, reason: `needs approval (could not render card: ${filed.error})` }
+  }
+  return { ...decided, approvalId: filed.approvalId }
+}
+
+// ─── 5. Filing a connector_action approval (the ONE shared path) ───────────────
+
+export interface FiledConnectorApproval {
+  ok: boolean
+  approvalId?: string
+  error?: string
+}
+
+/**
+ * File a pending, dangerous `connector_action` approval for a WRITE / DESTRUCTIVE /
+ * UNKNOWN connector action, and return its id. `prepareApprovalRecord` machine-renders
+ * the summary from the STRUCTURED action (never model prose) and stamps
+ * `requiresStepUp:true`, so the decide route (routes/tasks.ts) demands a fresh command
+ * session to approve — the same step-up the phone/desk enforce.
+ *
+ * This is the SINGLE code path that files a connector approval: both the CONN-7
+ * `authorizeConnectorAction` entry point AND the CONN-8a execution framework call it,
+ * so an approval card can never drift between "authorize" and "execute". NEVER pass a
+ * credential in — `target`/`action` are the only free-form fields and they land on the
+ * card verbatim.
+ */
+export async function fileConnectorActionApproval(input: {
+  orgId: string
+  agentId: string
+  connectorId: string
+  connectorName: string
+  action: string
+  classification: ConnectorActionClass
+  target?: string | null
+}): Promise<FiledConnectorApproval> {
   const prepared = prepareApprovalRecord({
     type: 'connector_action',
     action: {
-      connectorId,
-      connectorName: meta.name,
-      action,
-      classification,
-      agentId,
+      connectorId: input.connectorId,
+      connectorName: input.connectorName,
+      action: input.action,
+      classification: input.classification,
+      agentId: input.agentId,
       target: input.target ?? null,
     },
   })
-  if (!prepared.ok) {
-    // A payload we can't render is itself a fail-closed signal — hold the action but
-    // do NOT auto-file a malformed card; surface the reason.
-    return { ...decided, reason: `needs approval (could not render card: ${prepared.error})` }
-  }
+  if (!prepared.ok) return { ok: false, error: prepared.error }
 
   const approvalId = randomUUID()
   await db.insert(schema.approvalRequests).values({
     id: approvalId,
-    orgId,
+    orgId: input.orgId,
     type: 'connector_action',
     summary: prepared.summary,
     payload: prepared.payload,
     status: 'pending',
-    requestedByAgentId: agentId,
+    requestedByAgentId: input.agentId,
     decidedBy: null,
     decidedAt: null,
     createdAt: new Date(),
   } as any)
   // Ping the owner's phone the moment a connector approval is filed (fire-and-forget).
-  notifyApprovalCreated({ id: approvalId, orgId, type: 'connector_action', summary: prepared.summary ?? '' }).catch(() => {})
+  notifyApprovalCreated({ id: approvalId, orgId: input.orgId, type: 'connector_action', summary: prepared.summary ?? '' }).catch(() => {})
 
-  return { ...decided, approvalId }
+  return { ok: true, approvalId }
 }

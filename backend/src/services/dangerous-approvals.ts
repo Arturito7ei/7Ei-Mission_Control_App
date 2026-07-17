@@ -15,6 +15,7 @@
 // Pure helpers only (string formatting + arithmetic); the route does the IO.
 
 import { evaluateCommand, commandFromAction, type CommandPolicy } from './cc-denylist'
+import { classifyConnectorAction } from './connector-authz'
 
 export const DANGEROUS_APPROVAL_TYPES = [
   'file_destructive',
@@ -152,15 +153,19 @@ function renderMachineExec(a: any): RenderResult {
 }
 
 // CONN-7 — a connector action approval card. Rendered VERBATIM from the structured
-// action (connectorId + the action verb + its classification), never model prose, so
-// the operator approves the concrete connector call. `classification` is 'write' |
-// 'destructive' | 'unknown' (READ never files an approval — it is allowed outright).
+// action (connectorId + the action verb), never model prose, so the operator approves
+// the concrete connector call. The DESTRUCTIVE banner/warning MUST be trustworthy, so
+// the class is RECOMPUTED from (connectorId, action) via the taxonomy — never trusted
+// from the payload's `classification` field (audit N1: a self-filing agent could set
+// classification:'read' on a `repo.delete` to suppress the red banner; not a bypass —
+// the real verb is shown, step-up is still forced, and execution recomputes the real
+// class anyway — but the operator's warning must not be forgeable).
 function renderConnectorAction(a: any): RenderResult {
   const connectorId = String(a?.connectorId ?? '').trim()
   if (!connectorId) return { ok: false, error: 'connector_action requires a connectorId' }
   const action = String(a?.action ?? '').trim()
   if (!action) return { ok: false, error: 'connector_action requires an action' }
-  const cls = String(a?.classification ?? '').trim().toLowerCase()
+  const cls = classifyConnectorAction(connectorId, action) // recomputed, not payload-trusted
   const name = String(a?.connectorName ?? '').trim() || connectorId
   const target = a?.target ? ` → ${String(a.target)}` : ''
   const lead = cls === 'destructive' ? 'DESTRUCTIVE ' : ''
