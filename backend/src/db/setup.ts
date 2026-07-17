@@ -235,6 +235,18 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_push_tokens_user ON push_tokens(user_id)`)
   } catch { /* already exists */ }
 
+  // Epic CONN / CONN-1: agent_connectors — per-agent connector rows (NON-SECRET
+  // config + a pointer to an agent-scoped `secrets` row; the credential itself is
+  // NEVER stored in this table). Additive and idempotent (CREATE IF NOT EXISTS);
+  // nothing is backfilled — an agent with no connectors has zero rows and behaves
+  // exactly as before. The UNIQUE index makes configure an upsert on
+  // (org_id, agent_id, connector_id). Reversible: DROP TABLE agent_connectors.
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS agent_connectors (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, agent_id TEXT NOT NULL, connector_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'configured', config TEXT, account_label TEXT, secret_ref TEXT, use_org_connection INTEGER NOT NULL DEFAULT 0, last_tested_at INTEGER, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_connectors_uniq ON agent_connectors(org_id, agent_id, connector_id)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_agent_connectors_agent ON agent_connectors(agent_id)`)
+  } catch { /* already exists */ }
+
   // Sprint 7: audit_logs table
   try {
     await dbClient.execute(`CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, action TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER, duration_ms INTEGER, metadata TEXT, created_at INTEGER NOT NULL)`)

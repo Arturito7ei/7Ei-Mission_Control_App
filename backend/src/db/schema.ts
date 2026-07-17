@@ -201,6 +201,27 @@ export const agentFiles = sqliteTable('agent_files', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
 
+// Epic CONN / CONN-1: per-agent connectors. Records WHICH connectors an agent has
+// and their NON-SECRET config; the credential itself lives in the `secrets` table at
+// `agent` scope (scopeId = agentId) and is referenced by `secretRef` — never stored
+// here, never returned to a client (see services/agent-connectors.ts toPublicConnector).
+// One config per (org, agent, connector) — enforced by a UNIQUE index in db/setup.ts.
+export const agentConnectors = sqliteTable('agent_connectors', {
+  id: text('id').primaryKey(),
+  orgId: text('org_id').notNull(),                              // tenant scope (every query filters on it)
+  agentId: text('agent_id').notNull(),                          // owning agent
+  connectorId: text('connector_id').notNull(),                 // catalog id, e.g. 'mcp'
+  status: text('status').notNull().default('configured'),      // configured | needs_auth | error | disabled
+  config: text('config', { mode: 'json' }).$type<Record<string, unknown>>(), // NON-SECRET config only
+  accountLabel: text('account_label'),                         // masked/derived display label (never a secret)
+  secretRef: text('secret_ref'),                               // key into `secrets` (scope='agent', scopeId=agentId); NULL when no credential
+  useOrgConnection: integer('use_org_connection', { mode: 'boolean' }).notNull().default(false), // inherit the org-level connection (decision A)
+  lastTestedAt: integer('last_tested_at', { mode: 'timestamp' }),
+  lastError: text('last_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+})
+
 // MCA-EXEC S1.2: one row per agent execution — structured logs, cost, and
 // sessionState that persists across heartbeats so runs resume instead of restart.
 export const agentRuns = sqliteTable('agent_runs', {
