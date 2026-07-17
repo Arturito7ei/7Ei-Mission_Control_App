@@ -41,20 +41,26 @@ test('[CONN-2] every non-available connector carries an honest note pointing at 
   }
 })
 
-// ─── Parity tripwire: the client "available" set == backend AGENT_CONNECTORS ──
+// ─── Parity tripwire: the client "available" set ⊆ backend AGENT_CONNECTORS ───
 //
 // The client catalog is hand-copied (Next.js can't import backend source that
 // pulls in drizzle). Read the backend source as TEXT (dep-free) and assert the
-// two catalogs agree — the standing rule for any list copied across the boundary.
-
-test('[CONN-2] AVAILABLE_CONNECTOR_IDS matches the backend AGENT_CONNECTORS catalog', () => {
+// client can only ever offer a connector the backend actually serves. The check is
+// a SUBSET, not equality: the backend legitimately LEADS the client (a connector
+// ships in the backend catalog at its CONN-Na stage and the client enables the row
+// in the following CONN-Nb stage — e.g. github/jira land in the backend at CONN-4a,
+// the client rows at CONN-4b). The dangerous drift is the other direction — a client
+// offering a connectorId the backend lacks would POST to an unknown id and 404 —
+// and THAT is what this fails on.
+test('[CONN-2] AVAILABLE_CONNECTOR_IDS is a subset of the backend AGENT_CONNECTORS catalog', () => {
   const src = readFileSync(new URL('../../backend/src/services/agent-connectors.ts', import.meta.url), 'utf8')
   const block = /AGENT_CONNECTORS[^=]*=\s*\[([\s\S]*?)\n\]/.exec(src)
   assert.ok(block, 'could not locate the AGENT_CONNECTORS array in the backend source')
   const backendIds = [...block![1].matchAll(/id:\s*'([^']+)'/g)].map(m => m[1])
   assert.ok(backendIds.length > 0, 'backend catalog parsed empty — parity check would be vacuous')
-  assert.deepEqual([...AVAILABLE_CONNECTOR_IDS].sort(), [...backendIds].sort(),
-    'client "available" connectors drifted from the backend catalog — reconcile before merging')
+  const offeredButUnserved = [...AVAILABLE_CONNECTOR_IDS].filter(id => !backendIds.includes(id))
+  assert.deepEqual(offeredButUnserved, [],
+    'client offers a connector the backend catalog lacks — it would 404; reconcile before merging')
 })
 
 // ─── Masked-only display: the read state carries no credential ────────────────
