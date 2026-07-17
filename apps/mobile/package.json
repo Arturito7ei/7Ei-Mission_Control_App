@@ -27,8 +27,8 @@
     "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~15.0.11",
-    "react": "19.1.8",
-    "react-dom": "19.1.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0"
@@ -37,13 +37,9 @@
     "@types/react": "~19.1.0",
     "typescript": "~5.9.2"
   },
-  "expo": {
-    "install": {
-      "//": "SDK 54 pins react/react-dom to 19.1.0, but @clerk/clerk-js floors them at ~19.1.4. react-native@0.81.5 peers react at ^19.1.0, so 19.1.8 (newest 19.1.x) satisfies BOTH and dedupes Clerk onto one React copy. Excluded so `expo install --check` stops trying to pull them back to 19.1.0 and re-break Clerk. Re-evaluate on the next SDK bump.",
-      "exclude": [
-        "react",
-        "react-dom"
-      ]
-    }
+  "//overrides": "react MUST be EXACTLY 19.1.0 — react-native@0.81.5 ships a PREBUILT renderer that hardcodes its React version and compares with strict !==: `if (\"19.1.0\" !== React.version) throw Error('Incompatible React versions...')` (Libraries/Renderer/implementations/ReactNativeRenderer-{dev,prod,profiling}.js). RN's PEER range is the looser `^19.1.0`, which is why npm, tsc and `expo export` all stayed green on 19.1.8 while the app threw on the device at first render. @clerk/clerk-js peers react at `~19.1.4 || …`, which 19.1.0 does NOT satisfy — but that is install-time metadata, whereas RN's check is a runtime hard throw, so RN wins and we force the tree with `overrides`. Clerk declares react only as a PEER (never a dependency), so it cannot nest a second copy; the override just settles the peer. Do NOT raise react without re-reading the renderer's hardcoded constant for the new RN version.",
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   }
 }
