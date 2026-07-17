@@ -154,12 +154,27 @@ const VISION_MODEL_PATTERNS: Record<string, RegExp[]> = {
   // Every Claude from 3 onward is multimodal; claude-2 / instant are not.
   anthropic: [/^claude-(3|4|5|opus|sonnet|haiku)/i],
   // 4o-class, 4-turbo, 4.1, 5-class and the o-series reasoning models.
-  openai: [/^(gpt-4o|gpt-4-turbo|gpt-4\.1|gpt-5|o[34])/i],
+  //
+  // o3-mini is EXCLUDED, and it is the one that reads like a typo but isn't: the
+  // o-series is not uniformly sighted. o3, o3-pro and o4-mini take image input;
+  // o3-mini does not, and a bare /o[34]/ swept it in as sighted. It is a cheap
+  // reasoning model an operator would plausibly put first in the chain, so the
+  // hole was reachable. (o1 is absent for the opposite reason — it CAN see, but
+  // a false negative only costs a clear message, so it stays out until wanted.)
+  openai: [/^(gpt-4o|gpt-4-turbo|gpt-4\.1|gpt-5|o3(?!-mini)|o4)/i],
   // Gemini has been multimodal since 1.5; bare `gemini-pro` (1.0) was not.
   google: [/^gemini-(1\.5|[2-9])/i, /vision/i],
   // Local vision models people actually pull: llava/bakllava, the -vision and
   // -vl tags, moondream, minicpm-v, gemma3, llama4.
-  ollama: [/llava/i, /vision/i, /moondream/i, /minicpm-v/i, /[-.]vl\b/i, /qwen2\.?5?-?vl/i, /^gemma3/i, /^llama4/i],
+  //
+  // gemma3:1b is EXCLUDED and this is the sharpest edge on the list. Gemma 3 is
+  // multimodal at 4B/12B/27B but the 1B is TEXT-ONLY — and 1B is the smallest,
+  // fastest, most-pulled tag, i.e. exactly what an operator running local Ollama
+  // on modest hardware puts first. That is precisely the scenario visionChain
+  // exists for, so `/^gemma3/` matching it handed the image to a blind model in
+  // the story's own target case. The lookahead spares :4b/:12b/:27b (and the
+  // `-it-qat`-style suffixes) while refusing every 1b tag.
+  ollama: [/llava/i, /vision/i, /moondream/i, /minicpm-v/i, /[-.]vl\b/i, /qwen2\.?5?-?vl/i, /^gemma3(?![\w.]*[:-]1b)/i, /^llama4/i],
   // Groq's vision line is the llama-4 scout/maverick models + the -vision tags.
   groq: [/vision/i, /llama-4/i, /scout/i, /maverick/i],
   // Moonshot/Qwen ship vision under -vision-preview / -vl names; their default

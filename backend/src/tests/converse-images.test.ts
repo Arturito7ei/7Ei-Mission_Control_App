@@ -102,8 +102,51 @@ test('[MOB-7b] known vision models are recognised', () => {
     ['ollama', 'llama3.2-vision'],
     ['ollama', 'llava:13b'],
     ['groq', 'llama-3.2-11b-vision-preview'],
+    // The multimodal Gemma 3 tags must survive the :1b exclusion below — a fix
+    // that blinded the whole family would trade one bug for another.
+    ['ollama', 'gemma3:4b'],
+    ['ollama', 'gemma3:12b'],
+    ['ollama', 'gemma3:27b'],
+    ['ollama', 'gemma3:27b-it-qat'],
+    // o-series models that really do take image input, guarding the o3-mini
+    // exclusion from over-reaching.
+    ['openai', 'o3'],
+    ['openai', 'o3-pro'],
+    ['openai', 'o4-mini'],
   ]
   for (const [p, m] of sighted) assert.equal(supportsVision(p, m), true, `${p}/${m} should see`)
+})
+
+test('[MOB-7b] a text-only member of an otherwise-sighted family is NOT waved through', () => {
+  // AUDIT REGRESSION. The allowlist matched these two as sighted, so an image
+  // reached a model that cannot see it — the exact silent-drop this module
+  // exists to prevent, and reachable through ordinary operator config rather
+  // than anything exotic. Family-prefix patterns are the trap: "gemma3 is
+  // multimodal" and "the o-series sees" are both true of the family and false
+  // of a specific member.
+  const blindMembers: Array<[string, string, string]> = [
+    // Gemma 3 is multimodal at 4B+; the 1B is text-only. It is also the tag a
+    // local-Ollama operator is most likely to run.
+    ['ollama', 'gemma3:1b', 'Gemma 3 1B is text-only'],
+    ['ollama', 'gemma3:1b-it-qat', 'every 1b tag, suffixed or not'],
+    // o3 and o4-mini take images; o3-mini does not.
+    ['openai', 'o3-mini', 'o3-mini has no vision'],
+    ['openai', 'o3-mini-2025-01-31', 'pinned o3-mini snapshots too'],
+  ]
+  for (const [p, m, why] of blindMembers) {
+    assert.equal(supportsVision(p, m), false, `${p}/${m} must fail closed — ${why}`)
+  }
+})
+
+test('[MOB-7b] a blind family member is pruned out of a real chain', () => {
+  // The unit above proves the predicate; this proves the consequence, which is
+  // what actually protects the operator: gemma3:1b first in the chain must not
+  // be the hop an image lands on.
+  const chain = [
+    { provider: 'ollama', model: 'gemma3:1b' },
+    { provider: 'anthropic', model: 'claude-sonnet-4' },
+  ]
+  assert.deepEqual(visionChain(chain), [{ provider: 'anthropic', model: 'claude-sonnet-4' }])
 })
 
 test('[MOB-7b] text-only models are NOT treated as sighted', () => {
