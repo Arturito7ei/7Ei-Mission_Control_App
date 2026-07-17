@@ -19,7 +19,7 @@ import { validatePermissions } from '../services/agent-permissions'
 import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parseReasoningEffort } from '../services/model-profile'
 import { parseLlmChain } from '../services/arturita-pipeline'
 import { parseCustomModels } from '../services/custom-model'
-import { requireOrgRole } from '../middleware/rbac'
+import { requireOrgRole, enforceOrgRole } from '../middleware/rbac'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -246,6 +246,17 @@ export async function agentRoutes(app: FastifyInstance) {
     const { id } = req.params as any
     const rev = await db.query.configRevisions.findFirst({ where: eq(schema.configRevisions.id, id) })
     if (!rev || !rev.before) return reply.code(404).send({ error: 'Revision not found' })
+    // SEC (audit/perms-authz) — a rollback RESTORES owner-controlled agent config:
+    // `permissions` (capability caps), plus `role`, `status`, `llmProvider/llmModel`,
+    // `reportsTo` — the very fields the sibling write routes (permissions / trust /
+    // model-profile / config) gate to the org OWNER. Left member-gated, this route is
+    // a side door around all of them: a member could revert an owner's tightening —
+    // e.g. restore an agent's caps to a prior allow-all snapshot — with no owner role.
+    // The path carries no `:orgId`, so a `requireOrgRole` preHandler would silently
+    // no-op (the R-4 trap); derive the org from the revision row and enforce OWNER
+    // in-handler, matching how multi-org transfer/clone guard their data-derived org.
+    const gate = await enforceOrgRole({ userId: (req as any).auth?.userId, orgId: rev.orgId, minRole: 'owner' })
+    if (!gate.ok) return reply.code(gate.code).send({ error: gate.error })
     let before: any; try { before = JSON.parse(rev.before) } catch { return reply.code(400).send({ error: 'corrupt snapshot' }) }
     if (rev.entity === 'agent') {
       const patch: any = {}
