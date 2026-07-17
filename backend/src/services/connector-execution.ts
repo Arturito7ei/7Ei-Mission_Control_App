@@ -47,6 +47,10 @@ import {
   fileConnectorActionApproval, type ConnectorActionClass,
 } from './connector-authz'
 import { githubExecutor } from './connector-github'
+import { jiraExecutor } from './connector-jira'
+import { telegramExecutor } from './connector-telegram'
+import { whatsappExecutor } from './connector-whatsapp'
+import { googleChatExecutor } from './connector-google-chat'
 
 // ─── HTTP transport (bounded, injectable for tests) ──────────────────────────
 
@@ -141,11 +145,16 @@ export interface ConnectorExecutor {
   knowsAction?(action: string): boolean
 }
 
-/** The connectors that can ACTUALLY execute in this stage. CONN-8a ships GitHub only;
- *  every other connector (jira/google/comms/mcp) has NO executor and therefore CANNOT
- *  execute — a fail-closed default, not an oversight. CONN-8b adds the rest. */
+/** The connectors that can ACTUALLY execute. CONN-8a shipped GitHub; CONN-8b-1 adds the
+ *  Jira + comms (Telegram / WhatsApp / Google Chat) executors. Google Workspace (OAuth)
+ *  and the MCP bridge still have NO executor and therefore CANNOT execute — a fail-closed
+ *  default, not an oversight (CONN-8b-2 / CONN-8b-3 add them). */
 export const EXECUTORS: Record<string, ConnectorExecutor> = {
   github: githubExecutor,
+  jira: jiraExecutor,
+  telegram: telegramExecutor,
+  whatsapp: whatsappExecutor,
+  google_chat: googleChatExecutor,
 }
 
 export function getExecutor(connectorId: string): ConnectorExecutor | undefined {
