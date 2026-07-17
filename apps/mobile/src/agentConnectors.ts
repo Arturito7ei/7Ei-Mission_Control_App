@@ -50,6 +50,11 @@ export const MCP_CONNECTOR_ID = 'mcp'
 /** The token/basic connectors CONN-4a made real; enabled in the UI at CONN-4b. */
 export const GITHUB_CONNECTOR_ID = 'github'
 export const JIRA_CONNECTOR_ID = 'jira'
+/** The per-agent Google OAuth connector (CONN-5). On the phone this row is
+ *  CONFIG-ONLY — it shows connected/disconnected status + the account email + a note
+ *  pointing at the web dashboard; the phone cannot complete OAuth without a dev build,
+ *  so there is no Connect button or flow here (the web/desktop does the full flow). */
+export const GOOGLE_CONNECTOR_ID = 'google'
 
 /**
  * The accordion, grouped by category exactly as the operator listed them. Order
@@ -84,9 +89,9 @@ export const CONNECTOR_GROUPS: ConnectorGroup[] = [
     key: 'google',
     title: 'Google Services',
     connectors: [
-      { id: 'gcal', name: 'Google Calendar', icon: '📅', availability: 'coming_soon', note: 'Per-agent Google OAuth lands in a later stage (CONN-5, desktop-first).' },
-      { id: 'gmail', name: 'Gmail', icon: '📧', availability: 'coming_soon', note: 'Per-agent Google OAuth lands in a later stage (CONN-5, desktop-first).' },
-      { id: 'gdrive', name: 'Google Drive', icon: '📁', availability: 'coming_soon', note: 'Per-agent Google OAuth lands in a later stage (CONN-5, desktop-first).' },
+      // ONE Google connection per agent (CONN-5), granting the selected Calendar /
+      // Gmail / Drive scopes via OAuth. Real on web/desktop; config-only on the phone.
+      { id: GOOGLE_CONNECTOR_ID, name: 'Google Workspace', icon: '🔗', availability: 'available' },
     ],
   },
   {
@@ -299,4 +304,47 @@ export function jiraConfigToForm(config: Record<string, unknown> | null | undefi
     baseUrl: typeof c.baseUrl === 'string' ? c.baseUrl : '',
     email: typeof c.email === 'string' ? c.email : '',
   }
+}
+
+// ─── Google (OAuth) — CONN-5, CONFIG-ONLY on the phone ────────────────────────
+//
+// The phone does NOT run the OAuth flow (it can't complete the redirect without an
+// EAS dev build). This connector row is read-only on mobile: it shows the connection
+// status + the account email + granted services, and points the operator at the web
+// dashboard to connect/disconnect. These pure read helpers mirror web/lib/
+// agentConnectors.ts so the display derives from the SAME masked `config` the backend
+// returns (never a token). Kept identical to the web module (the parity test agrees).
+
+export type GoogleService = 'calendar' | 'gmail' | 'drive'
+export const GOOGLE_SERVICES: readonly GoogleService[] = ['calendar', 'gmail', 'drive']
+
+/** Human labels for the three services, in display order. */
+export const GOOGLE_SERVICE_LABELS: Record<GoogleService, string> = {
+  calendar: 'Calendar',
+  gmail: 'Gmail',
+  drive: 'Drive',
+}
+
+export type GoogleServiceSelection = Record<GoogleService, boolean>
+
+/** Read the enabled-service map out of a stored connector `config`. Never a token. Pure. */
+export function googleServicesFromConfig(config: Record<string, unknown> | null | undefined): GoogleServiceSelection {
+  const svc = ((config ?? {}) as any).services ?? {}
+  return {
+    calendar: svc.calendar === true,
+    gmail: svc.gmail === true,
+    drive: svc.drive === true,
+  }
+}
+
+/** Read the granted scope list out of a stored connector `config` (display only). Pure. */
+export function googleScopesFromConfig(config: Record<string, unknown> | null | undefined): string[] {
+  const raw = ((config ?? {}) as any).scopes
+  return Array.isArray(raw) ? raw.filter((s: unknown): s is string => typeof s === 'string') : []
+}
+
+/** A compact "Calendar · Gmail" summary of the enabled services (or null if none). Pure. */
+export function googleServicesSummary(sel: GoogleServiceSelection): string | null {
+  const on = GOOGLE_SERVICES.filter((s) => sel[s]).map((s) => GOOGLE_SERVICE_LABELS[s])
+  return on.length ? on.join(' · ') : null
 }

@@ -71,6 +71,22 @@ export const AGENT_CONNECTORS: AgentConnectorMeta[] = [
     docsUrl: 'https://modelcontextprotocol.io',
     hasSecret: true, // optional bearer/api-key for the server, stored agent-scoped
   },
+  {
+    id: 'google',
+    name: 'Google Workspace',
+    category: 'Google',
+    authType: 'oauth',
+    icon: '🔗',
+    docsUrl: 'https://workspace.google.com',
+    // The credential is an OAuth token pair, NOT a value POSTed via the `secret`
+    // field — it arrives through the CONN-5 start/callback flow and lands ENCRYPTED
+    // in `agent_oauth_tokens`, never in the `secrets` env bag. So `hasSecret` is
+    // false for the generic configure path: this connector is connected/disconnected
+    // via /connectors/google/oauth/start + the callback, and the generic POST/PUT
+    // config writes are rejected (see routes/agent-connectors.ts). `secretRef` stays
+    // null; the connector row's presence + status='connected' is the connected signal.
+    hasSecret: false,
+  },
 ]
 
 export function getAgentConnector(id: string): AgentConnectorMeta | undefined {

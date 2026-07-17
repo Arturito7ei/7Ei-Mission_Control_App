@@ -34,6 +34,7 @@ import {
   MCP_CONNECTOR_ID,
   GITHUB_CONNECTOR_ID,
   JIRA_CONNECTOR_ID,
+  GOOGLE_CONNECTOR_ID,
   isConfigured,
   mcpConfigToForm,
   validateMcpConfig,
@@ -41,6 +42,8 @@ import {
   validateGithubConfig,
   jiraConfigToForm,
   validateJiraConfig,
+  googleServicesFromConfig,
+  googleServicesSummary,
   type DisplayConnector,
   type McpFormInput,
   type McpTransport,
@@ -164,7 +167,8 @@ export function ConnectorsSection({
     <Section>
       <Text style={s.blurb}>
         Connect this agent to external services. Credentials are stored encrypted at agent scope and are never shown back
-        — only their connection status. GitHub, Jira and custom MCP servers are configurable today; the rest arrive in later stages.
+        — only their connection status. GitHub, Jira and custom MCP servers are configurable here; Google is shown read-only
+        (connect it from the web dashboard); the rest arrive in later stages.
       </Text>
 
       <View style={{ gap: space.md }}>
@@ -234,6 +238,9 @@ function ConnectorRow({
   const [expanded, setExpanded] = useState(false)
   const configured = isConfigured(state)
   const available = conn.availability === 'available'
+  // Google is CONFIG-ONLY on the phone: read-only status, no OAuth flow (see note).
+  const isGoogle = conn.id === GOOGLE_CONNECTOR_ID
+  const googleServices = isGoogle && configured ? googleServicesSummary(googleServicesFromConfig(state?.config)) : null
 
   const badge = available
     ? configured
@@ -259,13 +266,27 @@ function ConnectorRow({
               {state.accountLabel}
             </Text>
           ) : null}
+          {isGoogle && googleServices ? (
+            <Text style={s.rowSub} numberOfLines={1}>
+              {googleServices}
+            </Text>
+          ) : null}
+          {isGoogle ? (
+            <Text style={s.rowSub} numberOfLines={2}>
+              Connect Google from the web dashboard.
+            </Text>
+          ) : null}
           {!available && conn.note ? (
             <Text style={s.rowSub} numberOfLines={2}>
               {conn.note}
             </Text>
           ) : null}
         </View>
-        {available ? (
+        {isGoogle ? (
+          // CONFIG-ONLY: no Connect/Configure button on the phone — the OAuth flow
+          // runs on web/desktop only. The status above is the whole story here.
+          null
+        ) : available ? (
           <Button
             title={expanded ? 'Close' : configured ? 'Configure' : 'Add'}
             tone="ghost"

@@ -14,6 +14,7 @@ import { knowledgeRoutes } from './routes/knowledge'
 import { commsRoutes, commsWebhookRoutes } from './routes/comms'
 import { connectorRoutes } from './routes/connectors'
 import { agentConnectorRoutes } from './routes/agent-connectors'
+import { agentAuthGoogleRoutes } from './routes/agent-auth-google'
 import { notificationRoutes } from './routes/notifications'
 import { jiraRoutes } from './routes/jira'
 import { jiraWebhookRoutes, jiraEventRoutes } from './routes/jira-webhook'
@@ -264,6 +265,11 @@ async function start() {
   // Public routine webhook/API trigger (MCA-PC C3) — token-authenticated by URL.
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
+  // Epic CONN / CONN-5 — the per-agent Google OAuth callback. Public like authRoutes
+  // (Google redirects here with no app JWT); its single-use, expiring state row is the
+  // authorization. The owner-gated START route lives in the secured scope above
+  // (agentConnectorRoutes).
+  await app.register(agentAuthGoogleRoutes)
   // The TELEMETRY hook. Still a no-op by encapsulation (ONB2 audit H-1): a hook
   // added inside a register()'d child never fires for its siblings. Left that way
   // ON PURPOSE — telemetry is a SEPARATE concern from the audit trail (an in-memory
