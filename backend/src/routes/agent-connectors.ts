@@ -76,7 +76,8 @@ async function providerTest(
     const token = env.GITHUB_TOKEN
     if (!token) return { ok: false, error: 'No GitHub token configured' }
     const r = await fetch('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${token}`, 'User-Agent': '7ei-mc', Accept: 'application/json' }, signal,
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': '7ei-mc', Accept: 'application/json' },
+      redirect: 'manual', signal, // defense-in-depth: a provider 3xx can't chain elsewhere
     })
     if (!r.ok) return { ok: false, error: `GitHub returned ${r.status}` }
     const j = await r.json().catch(() => ({})) as any
@@ -88,7 +89,8 @@ async function providerTest(
     if (!isAtlassianHost(base)) return { ok: true, skipped: true, detail: `${email} (live check skipped — non-Atlassian host)` }
     const auth = 'Basic ' + Buffer.from(`${email}:${token}`).toString('base64')
     const r = await fetch(`${base.replace(/\/+$/, '')}/rest/api/3/myself`, {
-      headers: { Authorization: auth, Accept: 'application/json' }, signal,
+      headers: { Authorization: auth, Accept: 'application/json' },
+      redirect: 'manual', signal, // defense-in-depth: a provider 3xx can't chain elsewhere
     })
     if (!r.ok) return { ok: false, error: `Jira returned ${r.status}` }
     const j = await r.json().catch(() => ({})) as any
