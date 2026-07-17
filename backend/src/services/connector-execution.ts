@@ -87,7 +87,9 @@ export const boundedHttpClient: HttpClient = async (url, init) => {
   const timer = setTimeout(() => controller.abort(), EXECUTION_TIMEOUT_MS)
   let res: Response
   try {
-    res = await fetch(url, { method: init.method, headers: init.headers, body: init.body, signal: controller.signal })
+    // redirect:'error' (audit N2): a provider 3xx must NOT be silently followed —
+    // a redirect is the classic way to bounce a fixed-host call off to another host.
+    res = await fetch(url, { method: init.method, headers: init.headers, body: init.body, redirect: 'error', signal: controller.signal })
   } catch (e: any) {
     clearTimeout(timer)
     if (e?.name === 'AbortError') throw new ConnectorProviderError(`provider request timed out after ${EXECUTION_TIMEOUT_MS}ms`)
@@ -152,7 +154,9 @@ export function getExecutor(connectorId: string): ConnectorExecutor | undefined 
 
 function executorKnowsAction(executor: ConnectorExecutor, action: string): boolean {
   if (executor.knowsAction) return executor.knowsAction(action)
-  return action in executor.actions
+  // Object.hasOwn, not `in` (audit N3): never resolve a prototype-chain key like
+  // `constructor`/`toString` to a bogus "known action".
+  return Object.hasOwn(executor.actions, action)
 }
 
 // ─── The explicit-capability tightening (CONN-7 carry-forward i) ───────────────
@@ -369,7 +373,9 @@ async function runExecutor(args: {
 }): Promise<ConnectorExecutionResult> {
   const { orgId, agentId, connectorId, action, params, classification, approvalId, executor, http } = args
 
-  const spec = executor.actions[action]
+  // Object.hasOwn (audit N3): a prototype key like `constructor` must not resolve to a
+  // truthy-but-bogus spec.
+  const spec = Object.hasOwn(executor.actions, action) ? executor.actions[action] : undefined
   if (!spec) {
     return { status: 'rejected', reason: `executor does not implement action '${action}'`, classification }
   }

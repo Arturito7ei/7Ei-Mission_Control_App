@@ -39,12 +39,14 @@ const {
 } = await import('../services/connector-execution')
 const { githubExecutor } = await import('../services/connector-github')
 const { classifyConnectorAction } = await import('../services/connector-authz')
+const { renderActionSummary } = await import('../services/dangerous-approvals')
 const { mintSession } = await import('../services/arturita-session')
 const { hashToken: hashAgentToken } = await import('../middleware/agent-token')
 const { eq, and } = await import('drizzle-orm')
 
 const ORG = 'org8', OWNER = 'owner8', MEMBER = 'member8'
 const AGENT = 'agent8'                 // connector:* + github configured (the workhorse)
+const AGENT2 = 'agent8-two'            // a SECOND capable+configured agent (cross-agent redemption)
 const AGENT_NOCAP = 'agent8-nocap'     // caps EXCLUDE connectors; github configured
 const AGENT_EMPTY = 'agent8-empty'     // EMPTY permissions (legacy allow-all); github configured
 const OTHER_ORG = 'org8-other', OTHER_OWNER = 'owner8-other', OTHER_AGENT = 'agent8-other'
@@ -116,6 +118,7 @@ before(async () => {
   ] as any)
   await db.insert(schema.agents).values([
     { id: AGENT, orgId: ORG, name: 'Vera', role: 'Analyst', skills: [], runtime: 'internal', permissions: JSON.stringify(['connector:*']), apiTokenHash: hashAgentToken(AGENT_TOKEN), createdAt: now },
+    { id: AGENT2, orgId: ORG, name: 'Nia', role: 'Analyst', skills: [], runtime: 'internal', permissions: JSON.stringify(['connector:*']), createdAt: now },
     { id: AGENT_NOCAP, orgId: ORG, name: 'Locked', role: 'Analyst', skills: [], runtime: 'internal', permissions: JSON.stringify(['memory:write']), apiTokenHash: hashAgentToken(NOCAP_TOKEN), createdAt: now },
     { id: AGENT_EMPTY, orgId: ORG, name: 'Legacy', role: 'Analyst', skills: [], runtime: 'internal', permissions: JSON.stringify([]), createdAt: now },
     { id: OTHER_AGENT, orgId: OTHER_ORG, name: 'Spy', role: 'Analyst', skills: [], runtime: 'internal', permissions: JSON.stringify(['connector:*']), createdAt: now },
@@ -132,6 +135,7 @@ before(async () => {
   await route.ready()
 
   await configureGithub(AGENT)
+  await configureGithub(AGENT2)
   await configureGithub(AGENT_NOCAP)
   await configureGithub(AGENT_EMPTY)
 })
@@ -172,6 +176,18 @@ test('[CONN8A-MCP] carry-forward ii: an opaque unknown WRITE escalates even unde
 test('[CONN8A-REDACT] redactSecrets deep-replaces any credential value it finds', () => {
   const out = redactSecrets({ a: `x ${SENTINEL} y`, b: [{ c: SENTINEL }] }, [SENTINEL])
   assert.equal(JSON.stringify(out).includes(SENTINEL), false)
+})
+
+test('[CONN8A-N1] the DESTRUCTIVE banner is RECOMPUTED, not trusted from the payload classification', () => {
+  // A self-filing agent that lies (classification:'read' on a repo.delete) must NOT be
+  // able to suppress the red banner — renderConnectorAction recomputes from the verb.
+  const lied = renderActionSummary('connector_action', { connectorId: 'github', action: 'repo.delete', classification: 'read' })
+  assert.equal(lied.ok, true)
+  assert.match(String(lied.summary), /^DESTRUCTIVE /, 'a repo.delete must render DESTRUCTIVE regardless of payload classification')
+  assert.ok((lied.warnings ?? []).some(w => /Destructive/.test(w)))
+  // …and a genuine write still renders without the destructive banner.
+  const write = renderActionSummary('connector_action', { connectorId: 'github', action: 'issue.create', classification: 'destructive' })
+  assert.equal(/^DESTRUCTIVE /.test(String(write.summary)), false, 'a write mislabeled destructive must not show the banner')
 })
 
 // ─── 2. deny / rejected — nothing executes, no network ────────────────────────
@@ -305,6 +321,36 @@ test('[CONN8A-BIND] an approval cannot be redeemed for a DIFFERENT action or by 
   assert.equal(wrongAction.status, 'rejected')
   assert.match((wrongAction as any).reason, /does not match/)
   assert.equal(calls.length, 0)
+})
+
+test('[CONN8A-N4a] a DIFFERENT agent cannot redeem an approval bound to another agent', async () => {
+  // File + approve an approval bound to AGENT, then AGENT2 (also capable + configured)
+  // tries to redeem it — the pa.agentId !== agentId guard rejects it, nothing runs.
+  const pend = await executeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'github', action: 'issue.create', params: { owner: 'octo', repo: 'hello', title: 'Mine' } })
+  const approvalId = (pend as any).approvalId
+  const token = await mintFreshSession()
+  assert.equal((await decide(approvalId, 'approved', token)).statusCode, 200)
+  const { client, calls } = makeHttp()
+  const other = await executeConnectorAction({ orgId: ORG, agentId: AGENT2, connectorId: 'github', action: 'issue.create', params: { owner: 'octo', repo: 'hello', title: 'Mine' }, approvalId }, { httpClient: client })
+  assert.equal(other.status, 'rejected')
+  assert.match((other as any).reason, /does not match/)
+  assert.equal(calls.length, 0, 'no cross-agent execution')
+  // The rightful owner can still redeem it exactly once afterwards.
+  const mine = await executeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'github', action: 'issue.create', params: { owner: 'octo', repo: 'hello', title: 'Mine' }, approvalId }, { httpClient: client })
+  assert.equal(mine.status, 'executed')
+})
+
+test('[CONN8A-N4b] a concurrent double-redeem executes exactly once (UNIQUE claim)', async () => {
+  const pend = await executeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'github', action: 'issue.create', params: { owner: 'octo', repo: 'hello', title: 'Race' } })
+  const approvalId = (pend as any).approvalId
+  const token = await mintFreshSession()
+  assert.equal((await decide(approvalId, 'approved', token)).statusCode, 200)
+  const { client, calls } = makeHttp()
+  const redeem = () => executeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'github', action: 'issue.create', params: { owner: 'octo', repo: 'hello', title: 'Race' }, approvalId }, { httpClient: client })
+  const [a, b] = await Promise.all([redeem(), redeem()])
+  const statuses = [a.status, b.status].sort()
+  assert.deepEqual(statuses, ['executed', 'rejected'], `exactly one must win, got ${JSON.stringify(statuses)}`)
+  assert.equal(calls.length, 1, 'the UNIQUE(approval_id) claim allows only one provider call')
 })
 
 // ─── 6. Trust: auto_write WRITE executes; DESTRUCTIVE still needs approval ─────
