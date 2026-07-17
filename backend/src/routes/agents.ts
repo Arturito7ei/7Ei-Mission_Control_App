@@ -15,10 +15,11 @@ import { unreadTaskIds } from '../services/receipts'
 import { validateRoster, parseCapUsd, CHEAP_OUTPUT_RATE } from '../services/preflight'
 import { parseTrustMode, parseBoundary, serializeBoundary, TRUST_MODES } from '../services/review'
 import { secureRegistration } from '../services/code-executor'
+import { validatePermissions } from '../services/agent-permissions'
 import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parseReasoningEffort } from '../services/model-profile'
 import { parseLlmChain } from '../services/arturita-pipeline'
 import { parseCustomModels } from '../services/custom-model'
-import { requireOrgRole } from '../middleware/rbac'
+import { requireOrgRole, enforceOrgRole } from '../middleware/rbac'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -65,6 +66,11 @@ export async function agentRoutes(app: FastifyInstance) {
   app.patch('/api/agents/:agentId', async (req, reply) => {
     const { agentId } = req.params as any
     const body = req.body as any
+    // `permissions` (capability caps) is an OWNER-gated, validated control with its
+    // own route (`PUT /api/orgs/:orgId/agents/:agentId/permissions`). This legacy
+    // member-gated route spreads its body straight into `db.update().set()`, so it
+    // must NOT be a side door around that gate: drop the key regardless of body.
+    if (body && typeof body === 'object' && 'permissions' in body) delete body.permissions
     // Validate advisorIds if provided (single query instead of N+1)
     if (body.advisorIds) {
       const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
@@ -90,13 +96,27 @@ export async function agentRoutes(app: FastifyInstance) {
   })
 
   // MCA-GOV2 S4.2 — per-agent permissions (capabilities). null/empty = allow all.
-  app.patch('/api/agents/:agentId/permissions', async (req) => {
-    const { agentId } = req.params as any
-    const b = (req.body ?? {}) as any
-    const caps = Array.isArray(b.permissions) ? b.permissions.map(String) : []
+  //
+  // Owner-gated + validated, exactly like the sibling agent-write routes (config,
+  // trust, model-profile, skills): re-writing an agent's capability caps is a
+  // safety-critical control, so it requires the org OWNER — not just any member —
+  // and the caps are validated against the known capability vocabulary
+  // (services/agent-permissions.ts) so an arbitrary/oversized string can't be
+  // persisted as a cap. Org-scoped path so `requireOrgRole('owner')` can read
+  // `:orgId`; on the old non-org path it would silently no-op (the R-4 trap).
+  // Allow-all semantics are unchanged: an empty/absent list still stores `[]`,
+  // which `isCapabilityAllowed` treats as allow-all. Every change is snapshotted.
+  app.put('/api/orgs/:orgId/agents/:agentId/permissions', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as any
     const before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
+    // Tenant scoping: the agent must belong to the org in the path, or an owner of
+    // org A could target an agent in org B by pairing A's `:orgId` with B's id.
+    if (!before || before.orgId !== orgId) return reply.code(404).send({ error: 'Agent not found' })
+    const parsed = validatePermissions(((req.body ?? {}) as any).permissions)
+    if (parsed.ok !== true) return reply.code(400).send({ error: parsed.error })
+    const caps = parsed.caps
     await db.update(schema.agents).set({ permissions: JSON.stringify(caps) }).where(eq(schema.agents.id, agentId))
-    if (before) await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId: before.orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify({ ...before, permissions: JSON.stringify(caps) }), actor: (req as any).userId ?? 'human', createdAt: new Date() })
+    await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(before), after: JSON.stringify({ ...before, permissions: JSON.stringify(caps) }), actor: (req as any).userId ?? (req as any).auth?.userId ?? 'human', createdAt: new Date() })
     return { ok: true, permissions: caps }
   })
 
@@ -226,6 +246,17 @@ export async function agentRoutes(app: FastifyInstance) {
     const { id } = req.params as any
     const rev = await db.query.configRevisions.findFirst({ where: eq(schema.configRevisions.id, id) })
     if (!rev || !rev.before) return reply.code(404).send({ error: 'Revision not found' })
+    // SEC (audit/perms-authz) — a rollback RESTORES owner-controlled agent config:
+    // `permissions` (capability caps), plus `role`, `status`, `llmProvider/llmModel`,
+    // `reportsTo` — the very fields the sibling write routes (permissions / trust /
+    // model-profile / config) gate to the org OWNER. Left member-gated, this route is
+    // a side door around all of them: a member could revert an owner's tightening —
+    // e.g. restore an agent's caps to a prior allow-all snapshot — with no owner role.
+    // The path carries no `:orgId`, so a `requireOrgRole` preHandler would silently
+    // no-op (the R-4 trap); derive the org from the revision row and enforce OWNER
+    // in-handler, matching how multi-org transfer/clone guard their data-derived org.
+    const gate = await enforceOrgRole({ userId: (req as any).auth?.userId, orgId: rev.orgId, minRole: 'owner' })
+    if (!gate.ok) return reply.code(gate.code).send({ error: gate.error })
     let before: any; try { before = JSON.parse(rev.before) } catch { return reply.code(400).send({ error: 'corrupt snapshot' }) }
     if (rev.entity === 'agent') {
       const patch: any = {}

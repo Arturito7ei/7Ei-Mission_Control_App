@@ -92,8 +92,10 @@ export default function GovernancePanel({ orgId, getToken }: { orgId: string; ge
   const delPolicy = async (id: string) => { try { await api(`/api/policies/${id}`, { token: await getToken(), method: 'DELETE' }); await load() } catch (e: any) { setErr(e?.message ?? 'Failed') } }
   const saveCaps = async (agentId: string) => {
     const caps = (capEdits[agentId] ?? '').split(',').map(s => s.trim()).filter(Boolean)
-    try { await api(`/api/agents/${agentId}/permissions`, { token: await getToken(), method: 'PATCH', body: JSON.stringify({ permissions: caps }) }); await load(); note('Permissions saved') }
-    catch (e: any) { setErr(e?.message ?? 'Failed') }
+    // Owner-gated + validated on the backend (like trust / model-profile): a member
+    // sees a 403 surfaced here, and an unknown capability a 400 — not a silent no-op.
+    try { await api(`/api/orgs/${orgId}/agents/${agentId}/permissions`, { token: await getToken(), method: 'PUT', body: JSON.stringify({ permissions: caps }) }); await load(); note('Permissions saved') }
+    catch (e: any) { setErr(e?.message ?? 'Failed (owner role required)') }
   }
   const rollback = async (id: string) => { try { const r = await api<{ restored?: string[] }>(`/api/revisions/${id}/rollback`, { token: await getToken(), method: 'POST', body: '{}' }); await load(); note(`Rolled back (${(r.restored ?? []).length} fields)`) } catch (e: any) { setErr(e?.message ?? 'Failed') } }
   // Epic P / P1 — owner-gated trust level + boundary set. PUT is owner-only on the
