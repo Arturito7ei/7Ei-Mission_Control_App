@@ -52,6 +52,7 @@ import { telegramExecutor } from './connector-telegram'
 import { whatsappExecutor } from './connector-whatsapp'
 import { googleChatExecutor } from './connector-google-chat'
 import { googleExecutor } from './connector-google'
+import { mcpExecutor } from './connector-mcp'
 import { ensureFreshAgentGoogleToken } from './agent-google-auth'
 
 // ─── HTTP transport (bounded, injectable for tests) ──────────────────────────
@@ -129,6 +130,12 @@ export interface ExecutorContext {
    *  OAuth connector (whose credential arrives via `oauthAccessToken`). */
   secrets: Record<string, string>
   http: HttpClient
+  /** The connector row's NON-SECRET config (the `agent_connectors.config` blob). Present
+   *  for every executor. Fixed-host executors (github/jira/comms) ignore it — their host
+   *  is hardcoded. An open-ended executor (MCP) reads the operator-configured `url` /
+   *  `transport` / allow-list from here at execution time (never a credential — that
+   *  arrives via `secrets`). */
+  config?: Record<string, unknown> | null
   /** The agent's FRESH OAuth access token — present ONLY for a `credentialKind:'google_oauth'`
    *  connector, resolved by the framework via CONN-5's `ensureFreshAgentGoogleToken`
    *  (decrypt → refresh-if-stale → re-encrypt in place). Used ONLY as a Bearer to the
@@ -165,6 +172,27 @@ export interface ConnectorExecutor {
    *  tool the executor can't vouch for is treated as unknown → escalated to approval
    *  even under auto_write (CONN-7 carry-forward ii). */
   knowsAction?(action: string): boolean
+  /** OPEN-ENDED dispatch: when no fixed `actions[action]` spec matches, the framework
+   *  calls this with the raw action name (MCP: any tool name maps to one JSON-RPC
+   *  `tools/call`). Absent → an unimplemented action is REJECTED (fixed-surface
+   *  executors). The class was already resolved by `classifyConnectorAction` before this
+   *  runs, so authorization is unaffected by the open-ended dispatch. */
+  invoke?(action: string, ctx: ExecutorContext): Promise<unknown>
+  /** OPAQUE-surface escalation hook. When the pure decision is `allow`, the framework
+   *  asks this whether to escalate to needs_approval — given the action + the connector's
+   *  non-secret config (so MCP can consult its per-connector allow-list). Returns true to
+   *  escalate. This SUPERSEDES `mustEscalateUnknownWrite` for an executor that defines it
+   *  (MCP): it must escalate ANY otherwise-allowed opaque tool (read- OR write-classified)
+   *  that the operator has not explicitly allow-listed, so `auto_write` / free-read can
+   *  never blanket-approve an arbitrary third-party tool. Absent → the framework falls
+   *  back to `mustEscalateUnknownWrite` (fixed-surface executors). */
+  escalateAllowToApproval?(action: string, config: Record<string, unknown> | null): boolean
+  /** The DEFAULT transport for this executor when no test client is injected. Fixed-host
+   *  executors leave this unset and use `boundedHttpClient` (global fetch, redirect:'error').
+   *  MCP sets a DNS-PINNING, SSRF-guarded node:https client here, because the user-supplied
+   *  MCP URL is a real egress surface and `boundedHttpClient` cannot pin the resolved IP
+   *  against DNS rebinding. Tests still override via `opts.httpClient`. */
+  defaultHttpClient?: HttpClient
 }
 
 /** Resolve the agent's fresh Google OAuth access token (+ granted scopes). Injectable
@@ -177,11 +205,14 @@ export type GoogleTokenResolver = (
 ) => Promise<{ accessToken: string; accountEmail: string | null; scopes: string | null } | null>
 
 /** The connectors that can ACTUALLY execute. CONN-8a shipped GitHub; CONN-8b-1 added the
- *  Jira + comms (Telegram / WhatsApp / Google Chat) executors; CONN-8b-2 adds Google
+ *  Jira + comms (Telegram / WhatsApp / Google Chat) executors; CONN-8b-2 added Google
  *  Workspace (Gmail / Calendar / Drive) — the first OAUTH-credentialed executor, which
  *  resolves its credential from CONN-5's encrypted `agent_oauth_tokens`, not the env
- *  secret bag. Only the MCP bridge still has NO executor and therefore CANNOT execute — a
- *  fail-closed default, not an oversight (CONN-8b-3 adds it). */
+ *  secret bag. CONN-8b-3 adds the custom-MCP bridge — the ONLY OPEN-ENDED executor: the
+ *  MCP server URL is user-configured, so it is a real SSRF/egress surface (DNS-pinned +
+ *  private-range-blocked + https-only), and every opaque tool escalates to approval unless
+ *  explicitly allow-listed. Its stdio transport is intentionally NOT executed (fail-closed
+ *  — arbitrary host command execution is deferred to a later, audited stage). */
 export const EXECUTORS: Record<string, ConnectorExecutor> = {
   github: githubExecutor,
   jira: jiraExecutor,
@@ -189,6 +220,7 @@ export const EXECUTORS: Record<string, ConnectorExecutor> = {
   whatsapp: whatsappExecutor,
   google_chat: googleChatExecutor,
   google: googleExecutor,
+  mcp: mcpExecutor,
 }
 
 export function getExecutor(connectorId: string): ConnectorExecutor | undefined {
@@ -319,7 +351,6 @@ export async function executeConnectorAction(
   const { orgId, agentId, connectorId } = input
   const action = String(input.action ?? '').trim()
   const params = input.params ?? {}
-  const http = opts.httpClient ?? boundedHttpClient
   const googleTokenResolver = opts.googleTokenResolver ?? ensureFreshAgentGoogleToken
   const classification = classifyConnectorAction(connectorId, action)
 
@@ -342,6 +373,9 @@ export async function executeConnectorAction(
   })
   const connectorConfigured = !!row && row.status !== 'disabled' && row.status !== 'not_configured'
   const trustLevel: TrustLevel = normalizeTrustLevel(row?.trustLevel)
+  // The connector's NON-SECRET config (host/url/transport/allow-list). Handed to the
+  // executor at run time; MCP reads its user-configured URL + allow-list from here.
+  const config: Record<string, unknown> | null = (row?.config as Record<string, unknown>) ?? null
 
   // 2. Explicit capability (carry-forward i) — before ANYTHING else executes.
   const permissions = parseCapabilities(agent.permissions)
@@ -358,16 +392,25 @@ export async function executeConnectorAction(
   if (!executor) {
     return { status: 'rejected', reason: `no executor available for connector '${connectorId}' (execution not supported yet)`, classification }
   }
+  // The transport: a test-injected client wins; else the executor's own default (MCP's
+  // DNS-pinning node:https client); else the bounded global-fetch client.
+  const http = opts.httpClient ?? executor.defaultHttpClient ?? boundedHttpClient
 
   // ─── Redemption path: caller supplied an approvalId ──────────────────────────
   if (input.approvalId) {
-    return redeemAndExecute({ orgId, agentId, connectorId, action, params, classification, approvalId: input.approvalId, executor, http, googleTokenResolver })
+    return redeemAndExecute({ orgId, agentId, connectorId, action, params, config, classification, approvalId: input.approvalId, executor, http, googleTokenResolver })
   }
 
   // ─── First-pass path: derive the decision (tightened cap + MCP escalation) ───
   let decision = decideConnectorAuthorization({ hasCapability: true, connectorConfigured, classification, trustLevel }).decision
-  if (decision === 'allow' && mustEscalateUnknownWrite(executor, classification, action)) {
-    decision = 'needs_approval' // carry-forward ii: opaque tool never auto-executes
+  if (decision === 'allow') {
+    // An opaque-surface executor (MCP) escalates via its allow-list-aware hook; every
+    // fixed-surface executor uses the write-only carry-forward (ii) check. Either way an
+    // otherwise-allowed action the executor can't vouch for never auto-executes.
+    const escalate = executor.escalateAllowToApproval
+      ? executor.escalateAllowToApproval(action, config)
+      : mustEscalateUnknownWrite(executor, classification, action)
+    if (escalate) decision = 'needs_approval'
   }
 
   if (decision === 'deny') {
@@ -385,14 +428,15 @@ export async function executeConnectorAction(
   }
 
   // allow → execute exactly once (allow-path rows carry a NULL approvalId).
-  return runExecutor({ orgId, agentId, connectorId, action, params, classification, approvalId: null, executor, http, googleTokenResolver })
+  return runExecutor({ orgId, agentId, connectorId, action, params, config, classification, approvalId: null, executor, http, googleTokenResolver })
 }
 
 // ─── Redeem an approved gated action, then execute exactly once ────────────────
 
 async function redeemAndExecute(args: {
   orgId: string; agentId: string; connectorId: string; action: string
-  params: Record<string, unknown>; classification: ConnectorActionClass
+  params: Record<string, unknown>; config: Record<string, unknown> | null
+  classification: ConnectorActionClass
   approvalId: string; executor: ConnectorExecutor; http: HttpClient
   googleTokenResolver: GoogleTokenResolver
 }): Promise<ConnectorExecutionResult> {
@@ -427,16 +471,20 @@ async function redeemAndExecute(args: {
 
 async function runExecutor(args: {
   orgId: string; agentId: string; connectorId: string; action: string
-  params: Record<string, unknown>; classification: ConnectorActionClass
+  params: Record<string, unknown>; config: Record<string, unknown> | null
+  classification: ConnectorActionClass
   approvalId: string | null; executor: ConnectorExecutor; http: HttpClient
   googleTokenResolver: GoogleTokenResolver
 }): Promise<ConnectorExecutionResult> {
-  const { orgId, agentId, connectorId, action, params, classification, approvalId, executor, http, googleTokenResolver } = args
+  const { orgId, agentId, connectorId, action, params, config, classification, approvalId, executor, http, googleTokenResolver } = args
 
   // Object.hasOwn (audit N3): a prototype key like `constructor` must not resolve to a
-  // truthy-but-bogus spec.
+  // truthy-but-bogus spec. A fixed spec wins; otherwise an OPEN-ENDED executor (MCP)
+  // dispatches any action through `invoke`. No handler at all → reject (fail-closed).
   const spec = Object.hasOwn(executor.actions, action) ? executor.actions[action] : undefined
-  if (!spec) {
+  const handler: ((ctx: ExecutorContext) => Promise<unknown>) | undefined =
+    spec ? spec.handler : (executor.invoke ? (ctx) => executor.invoke!(action, ctx) : undefined)
+  if (!handler) {
     return { status: 'rejected', reason: `executor does not implement action '${action}'`, classification }
   }
 
@@ -461,7 +509,7 @@ async function runExecutor(args: {
   // executor ONLY what it needs. `secretValues` feeds the redaction backstop — it MUST
   // include the OAuth access token so a buggy/hostile provider that echoes it can't leak
   // it through the result/error.
-  const ctx: ExecutorContext = { params, secrets: {}, http }
+  const ctx: ExecutorContext = { params, secrets: {}, http, config }
   const secretValues: string[] = []
 
   if (executor.credentialKind === 'google_oauth') {
@@ -491,7 +539,7 @@ async function runExecutor(args: {
   }
 
   try {
-    const raw = await spec.handler(ctx)
+    const raw = await handler(ctx)
     const data = redactSecrets(raw, secretValues) // backstop: strip any echoed credential
     await db.update(schema.connectorExecutions).set({ status: 'succeeded' }).where(eq(schema.connectorExecutions.id, executionId))
     return { status: 'executed', connectorId, action, classification, executionId, data }

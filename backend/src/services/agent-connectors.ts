@@ -144,6 +144,11 @@ const McpConfigSchema = z.object({
   url: z.string().trim().url().max(2048).optional(),
   command: z.string().trim().min(1).max(512).optional(),
   args: z.array(z.string().max(512)).max(50).optional(),
+  // CONN-8b-3: the operator's explicit allow-list of MCP tool names permitted to auto-run
+  // under `auto_write`. NON-secret. Any tool NOT on this list (and every destructive-named
+  // tool) escalates to approval — an empty/absent list means EVERY opaque tool needs
+  // approval (fail-closed for the opaque surface).
+  autoApproveTools: z.array(z.string().trim().min(1).max(200)).max(200).optional(),
 })
   .strict()
   .refine(c => c.transport !== 'http' || !!c.url, { message: 'http transport requires a url', path: ['url'] })
