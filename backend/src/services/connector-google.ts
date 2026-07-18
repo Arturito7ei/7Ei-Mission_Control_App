@@ -95,7 +95,9 @@ function requireGmailMessageId(params: Record<string, unknown>): string {
 }
 function requireCalendarId(params: Record<string, unknown>): string {
   const id = str(params.calendarId) || 'primary'
-  if (!CALENDAR_ID_RE.test(id)) throw new ConnectorProviderError('invalid `calendarId`')
+  // NIT-2: CALENDAR_ID_RE allows '.' (email-form ids); reject a pure '.'/'..' segment so a
+  // param can never become a path-traversal segment even within the fixed host.
+  if (!CALENDAR_ID_RE.test(id) || id === '.' || id === '..') throw new ConnectorProviderError('invalid `calendarId`')
   return id
 }
 function requireEventId(params: Record<string, unknown>): string {

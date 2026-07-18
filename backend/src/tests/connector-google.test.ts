@@ -238,6 +238,33 @@ test('[CONN8B2-ONCE] gmail.send approved+stepped-up → executes EXACTLY once; r
   assert.equal(calls.length, 1, 'replay must not make a second provider call')
 })
 
+test('[CONN8B2-PARAMBIND] an approved gmail.send cannot be redeemed with DIFFERENT params; card shows the real recipient (NIT-1)', async () => {
+  const approvedParams = { to: 'bob@example.com', subject: 'Quarterly', body: 'See attached' }
+  const pend = await exec({ orgId: ORG, agentId: AGENT, connectorId: 'google', action: 'gmail.send', params: approvedParams, target: 'agent-supplied-label' }, makeHttp().client)
+  assert.equal(pend.status, 'pending_approval')
+  const approvalId = (pend as any).approvalId
+  // The operator's card TARGET is derived SERVER-SIDE from params.to (+ subject), NOT the
+  // untrusted agent label — so what the operator sees is what will actually send.
+  const ap = await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, approvalId) })
+  assert.match(String(ap!.summary), /bob@example\.com/, 'the card shows the real recipient')
+  assert.match(String(ap!.summary), /Quarterly/, 'the card shows the real subject')
+  assert.equal(String(ap!.summary).includes('agent-supplied-label'), false, 'the untrusted agent label is NOT used')
+  // Approve with a fresh step-up.
+  const token = await mintFreshSession()
+  assert.equal((await decide(approvalId, 'approved', token)).statusCode, 200)
+  // Redeem with TAMPERED params (different recipient + body) → rejected, NOTHING sent.
+  const evil = makeHttp()
+  const tampered = await exec({ orgId: ORG, agentId: AGENT, connectorId: 'google', action: 'gmail.send', params: { to: 'eve@evil.com', subject: 'Quarterly', body: 'wire the money' }, approvalId }, evil.client)
+  assert.equal(tampered.status, 'rejected')
+  assert.match((tampered as any).reason, /does not match/)
+  assert.equal(evil.calls.length, 0, 'a tampered redemption sends nothing')
+  // Redeem with the EXACT approved params (keys SHUFFLED, proving canonicalization) → executes once.
+  const good = makeHttp()
+  const ok = await exec({ orgId: ORG, agentId: AGENT, connectorId: 'google', action: 'gmail.send', params: { body: 'See attached', to: 'bob@example.com', subject: 'Quarterly' }, approvalId }, good.client)
+  assert.equal(ok.status, 'executed', JSON.stringify(ok))
+  assert.equal(good.calls.length, 1, 'the approved send executes exactly once')
+})
+
 test('[CONN8B2-STEPUP] approving a gmail.send WITHOUT step-up is refused (approval stays pending)', async () => {
   const pend = await exec({ orgId: ORG, agentId: AGENT, connectorId: 'google', action: 'gmail.send', params: { to: 'a@example.com', subject: 'S', body: 'B' } }, makeHttp().client)
   const approvalId = (pend as any).approvalId

@@ -44,7 +44,7 @@ import {
 } from './agent-connectors'
 import {
   classifyConnectorAction, decideConnectorAuthorization, connectorCapability,
-  fileConnectorActionApproval, type ConnectorActionClass,
+  fileConnectorActionApproval, connectorParamsDigest, type ConnectorActionClass,
 } from './connector-authz'
 import { jiraExecutor } from './connector-jira'
 import { telegramExecutor } from './connector-telegram'
@@ -375,6 +375,9 @@ export async function executeConnectorAction(
   if (decision === 'needs_approval') {
     const filed = await fileConnectorActionApproval({
       orgId, agentId, connectorId, connectorName: meta.name, action, classification, target: input.target ?? null,
+      // NIT-1: bind the approval to THESE exact params (server-computed digest + a card
+      // target derived from them) so the approved params ARE the executed params.
+      params,
     })
     if (!filed.ok) return { status: 'rejected', reason: `could not file approval: ${filed.error}`, classification }
     return { status: 'pending_approval', connectorId, action, classification, approvalId: filed.approvalId!, reason: 'action requires operator approval (with step-up) before it can execute' }
@@ -407,6 +410,14 @@ async function redeemAndExecute(args: {
   const pa = (approval.payload as any)?.action ?? {}
   if (pa.connectorId !== connectorId || String(pa.action) !== action || pa.agentId !== agentId) {
     return { status: 'rejected', reason: 'approval does not match this action', classification }
+  }
+  // NIT-1: bind the PARAMS too — the executed params MUST equal the approved params. The
+  // stored digest was computed server-side at file time; recompute from the params the
+  // agent submits now and require a match, so an approved "send to bob" can't be redeemed
+  // to "send to eve". A missing/legacy digest (never bound) also fails closed here.
+  const expectedDigest = connectorParamsDigest(args.params)
+  if (typeof pa.paramsDigest !== 'string' || pa.paramsDigest !== expectedDigest) {
+    return { status: 'rejected', reason: 'approval does not match this action (params changed since approval)', classification }
   }
   return runExecutor({ ...args, approvalId })
 }

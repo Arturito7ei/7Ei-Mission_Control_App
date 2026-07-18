@@ -20,7 +20,7 @@
 // `authorizeConnectorAction` is the one IO entry point CONN-8 calls, and it routes a
 // `needs_approval` through the SAME `approval_requests` + step-up path the Inbox uses.
 
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { and, eq } from 'drizzle-orm'
 import { db, schema } from '../db/client'
 import { getAgentConnector, normalizeTrustLevel, type TrustLevel } from './agent-connectors'
@@ -306,6 +306,92 @@ export interface FiledConnectorApproval {
   error?: string
 }
 
+// ─── Params binding (NIT-1) — the approved params ARE the executed params ───────
+//
+// CONN-8a bound an approval to (connectorId, action, agentId) but NOT the params, so an
+// operator who approved "gmail.send to bob@x subject Y" could have the agent redeem the
+// SAME approval to send to eve@evil with different content. For a parameterized,
+// high-consequence action (email/calendar/…) that breaks approval fidelity. The fix: at
+// file time we compute a SERVER-side digest of the exact params the agent submitted with
+// the needs_approval request and store it on the approval; at redemption the framework
+// recomputes the digest from the params the agent submits and REQUIRES a match — so the
+// approved params can never diverge from the executed params. The agent cannot forge the
+// stored digest (it is computed here, not taken from the payload).
+
+/** Recursively sort object keys so the JSON encoding is stable regardless of the order
+ *  the agent happened to serialize its params in. Arrays keep order (order is meaningful);
+ *  primitives pass through. Pure. */
+function canonicalizeForDigest(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonicalizeForDigest)
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) out[k] = canonicalizeForDigest((v as any)[k])
+    return out
+  }
+  return v
+}
+
+/** A stable sha256 hex digest of the connector-action params. Same input (regardless of
+ *  key order) → same digest, so file-time and redeem-time comparisons agree. Pure. */
+export function connectorParamsDigest(params: Record<string, unknown> | null | undefined): string {
+  return createHash('sha256').update(JSON.stringify(canonicalizeForDigest(params ?? {}))).digest('hex')
+}
+
+/** Strip control chars + bound a value for safe display on the operator's card. */
+function safeCardField(v: unknown, max = 200): string {
+  return String(v ?? '').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, max)
+}
+
+/**
+ * Derive the approval card's TARGET line SERVER-SIDE from the real params for known,
+ * high-consequence parameterized actions — so what the operator sees is what will
+ * actually happen, not an agent-supplied label. Only non-sensitive identifying fields are
+ * surfaced (recipient / subject / event title / file name / id) — NEVER a body/content.
+ * Returns null for actions we don't specifically describe (the caller then falls back to
+ * the agent-supplied target). Pure.
+ */
+export function deriveConnectorApprovalTarget(connectorId: string, action: string, params: Record<string, unknown> | null | undefined): string | null {
+  const p = params ?? {}
+  if (connectorId === 'google') {
+    switch (action) {
+      case 'gmail.send': {
+        const to = safeCardField(p.to, 200)
+        if (!to) return null
+        const subject = safeCardField(p.subject, 140)
+        const cc = safeCardField(p.cc, 200)
+        return `to ${to}${cc ? ` (cc ${cc})` : ''}${subject ? ` — "${subject}"` : ''}`
+      }
+      case 'calendar.event.create': {
+        const summary = safeCardField(p.summary, 140)
+        if (!summary) return null
+        const start = safeCardField(p.start, 40)
+        return `"${summary}"${start ? ` @ ${start}` : ''}`
+      }
+      case 'drive.file.create': {
+        const name = safeCardField(p.name, 140)
+        return name ? `create "${name}"` : null
+      }
+      case 'drive.file.update': {
+        const id = safeCardField(p.fileId ?? p.id, 140)
+        return id ? `update file ${id}` : null
+      }
+      case 'calendar.event.delete': {
+        const id = safeCardField(p.eventId ?? p.id, 140)
+        return id ? `delete event ${id}` : null
+      }
+      case 'drive.file.delete': {
+        const id = safeCardField(p.fileId ?? p.id, 140)
+        return id ? `delete file ${id}` : null
+      }
+      case 'gmail.delete': {
+        const id = safeCardField(p.id ?? p.messageId, 140)
+        return id ? `trash message ${id}` : null
+      }
+    }
+  }
+  return null
+}
+
 /**
  * File a pending, dangerous `connector_action` approval for a WRITE / DESTRUCTIVE /
  * UNKNOWN connector action, and return its id. `prepareApprovalRecord` machine-renders
@@ -318,6 +404,12 @@ export interface FiledConnectorApproval {
  * so an approval card can never drift between "authorize" and "execute". NEVER pass a
  * credential in — `target`/`action` are the only free-form fields and they land on the
  * card verbatim.
+ *
+ * NIT-1: when `params` are supplied (the execution framework always does), the card
+ * TARGET is derived SERVER-SIDE from them for known high-consequence actions (so the
+ * operator sees the real recipient/subject, not an agent label), and a server-computed
+ * `paramsDigest` is stored on the action so redemption can require the executed params to
+ * equal the approved ones.
  */
 export async function fileConnectorActionApproval(input: {
   orgId: string
@@ -327,7 +419,10 @@ export async function fileConnectorActionApproval(input: {
   action: string
   classification: ConnectorActionClass
   target?: string | null
+  params?: Record<string, unknown> | null
 }): Promise<FiledConnectorApproval> {
+  // Server-derived card target for known parameterized actions; else the caller's label.
+  const derivedTarget = deriveConnectorApprovalTarget(input.connectorId, input.action, input.params)
   const prepared = prepareApprovalRecord({
     type: 'connector_action',
     action: {
@@ -336,7 +431,10 @@ export async function fileConnectorActionApproval(input: {
       action: input.action,
       classification: input.classification,
       agentId: input.agentId,
-      target: input.target ?? null,
+      target: derivedTarget ?? input.target ?? null,
+      // Server-computed binding — the agent cannot forge it (it is NOT read back from the
+      // payload; redemption recomputes it from the submitted params and requires a match).
+      paramsDigest: connectorParamsDigest(input.params),
     },
   })
   if (!prepared.ok) return { ok: false, error: prepared.error }
