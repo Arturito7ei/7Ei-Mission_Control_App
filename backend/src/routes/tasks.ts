@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { db, schema } from '../db/client'
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
@@ -39,6 +40,28 @@ import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
+
+// GC-0 (audit) — the COMPLETE set of `goals` columns a client may write, mirroring
+// `ProjectPatchSchema` in routes/projects.ts. Deliberately absent:
+//   • `orgId`     — the tenant boundary. THIS is the vulnerability (see PATCH below).
+//   • `id`        — identity; rewriting it orphans every child goal pointing at it.
+//   • `createdAt` — immutable provenance.
+// Not `.strict()`, for the same reason projects isn't: unknown keys are STRIPPED, so a
+// client that round-trips a whole goal object back through PATCH still succeeds — it
+// just cannot move the row.
+//
+// ⚠️ `parentGoalId` and `ownerAgentId` ARE writable (they are the point of the route),
+// and neither is validated to live in the same org. That is a PRE-EXISTING gap this
+// change does not widen: it can dangle a reference, but it cannot move the goal's
+// tenancy, which is what the gate depends on. Flagged in the audit as a follow-up.
+const GoalPatchSchema = z.object({
+  title: z.string().min(1).max(300).optional(),
+  description: z.string().nullable().optional(),
+  metric: z.string().nullable().optional(),
+  status: z.enum(['active', 'done', 'paused', 'dropped']).optional(),
+  ownerAgentId: z.string().nullable().optional(),
+  parentGoalId: z.string().nullable().optional(),
+})
 
 export async function taskRoutes(app: FastifyInstance) {
   // ─── Unified inbox (MCA-PC A3) ──────────────────────────────────────────
@@ -124,9 +147,21 @@ export async function taskRoutes(app: FastifyInstance) {
     await db.insert(schema.goals).values(goal)
     reply.code(201); return { goal }
   })
-  app.patch('/api/goals/:goalId', async (req) => {
+  app.patch('/api/goals/:goalId', async (req, reply) => {
     const { goalId } = req.params as any
-    await db.update(schema.goals).set(req.body as any).where(eq(schema.goals.id, goalId))
+    // GC-0 (audit) — the SAME cross-org write hole the projects route had, and for the
+    // same structural reason. `resolveRequestOrg` (middleware/rbac.ts) derives this
+    // route's org FROM THE GOAL ROW, and reads it BEFORE this handler mutates that row.
+    // At check time the caller really is a member of the goal's org, so the gate passes;
+    // `set(req.body as any)` then wrote `orgId` and moved the goal into another tenant.
+    // A gate that authorises against the pre-image cannot defend a field that REWRITES
+    // the pre-image — only an allow-list can. Proven exploitable at 200 pre-fix.
+    const parsed = GoalPatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid goal' })
+    const patch = parsed.data
+    if (Object.keys(patch).length > 0) {
+      await db.update(schema.goals).set(patch).where(eq(schema.goals.id, goalId))
+    }
     return { goal: await db.query.goals.findFirst({ where: eq(schema.goals.id, goalId) }) }
   })
   app.delete('/api/goals/:goalId', async (req, reply) => {
