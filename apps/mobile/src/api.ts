@@ -30,7 +30,7 @@ import type { SkillsPayload } from './agentEdit'
 // there is ONE definition of the MASKED connector projection. NOTE the security
 // invariant it encodes: the read shape carries NO secret / token / secretRef —
 // only status + non-secret config + a derived label. A credential is WRITE-ONLY.
-import type { PublicConnectorState } from './agentConnectors'
+import type { PublicConnectorState, ConnectorExecutionItem } from './agentConnectors'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -701,4 +701,15 @@ export const Api = {
       `/api/orgs/${orgId}/agents/${agentId}/connectors/${connectorId}/trust`,
       { token, method: 'PUT', body: JSON.stringify({ trustLevel }) },
     ).then((r) => r.connector),
+
+  // CONN-8b-4 — the owner-only connector-execution LEDGER (read-only monitor). SAME
+  // owner-gated route the web calls; the backend allow-list-projects each row, so no
+  // credential/token/param/digest/approval-id ever reaches the phone. Latest 50,
+  // newest-first. Never a trigger — this stage is monitor-only (CONN-7 stays the gate).
+  agentConnectorExecutions: (base: string, token: string, orgId: string, agentId: string) =>
+    api<{ executions: ConnectorExecutionItem[] }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/connector-executions`,
+      { token },
+    ).then((r) => r.executions ?? []),
 }

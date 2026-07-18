@@ -770,6 +770,46 @@ MOB-6b (§6.4) shipped the agent detail read view and named the deferral: *"Inst
 
 ---
 
+### 6.11 CONN-8b-4 — the connector-execution monitor reaches the phone (as built)
+
+The last connectors slice, and a straight parity mirror: the web grew a read-only **"Recent
+activity"** view on the agent's Connectors surface (what connector actions the agent
+attempted — action, connector, classification, whether the run was gated, status, time,
+short sanitized error), and the phone gets the same, over the **same** owner-gated hosted
+route.
+
+- **One backend route serves both** — `GET /api/orgs/:orgId/agents/:agentId/connector-executions`,
+  `requireOrgRole('owner')`, latest 50 newest-first. So this was **client work only**: the
+  phone's `Api.agentConnectorExecutions` calls the identical endpoint with the identical
+  contract, and the backend's allow-list projection (no secret/token/params/digest, `gated`
+  as a boolean not the approval id) is what both clients render.
+- **Mirror the decision, don't re-invent it.** The web renders a table-ish row list; the phone
+  renders a native `Card` list (`ExecutionsMonitor` + `ExecutionRow` in
+  `screens/AgentConnectors.tsx`) with the same fields and the same status vocabulary,
+  translated to the phone's `Chip` tones. Refresh is a **button**, not a `RefreshControl`,
+  because the section is embedded in the agent-detail `ScrollView` (a nested pull-refresh
+  would fight the outer scroll).
+- **The status/classification vocab is hand-copied, then tripwire-pinned** (the standing
+  copy-across-the-boundary rule). `EXECUTION_STATUSES` / `EXECUTION_CLASSIFICATIONS` live in
+  both `web/lib/agentConnectors.ts` and `apps/mobile/src/agentConnectors.ts`; the backend's
+  `CONNECTOR_EXECUTION_STATUSES` (used by name in every ledger write) is the source of truth.
+  `agentConnectors.test.ts` asserts **cross-platform** (phone == desk) AND **backend** parity
+  (both == the array text-read from `services/connector-execution.ts`) — an **equality** check,
+  because a client status the ledger never writes is as wrong as a missing one. Mobile-CI-gated,
+  so it actually runs.
+- **Monitor-only, both clients.** Neither the web nor the phone ships a "run this action"
+  trigger this stage — an owner-initiated run must funnel through `executeConnectorAction`
+  (CONN-7's single gate) with the approval + params-digest round-trip, which is a non-trivial
+  follow-up; scoped out deliberately (see `DESIGN-per-agent-connectors.md` §CONN-8b-4). The
+  phone's config-only/no-OAuth constraint would apply to that trigger too when it lands.
+
+**Verified:** mobile **288/288** (+3 parity tripwires) · typecheck clean · `expo export`
+bundles. **SDK 54 untouched, react/react-dom pins intact**, **boot-safe** (RN-core only — the
+monitor uses `View`/`Text`/`Card`/`Chip`/`Button`/`Banner`/`Loading`, no native module).
+Strictly additive to `apps/mobile/**`; the single backend route is additive and owner-gated.
+
+---
+
 ## 7. Expo Go now vs operator-gated
 
 **Doable in Expo Go today — no Expo/EAS account, no operator action:** **every MOB-6 story (6a–6k)** and **MOB-5b, 5c, 5d** (5c gated on the *backend* story 5a, not on a dev build).

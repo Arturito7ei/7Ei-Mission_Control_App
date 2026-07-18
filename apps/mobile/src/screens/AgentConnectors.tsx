@@ -54,6 +54,10 @@ import {
   googleServicesFromConfig,
   googleServicesSummary,
   isTrusted,
+  findDisplayConnector,
+  executionStatusBadge,
+  classificationLabel,
+  type ConnectorExecutionItem,
   type DisplayConnector,
   type McpFormInput,
   type McpTransport,
@@ -186,6 +190,9 @@ export function ConnectorsSection({
         remains out of scope.
       </Text>
 
+      {/* CONN-8b-4 — the connector-execution activity monitor (read-only). */}
+      <ExecutionsMonitor orgId={orgId} agentId={agentId} apiUrl={apiUrl} getToken={getToken} />
+
       <View style={{ gap: space.md }}>
         {CONNECTOR_GROUPS.map((group) => {
           const isOpen = open[group.key] ?? false
@@ -228,6 +235,110 @@ export function ConnectorsSection({
         })}
       </View>
     </Section>
+  )
+}
+
+// ─── Connector-execution activity monitor (CONN-8b-4) — read-only ─────────────
+//
+// The phone mirror of the web's "Recent activity": the owner-only connector_executions
+// ledger for this agent, allow-list-projected by the backend (never a secret, token,
+// param, or approval id — only action, connector, classification, gated-or-not, status
+// and a short sanitized error). MONITOR-ONLY — no "run" button on either client; an
+// owner-initiated action stays behind executeConnectorAction (CONN-7). A Refresh button
+// re-pulls (this section is embedded in the detail ScrollView, so it owns a button, not
+// a RefreshControl). A 403 renders as empty — the parent already shows the owner note.
+function ExecutionsMonitor({
+  orgId,
+  agentId,
+  apiUrl,
+  getToken,
+}: {
+  orgId: string
+  agentId: string
+  apiUrl: string
+  getToken: () => Promise<string | null>
+}) {
+  const [items, setItems] = useState<ConnectorExecutionItem[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    const token = await getToken()
+    if (!token || !orgId) return
+    setBusy(true)
+    setErr(null)
+    try {
+      setItems(await Api.agentConnectorExecutions(apiUrl, token, orgId, agentId))
+    } catch (e: any) {
+      const m = String(e?.message ?? '')
+      if (m.includes('HTTP 403')) setItems([]) // not an owner — parent shows the note
+      else setErr(m || 'Could not load recent activity.')
+    }
+    setBusy(false)
+  }, [apiUrl, getToken, orgId, agentId])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  return (
+    <View style={s.monitor}>
+      <View style={s.monitorHead}>
+        <Text style={s.monitorTitle}>Recent activity</Text>
+        <Button title={busy ? 'Refreshing…' : 'Refresh'} tone="ghost" busy={busy} disabled={busy} onPress={load} />
+      </View>
+      {err ? (
+        <Banner kind="error">{err}</Banner>
+      ) : items === null ? (
+        <Loading text="Loading activity…" />
+      ) : items.length === 0 ? (
+        <Text style={s.note}>
+          No connector actions yet. When this agent runs a connector action, it appears here — allowed reads and writes, and
+          any that needed approval.
+        </Text>
+      ) : (
+        <Card style={{ padding: 0 }}>
+          {items.map((ex, i) => (
+            <ExecutionRow key={ex.id} ex={ex} first={i === 0} />
+          ))}
+        </Card>
+      )}
+    </View>
+  )
+}
+
+/** One ledger row: connector icon + action, classification + gated + status chips, and
+ *  the relative time; a failed row shows its short sanitized error underneath. */
+function ExecutionRow({ ex, first }: { ex: ConnectorExecutionItem; first: boolean }) {
+  const disp = findDisplayConnector(ex.connectorId)
+  const badge = executionStatusBadge(ex.status)
+  const when = rel(ex.createdAt)
+  return (
+    <View
+      style={[s.execRow, first && { borderTopWidth: 0 }]}
+      accessibilityLabel={`${ex.action} on ${disp?.name ?? ex.connectorId}: ${badge.label}${when ? `, ${when}` : ''}`}
+    >
+      <Text style={s.execIcon}>{disp?.icon ?? '🔌'}</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={s.execTitleLine}>
+          <Text style={s.execAction} numberOfLines={1}>
+            {ex.action}
+          </Text>
+          <Chip label={classificationLabel(ex.classification)} tone="neutral" />
+          {ex.gated ? <Chip label="Approval" tone="warn" glyph="●" /> : null}
+        </View>
+        <Text style={s.execSub} numberOfLines={1}>
+          {disp?.name ?? ex.connectorId}
+          {when ? ` · ${when}` : ''}
+        </Text>
+        {ex.status === 'failed' && ex.error ? (
+          <Text style={s.execErr} numberOfLines={2}>
+            {ex.error}
+          </Text>
+        ) : null}
+      </View>
+      <Chip label={badge.label} tone={badge.tone} glyph={badge.glyph} />
+    </View>
   )
 }
 
@@ -1346,6 +1457,23 @@ const s = StyleSheet.create({
   },
   blurb: { color: theme.textFaint, fontSize: font.sm, lineHeight: 19, marginBottom: space.md },
   note: { color: theme.textFaint, fontSize: font.sm - 1, lineHeight: 18 },
+  monitor: { gap: space.sm, marginBottom: space.md },
+  monitorHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  monitorTitle: { color: theme.text, fontSize: font.base, fontWeight: '700' },
+  execRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderTopWidth: 1,
+    borderTopColor: theme.s3,
+  },
+  execIcon: { fontSize: 18 },
+  execTitleLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' },
+  execAction: { color: theme.text, fontSize: font.base, fontWeight: '600', flexShrink: 1 },
+  execSub: { color: theme.textFaint, fontSize: font.sm - 1, marginTop: 2 },
+  execErr: { color: theme.textDim, fontSize: font.sm - 1, marginTop: 2, lineHeight: 17 },
   lockRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   lockGlyph: { fontSize: font.base },
   lockTitle: { color: theme.text, fontSize: font.base, fontWeight: '800' },

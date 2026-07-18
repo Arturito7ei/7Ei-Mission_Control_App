@@ -313,6 +313,64 @@ export function redactSecrets<T>(value: T, secretValues: string[]): T {
   return walk(value)
 }
 
+// ─── The ledger status vocab (SOURCE OF TRUTH) + the owner-monitor projection ──
+//
+// CONN-8b-4. The ledger's `status` column takes EXACTLY these three values, and the
+// writes below use them by NAME (RUNNING/SUCCEEDED/FAILED) so this array is the real
+// source, not a comment that can drift. The web + mobile monitors hand-copy this set
+// (Metro can't import backend), pinned by a drift tripwire (apps/mobile/src/
+// agentConnectors.test.ts reads THIS array out of the source and asserts the clients
+// agree) — the same parity discipline as the connector catalog.
+export const CONNECTOR_EXECUTION_STATUSES = ['running', 'succeeded', 'failed'] as const
+export type ConnectorExecutionStatus = (typeof CONNECTOR_EXECUTION_STATUSES)[number]
+const [RUNNING, SUCCEEDED, FAILED] = CONNECTOR_EXECUTION_STATUSES
+
+/** How much of the (already-sanitized-at-write) error to keep in the owner monitor. */
+export const CONNECTOR_EXECUTION_ERROR_MAX = 300
+
+/** The ALLOW-LISTED shape the owner monitor receives per ledger row. There is NO
+ *  credential/token, NO raw params, and NO params-digest here — the ledger stores none
+ *  of those in the first place (see the schema comment), and this projection names each
+ *  field explicitly so a future column can't silently ride along. `gated` reports
+ *  WHETHER a run redeemed an approval, never WHICH approval (the id stays server-side). */
+export interface PublicConnectorExecution {
+  id: string
+  connectorId: string
+  action: string
+  classification: string
+  status: string          // one of CONNECTOR_EXECUTION_STATUSES
+  gated: boolean          // true iff this run redeemed a gated approval (approvalId set)
+  error: string | null    // SHORT, sanitized-at-write summary (truncated) — never a raw body/token
+  createdAt: number       // epoch ms
+}
+
+/** Project ONE ledger row to the owner-facing monitor item. Pure + allow-list: it can
+ *  only ever emit the fields above. The `error` was already run through the redaction
+ *  backstop at write time (runExecutor); here we additionally truncate it so a long
+ *  provider message can't dominate the view. `approvalId` collapses to a boolean so the
+ *  monitor reveals that a run was gated without exposing the approval's identifier. */
+export function projectConnectorExecution(row: {
+  id: string; connectorId: string; action: string; classification: string
+  approvalId: string | null; status: string; error: string | null
+  createdAt: Date | number | null
+}): PublicConnectorExecution {
+  const ms = row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt ?? 0)
+  const raw = typeof row.error === 'string' ? row.error : null
+  const error = raw && raw.length > 0
+    ? (raw.length > CONNECTOR_EXECUTION_ERROR_MAX ? raw.slice(0, CONNECTOR_EXECUTION_ERROR_MAX) + '…' : raw)
+    : null
+  return {
+    id: String(row.id),
+    connectorId: String(row.connectorId),
+    action: String(row.action),
+    classification: String(row.classification),
+    status: String(row.status),
+    gated: row.approvalId != null,
+    error,
+    createdAt: Number.isFinite(ms) ? ms : 0,
+  }
+}
+
 // ─── The result type ───────────────────────────────────────────────────────────
 
 export type ConnectorExecutionResult =
@@ -497,7 +555,7 @@ async function runExecutor(args: {
   try {
     await db.insert(schema.connectorExecutions).values({
       id: executionId, orgId, agentId, connectorId, action, classification,
-      approvalId: approvalId ?? null, status: 'running', error: null, createdAt: new Date(),
+      approvalId: approvalId ?? null, status: RUNNING, error: null, createdAt: new Date(),
     } as any)
   } catch {
     // Only a UNIQUE(approval_id) collision lands here (a real replay); a NULL approvalId
@@ -525,7 +583,7 @@ async function runExecutor(args: {
     }
     if (!resolved || !resolved.accessToken) {
       const reason = 'google connection is unavailable — (re)connect the agent\'s Google account'
-      await db.update(schema.connectorExecutions).set({ status: 'failed', error: reason }).where(eq(schema.connectorExecutions.id, executionId))
+      await db.update(schema.connectorExecutions).set({ status: FAILED, error: reason }).where(eq(schema.connectorExecutions.id, executionId))
       return { status: 'error', reason, classification }
     }
     ctx.oauthAccessToken = resolved.accessToken
@@ -541,13 +599,13 @@ async function runExecutor(args: {
   try {
     const raw = await handler(ctx)
     const data = redactSecrets(raw, secretValues) // backstop: strip any echoed credential
-    await db.update(schema.connectorExecutions).set({ status: 'succeeded' }).where(eq(schema.connectorExecutions.id, executionId))
+    await db.update(schema.connectorExecutions).set({ status: SUCCEEDED }).where(eq(schema.connectorExecutions.id, executionId))
     return { status: 'executed', connectorId, action, classification, executionId, data }
   } catch (e: any) {
     // Clean, sanitized error — never a raw provider body, never the credential.
     const base = e instanceof ConnectorProviderError ? e.message : 'connector action failed'
     const reason = redactString(String(base), secretValues)
-    await db.update(schema.connectorExecutions).set({ status: 'failed', error: reason }).where(eq(schema.connectorExecutions.id, executionId))
+    await db.update(schema.connectorExecutions).set({ status: FAILED, error: reason }).where(eq(schema.connectorExecutions.id, executionId))
     return { status: 'error', reason, classification }
   }
 }
