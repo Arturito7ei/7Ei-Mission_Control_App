@@ -173,3 +173,15 @@ test('[ACT-1] neither surface tries to widen what the server allows', () => {
     )
   }
 })
+
+// AUDIT-ACT1 UX-2, mirrored: the phone's decided tail must be quieter than the queue.
+// Worse on a phone than on the desk — there is no peripheral vision, the screen IS the
+// list — so if the tail reads as a peer, the operator scrolls past what wants them.
+test('[AUDIT-ACT1] the phone de-emphasises the decided tail', () => {
+  assert.ok(/decidedCard:/.test(APPROVALS), 'the decided tail lost its own card style')
+  assert.ok(
+    /backgroundColor: 'transparent'/.test(APPROVALS),
+    'the decided card is back on the default filled Card chrome — a peer of a pending approval',
+  )
+  assert.ok(/already handled/.test(APPROVALS), 'the tail heading no longer says the rows are answered')
+})

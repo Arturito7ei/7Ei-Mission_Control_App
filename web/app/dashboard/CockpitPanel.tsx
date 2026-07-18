@@ -228,10 +228,18 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} deciding={deciding} decideErr={decideErr} agents={data?.agents ?? []} recentDecisions={decisions} focused={focused} /> },
     { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
     { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} onOpenAgent={onOpenAgent} /> },
-    // ACT-1 — Activity is now BOTH: the 24h heartbeat swimlane (who was busy, when)
-    // and the unified log (what actually happened). The swimlane never knew about
-    // approvals, connector runs or the audit trail; the log does.
-    { key: 'activity', node: <><TimelineSection timeline={timeline} /><div style={{ marginTop: space.xl }}><ActivityLogSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onOpenAgent={onOpenAgent} /></div></> },
+    // ACT-1 — Activity is BOTH: the unified log (what actually happened) and the 24h
+    // heartbeat swimlane (who was busy, when). The swimlane never knew about approvals,
+    // connector runs or the audit trail; the log does.
+    //
+    // AUDIT-ACT1 UX-1 — the LOG GOES FIRST. It shipped with the swimlane on top, which
+    // pushed the log's own filter chips and agent picker a full section down: on a
+    // laptop viewport they landed below the fold, so the surface that answers "what has
+    // my office been doing" opened looking like a chart with no controls. Ordering is
+    // the whole fix — the log is the higher-information surface and it carries the
+    // controls, so it earns the top. The swimlane keeps its place directly beneath,
+    // where it reads as the supporting view it actually is.
+    { key: 'activity', node: <><ActivityLogSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onOpenAgent={onOpenAgent} /><div style={{ marginTop: space.xxl }}><TimelineSection timeline={timeline} /></div></> },
     { key: 'org', node: <OrgChart agents={roster} onOpenAgent={onOpenAgent} onExport={exportOrg} onImport={importOrg} busy={orgBusy} /> },
     { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },
     { key: 'budgets', node: <><BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} /><PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} /></> },

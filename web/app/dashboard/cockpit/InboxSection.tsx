@@ -86,7 +86,10 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
       <SectionLabel>
         {pendingCount > 0 ? `Inbox · ${pendingCount} awaiting you` : 'Inbox'}
       </SectionLabel>
-      <Card style={{ paddingTop: 0, paddingBottom: 0 }}>
+      {/* AUDIT-ACT1 UX-2 — the pending queue is the LOUD surface. It carries an accent
+          left edge that the decided tail deliberately lacks, so "needs me now" is
+          legible from across the room and not merely first in the DOM. */}
+      <Card style={{ paddingTop: 0, paddingBottom: 0, ...(pendingCount > 0 ? s.pendingCard : null) }}>
         {pendingCount === 0 && (
           <p style={{ ...sx.empty, padding: `${space.lg}px 0` }}>
             Nothing needs a decision right now.{decisions.length > 0 ? ' Recent decisions are below.' : ''}
@@ -179,16 +182,24 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
           no payload, no decision note. */}
       {decisions.length > 0 && (
         <div style={{ marginTop: space.lg }}>
-          <SectionLabel>Recently decided</SectionLabel>
-          <Card style={{ paddingTop: 0, paddingBottom: 0 }}>
+          {/* AUDIT-ACT1 UX-2 — DE-EMPHASISED, deliberately. This shipped with the same
+              row height, font and card chrome as the pending queue, so a quiet inbox
+              read as roughly 80% "already handled" and the eye had no way to find the
+              one thing that actually wanted a decision. Answered work is reference
+              material: smaller type, muted colour, a denser row, a recessed card, and a
+              heading that says so. It stays fully readable — de-emphasis, not hiding. */}
+          <SectionLabel style={{ color: tk.muted, fontWeight: 600 }}>
+            Recently decided · already handled
+          </SectionLabel>
+          <Card style={{ paddingTop: 0, paddingBottom: 0, ...s.decidedCard }}>
             {decisions.map(d => (
-              <div key={d.id} style={sx.row}>
-                <span aria-hidden style={{ width: 18, textAlign: 'center', flexShrink: 0 }}>⚖</span>
+              <div key={d.id} style={s.decidedRow}>
+                <span aria-hidden style={{ width: 14, textAlign: 'center', flexShrink: 0, opacity: 0.7 }}>⚖</span>
                 <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.title}>{d.title}</div>
-                {d.target && <span style={{ ...sx.badge, flexShrink: 0, fontWeight: 500 }}>{d.target}</span>}
-                {d.agentName && <span style={{ ...sx.badge, flexShrink: 0 }}>{d.agentName}</span>}
-                <Pill tone={OUTCOME_TONE[d.outcome] ?? 'muted'} style={{ flexShrink: 0 }}>{OUTCOME_LABEL[d.outcome] ?? d.outcome}</Pill>
-                <span style={{ color: tk.muted, fontSize: text.xs.fontSize, flexShrink: 0, width: 76, textAlign: 'right' }}>{activityAgo(d.at, now)}</span>
+                {d.target && <span style={{ ...sx.badge, flexShrink: 0, fontWeight: 500, opacity: 0.8 }}>{d.target}</span>}
+                {d.agentName && <span style={{ ...sx.badge, flexShrink: 0, opacity: 0.8 }}>{d.agentName}</span>}
+                <Pill tone={OUTCOME_TONE[d.outcome] ?? 'muted'} style={{ flexShrink: 0, opacity: 0.85 }}>{OUTCOME_LABEL[d.outcome] ?? d.outcome}</Pill>
+                <span style={{ color: tk.mutedSoft, fontSize: text.xs.fontSize, flexShrink: 0, width: 70, textAlign: 'right' }}>{activityAgo(d.at, now)}</span>
               </div>
             ))}
           </Card>
@@ -199,6 +210,15 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
 }
 
 const s: Record<string, React.CSSProperties> = {
+  // AUDIT-ACT1 UX-2 — the loud/quiet pair. The accent edge marks the queue that wants a
+  // decision; the decided tail is recessed and denser so the two never read as peers.
+  pendingCard: { borderLeft: '3px solid var(--accent)' },
+  decidedCard: { background: 'transparent', borderStyle: 'dashed', opacity: 0.9 },
+  decidedRow: {
+    display: 'flex', alignItems: 'center', gap: space.md, boxSizing: 'border-box',
+    minHeight: 24, padding: '2px 0', borderBottom: `1px solid ${tk.lineSoft}`,
+    fontSize: text.xs.fontSize, lineHeight: text.xs.lineHeight, color: tk.textDim,
+  },
   // Failure evidence: muted, monospace-ish, single-line clamp (full text on hover).
   errLine: { fontSize: text.xs.fontSize, color: 'var(--danger-text)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace' },
   // Low-trust review warnings — amber, iconed (⚠), indented under the case.

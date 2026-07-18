@@ -234,9 +234,9 @@ export default function ApprovalsPane() {
           projection — no payload, no decision note. */}
       {decisions.length > 0 ? (
         <View style={{ marginTop: space.lg }}>
-          <Text style={s.decidedHead}>Recently decided</Text>
+          <Text style={s.decidedHead}>Recently decided · already handled</Text>
           {decisions.map((d) => (
-            <Card key={d.id} style={{ marginBottom: space.sm }}>
+            <Card key={d.id} style={[s.decidedCard, { marginBottom: space.xs }]}>
               <View style={s.decidedRow}>
                 <Text style={s.decidedGlyph}>{KIND_GLYPH.approval_decided}</Text>
                 <Text style={s.decidedTitle} numberOfLines={2}>
@@ -286,15 +286,27 @@ const s = StyleSheet.create({
     marginTop: space.sm,
   },
   // ACT-1 — the recently-decided tail.
+  //
+  // AUDIT-ACT1 UX-2 (mirrored from the desk) — DE-EMPHASISED on purpose. It first shipped
+  // with the same card chrome, row height and font as a pending approval, so a quiet
+  // queue read as mostly "already handled" and the eye had nothing to lock onto. On a
+  // phone that is worse than on the desk: there is no peripheral vision to fall back on,
+  // the whole screen is the list. Answered work is reference material — quieter, denser,
+  // flatter. Still fully readable: de-emphasis, not hiding.
   decidedHead: {
-    color: theme.textDim,
-    fontSize: font.sm,
-    fontWeight: '700',
+    color: theme.textFaint,
+    fontSize: font.sm - 1,
+    fontWeight: '600',
     marginBottom: space.sm,
   },
+  decidedCard: {
+    backgroundColor: 'transparent',
+    borderColor: theme.s3,
+    paddingVertical: space.sm,
+  },
   decidedRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  decidedGlyph: { fontSize: font.base },
-  decidedTitle: { flex: 1, color: theme.text, fontSize: font.sm, fontWeight: '600' },
+  decidedGlyph: { fontSize: font.sm, opacity: 0.7 },
+  decidedTitle: { flex: 1, color: theme.textDim, fontSize: font.sm - 1, fontWeight: '500' },
   decidedMeta: {
     flexDirection: 'row',
     flexWrap: 'wrap',

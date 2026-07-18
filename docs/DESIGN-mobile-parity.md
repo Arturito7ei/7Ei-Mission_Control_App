@@ -979,3 +979,20 @@ appended locally. A decided row carries no buttons, so there is nothing to decid
 **Verified:** mobile 327/327 · typecheck · `expo export` · SDK 54, react 19.1.0, no new dependency.
 **Not verified visually** — no device or simulator run in that session; the mirror is proven by tests,
 typecheck and a successful export, not by looking at it.
+
+### 8.1 — post-audit addenda (AUDIT-ACT1)
+
+**A parity INVERSION, which is the failure mode this doc exists to catch, running backwards.** The audit's
+H-3 was that the desk's step-up path never refreshed the decided tail — so approving the single most
+dangerous class of action gave the operator the *least* confirmation. The phone had the invariant *and* a
+test naming it (`activityScreen.test.ts`, "both paths, or the tail lies"); the desk had neither.
+
+The standing rule is written as "not done until the phone has it", and that phrasing quietly assumes the
+desk is the reference implementation. Here the phone was. **The rule is symmetric in practice even though
+the sentence isn't**: when an invariant is identified on either surface, the peer needs it *and* needs the
+test — otherwise the surface with the test silently becomes the only one holding the line.
+
+**The de-emphasis fix (UX-2) is mirrored rather than web-only for a phone-specific reason.** The decided tail
+shipping with the same chrome as the pending queue is a legibility problem on a laptop and a worse one on a
+phone: there is no peripheral vision to fall back on, the screen *is* the list, so a tail that reads as a
+peer is a tail the operator scrolls past on their way to nothing. Same finding, stronger on the small screen.

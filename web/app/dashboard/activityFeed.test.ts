@@ -177,3 +177,40 @@ test('[AUDIT-ACT1] the Inbox re-samples "now" — a frozen clock fails toward FR
   assert.ok(/setInterval\(/.test(src), 'no timer re-samples `now`')
   assert.ok(/clearInterval\(/.test(src), 'the `now` timer is never cleared — leaks on unmount')
 })
+
+// ─── AUDIT-ACT1 UX — ordering and emphasis ────────────────────────────────────
+//
+// Both are LOOK findings, which are the easiest kind to regress in a refactor because
+// nothing breaks when they do — the page still renders, it just stops answering the
+// question it exists to answer. So both are pinned structurally.
+
+test('[AUDIT-ACT1] Activity puts the LOG first — its filters must not sit below the fold', () => {
+  const i = PANEL.indexOf("key: 'activity'")
+  assert.ok(i > 0, "could not locate the 'activity' section — re-anchor this test")
+  const node = PANEL.slice(i, PANEL.indexOf('\n', PANEL.indexOf('},', i)))
+  const log = node.indexOf('<ActivityLogSection')
+  const swim = node.indexOf('<TimelineSection')
+  assert.ok(log > -1 && swim > -1, 'the Activity section no longer renders both views')
+  assert.ok(
+    log < swim,
+    'the swimlane is back above the log — that pushes the log\'s filter chips and agent ' +
+    'picker a full section down, below the fold on a laptop, so the surface that answers ' +
+    '"what has my office been doing" opens as a chart with no visible controls',
+  )
+})
+
+test('[AUDIT-ACT1] the decided tail is DE-EMPHASISED — it must not read as a peer of the queue', () => {
+  // The queue is marked loud, the tail is marked quiet, and they must not share a row
+  // style. Shipping both on `sx.row` is exactly what made a quiet inbox read as ~80%
+  // "already handled".
+  assert.ok(/pendingCard:/.test(INBOX), 'the pending queue lost its emphasis treatment')
+  assert.ok(/decidedRow:/.test(INBOX), 'the decided tail lost its own row style')
+  const i = INBOX.indexOf('Recently decided')
+  const block = INBOX.slice(i, INBOX.indexOf('</Card>', i))
+  assert.ok(
+    !/style=\{sx\.row\}/.test(block),
+    'decided rows are back on the shared `sx.row` — identical height and font to a ' +
+    'pending approval, so nothing tells the operator which rows still want them',
+  )
+  assert.ok(/already handled/.test(INBOX), 'the tail heading no longer says the rows are answered')
+})
