@@ -4,6 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
+import { assertAgentInOrg } from '../services/tenant-guard'
 import { buildInbox } from '../services/inbox'
 import { buildGoalTree } from '../services/goals'
 import { runHeartbeatSweep } from '../services/heartbeat-engine'
@@ -176,6 +177,16 @@ export async function taskRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const b = (req.body ?? {}) as any
     if (!b.title) return reply.code(400).send({ error: 'title is required' })
+    // GC-0b (audit) — `ownerAgentId` is a body-supplied agent reference. Unlike the
+    // task/routine cases nothing EXECUTES a goal's owner (it is read for display, the
+    // recovery card and portability), so this is a cross-tenant reference disclosure
+    // rather than cross-tenant execution: a goal in org A would render org B's agent
+    // name and emoji in the goal tree. One line to close, and it retires the
+    // "dangling reference" follow-up the GC-0 goals fix flagged for this field.
+    {
+      const err = await assertAgentInOrg(b.ownerAgentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     const goal = {
       id: randomUUID(), orgId, parentGoalId: b.parentGoalId ?? null, title: b.title,
       description: b.description ?? null, metric: b.metric ?? null,
@@ -655,11 +666,9 @@ export async function taskRoutes(app: FastifyInstance) {
     // The membership gate cannot catch it: it authorises `:orgId` from the PATH, and
     // nothing ever looks at `body.agentId`. Same fix as the PATCH sibling below —
     // the agent must live in the org the task is being created in.
-    if (body.agentId != null) {
-      const target = await db.query.agents.findFirst({ where: eq(schema.agents.id, body.agentId) })
-      if (!target || target.orgId !== orgId) {
-        return reply.code(400).send({ error: 'Invalid agentId: not an agent in this organisation' })
-      }
+    {
+      const err = await assertAgentInOrg(body.agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
     }
     const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', workMode: normalizeWorkMode(body.workMode), llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
     await db.insert(schema.tasks).values(task)
@@ -858,11 +867,9 @@ export async function taskRoutes(app: FastifyInstance) {
     // task's `input` and makes it execute work for a tenant it does not belong to.
     // Validated against the TASK's org (`task.orgId`), never against an org named in
     // the body — the body cannot move the task, so the pre-image org is the truth here.
-    if (patch.agentId != null) {
-      const target = await db.query.agents.findFirst({ where: eq(schema.agents.id, patch.agentId) })
-      if (!target || target.orgId !== task.orgId) {
-        return reply.code(400).send({ error: 'Invalid agentId: not an agent in this organisation' })
-      }
+    {
+      const err = await assertAgentInOrg(patch.agentId, task.orgId)
+      if (err) return reply.code(400).send({ error: err })
     }
     if (Object.keys(patch).length > 0) {
       await db.update(schema.tasks).set(patch).where(eq(schema.tasks.id, taskId))

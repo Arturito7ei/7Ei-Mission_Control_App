@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { calcNextRun, fireRoutine } from '../services/scheduler'
 import { makeWebhookToken, normalizeTriggerType, cronSentinel } from '../services/routines'
+import { assertAgentInOrg } from '../services/tenant-guard'
 
 const COMMON_CRONS = [
   { label: 'Every hour',     cron: '0 * * * *' },
@@ -44,10 +45,8 @@ export async function scheduledRoutes(app: FastifyInstance) {
     // session at all, and keeps working after the attacker leaves their own org.
     // The agent must belong to the org the routine is created in.
     {
-      const target = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
-      if (!target || target.orgId !== orgId) {
-        return reply.code(400).send({ error: 'Invalid agentId: not an agent in this organisation' })
-      }
+      const err = await assertAgentInOrg(agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
     }
     if (triggerType === 'cron' && !b.cronExpression) return reply.code(400).send({ error: 'cronExpression required for cron routines' })
 

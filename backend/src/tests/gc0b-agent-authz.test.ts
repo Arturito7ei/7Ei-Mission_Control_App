@@ -160,26 +160,127 @@ test('[GC-0b] a MEMBER cannot set `permissions` via PATCH (the capability caps)'
   assert.equal((await row(AGENT_A)).permissions, null, 'a member rewrote capability caps')
 })
 
-test('[GC-0b] the two surfaces cannot DISAGREE — every owner-gated field is member-unreachable here', async () => {
-  // The cross-check the story asks for, stated as one property: a field that requires
-  // the OWNER on its dedicated PUT must not be settable by a MEMBER through this PATCH.
-  //   config       → PUT …/agents/:agentId/config        (CONFIG_FIELDS)
-  //   permissions  → PUT …/agents/:agentId/permissions
-  //   trust        → PUT …/agents/:agentId/trust
-  //   model-profile→ PUT …/agents/:agentId/model-profile
-  const { CONFIG_FIELDS } = await import('../services/agent-config')
-  const OWNER_GATED = [
-    ...CONFIG_FIELDS,
-    'permissions', 'trustMode', 'trustBoundary',
-    'cheapModel', 'cheapModelEnabled', 'reasoningEffort',
-  ]
+// Columns a MEMBER may write through the legacy PATCH. Must equal AgentPatchSchema.
+const MEMBER_WRITABLE = new Set([
+  'personality', 'cv', 'termsOfReference', 'persona', 'expertise',
+  'advisorPersona', 'agentType', 'advisorIds', 'departmentId', 'status',
+])
+
+// Every OTHER column of `agents`, with the reason it is not member-writable. Kept as
+// data so the completeness test below can prove the two sets partition the table.
+const NOT_MEMBER_WRITABLE: Record<string, string> = {
+  // tenant / identity / provenance
+  id: 'identity', orgId: 'TENANT BOUNDARY', createdAt: 'immutable provenance',
+  // owner-gated: PUT …/agents/:agentId/config (CONFIG_FIELDS)
+  name: 'owner-gated config', title: 'owner-gated config', role: 'owner-gated config',
+  jobDescription: 'owner-gated config', avatarEmoji: 'owner-gated config',
+  reportsTo: 'owner-gated config (cycle-checked)', runtime: 'owner-gated config',
+  llmProvider: 'owner-gated config', llmModel: 'owner-gated config',
+  primaryModel: 'owner-gated config + model-profile',
+  contactChannel: 'owner-gated config',
+  // owner-gated: PUT …/agents/:agentId/permissions
+  permissions: 'owner-gated capability caps',
+  // owner-gated: PUT …/agents/:agentId/trust  (governs the CONN-7 connector gate)
+  trustMode: 'owner-gated trust — CONN-7 connector gate', trustBoundary: 'owner-gated trust',
+  // owner-gated: PUT …/agents/:agentId/model-profile
+  cheapModel: 'owner-gated model-profile', cheapModelEnabled: 'owner-gated model-profile',
+  reasoningEffort: 'owner-gated model-profile',
+  // credentials / egress / server-owned runtime state
+  apiTokenHash: 'AGENT CREDENTIAL', externalEndpoint: 'egress target',
+  avatarUrl: 'capped, type-checked upload route',
+  lastHeartbeatAt: 'runtime-owned', heartbeatStatus: 'runtime-owned',
+  nextWakeAt: 'runtime-owned', heartbeatEverySec: 'runtime-owned',
+  skills: 'dedicated agent-skills route', memoryLongTerm: 'dedicated /memory routes',
+}
+
+/** The partition check, as a pure function so it can be proven on synthetic input. */
+function classifyColumns(columns: string[]) {
+  return {
+    unclassified: columns.filter(c => !MEMBER_WRITABLE.has(c) && !(c in NOT_MEMBER_WRITABLE)),
+    stale: [...MEMBER_WRITABLE, ...Object.keys(NOT_MEMBER_WRITABLE)].filter(c => !columns.includes(c)),
+  }
+}
+
+test('[GC-0b] the completeness check itself bites — a new column is reported by name', () => {
+  // Proven on synthetic input rather than by really adding a column: adding one to
+  // `schema.ts` without the matching `setup.ts` CREATE makes every insert in this file
+  // fail, so the suite dies in `before()` and never reaches the classification test —
+  // a loud failure, but not a proof that the check NAMES the offender. This does.
+  const real = [...MEMBER_WRITABLE, ...Object.keys(NOT_MEMBER_WRITABLE)]
+  assert.deepEqual(classifyColumns(real), { unclassified: [], stale: [] }, 'the real column set must classify cleanly')
+
+  // A new model-profile knob lands: caught, and named.
+  const withNew = classifyColumns([...real, 'fancyNewModelKnob'])
+  assert.deepEqual(withNew.unclassified, ['fancyNewModelKnob'],
+    'a NEW agents column was not reported as unclassified — nit (b) is not actually fixed')
+
+  // A column removed from the table: the classification is stale, also caught.
+  const removed = classifyColumns(real.filter(c => c !== 'trustMode'))
+  assert.deepEqual(removed.stale, ['trustMode'], 'a stale classification was not reported')
+})
+
+test('[GC-0b] the allow-list is COMPLETE against the real agents schema', async () => {
+  // NIT (b) FIX — this replaces a hand-written list of owner-gated field names.
+  //
+  // Enumerating the fields we happen to remember can only catch regressions we already
+  // thought of: a NEW model-profile column (or a new credential column) would be
+  // member-writable and no test would notice. So the property is stated against the
+  // TABLE instead: every column of `agents` must be classified as either member-writable
+  // or explicitly not, and the two sets must partition the schema exactly.
+  //
+  // A new column therefore fails this test until someone classifies it — which is the
+  // decision point that was missing when this route shipped a member-settable
+  // `trustMode`. It is also self-correcting: `MEMBER_WRITABLE` is checked against the
+  // live zod schema below, so the two cannot drift.
+  const { getTableColumns } = await import('drizzle-orm')
+  const columns = Object.keys(getTableColumns(schema.agents))
+
+  const unclassified = columns.filter(c => !MEMBER_WRITABLE.has(c) && !(c in NOT_MEMBER_WRITABLE))
+  assert.deepEqual(unclassified, [],
+    `UNCLASSIFIED AGENT COLUMN(S): ${unclassified.join(', ')}.\n` +
+    'A column was added to `agents` and nobody decided whether a MEMBER may write it\n' +
+    'through the legacy PATCH /api/agents/:agentId. Decide, then add it to\n' +
+    'MEMBER_WRITABLE (and AgentPatchSchema) or to NOT_MEMBER_WRITABLE with the reason.\n' +
+    'Default to NOT writable — that is how `trustMode` should have been handled.')
+
+  const stale = [...MEMBER_WRITABLE, ...Object.keys(NOT_MEMBER_WRITABLE)].filter(c => !columns.includes(c))
+  assert.deepEqual(stale, [], `these classified names are no longer columns of \`agents\`: ${stale.join(', ')}`)
+})
+
+test('[GC-0b] the two surfaces cannot DISAGREE — no non-member-writable column is reachable', async () => {
+  // The cross-check, stated as one property over the WHOLE table rather than a list:
+  // nothing outside the member allow-list may be written through this PATCH — whether
+  // it is owner-gated (config / permissions / trust / model-profile), a credential, or
+  // runtime-owned state. Driven by NOT_MEMBER_WRITABLE, which the test above proves is
+  // schema-complete, so this grows automatically with the table.
   const before = await row(AGENT_A)
-  for (const field of OWNER_GATED) {
-    const probe = field === 'cheapModelEnabled' ? true : 'attacker-value'
+  for (const field of Object.keys(NOT_MEMBER_WRITABLE)) {
+    // Probe with a type-appropriate value so the write would actually land if allowed.
+    const probe =
+      field === 'cheapModelEnabled' ? true
+      : ['lastHeartbeatAt', 'nextWakeAt', 'createdAt'].includes(field) ? Date.now()
+      : field === 'heartbeatEverySec' ? 60
+      : field === 'skills' ? ['x']
+      : field === 'memoryLongTerm' ? { k: 'v' }
+      : `attacker-value-${field}`
     await as(MEMBER_A, 'PATCH', `/api/agents/${AGENT_A}`, { [field]: probe })
     const after = await row(AGENT_A)
     assert.deepEqual(after[field], before[field],
-      `OWNER-GATED FIELD \`${field}\` was written by a MEMBER through the legacy PATCH — the two surfaces disagree`)
+      `\`${field}\` (${NOT_MEMBER_WRITABLE[field]}) was written by a MEMBER through the legacy PATCH`)
+  }
+})
+
+test('[GC-0b] MEMBER_WRITABLE agrees with the live AgentPatchSchema', async () => {
+  // Pins the test's own model of the allow-list to the code's, so the completeness
+  // proof above cannot quietly describe a schema that no longer exists.
+  const before = await row(AGENT_A)
+  for (const field of MEMBER_WRITABLE) {
+    const probe = field === 'agentType' ? 'advisor' : field === 'advisorIds' ? [PEER_A] : `written-${field}`
+    const res = await as(MEMBER_A, 'PATCH', `/api/agents/${AGENT_A}`, { [field]: probe })
+    assert.equal(res.statusCode, 200, `\`${field}\` is listed member-writable but the route refused it: ${res.body}`)
+    const after = await row(AGENT_A)
+    assert.notDeepEqual(after[field], before[field],
+      `\`${field}\` is listed member-writable but the write did not land — the list is stale`)
   }
 })
 

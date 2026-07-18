@@ -5,6 +5,7 @@ import { eq, desc, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { getGoogleConnectorCfg } from './connectors'
 import { checkWebhook, deriveWebhookSecret } from '../services/webhook-auth'
+import { assertAgentInOrg } from '../services/tenant-guard'
 
 // Signing secret for per-org inbound webhook receivers. Falls back to the legacy
 // TELEGRAM_WEBHOOK_SECRET so deployments that already secured Telegram keep working.
@@ -80,6 +81,15 @@ export async function commsRoutes(app: FastifyInstance) {
     }
 
     // Internal
+    // GC-0b (audit) — the body-supplied `agentId` is written to `messages`, and messages
+    // are read back as an agent's CONVERSATION HISTORY (services/thread.ts). So an
+    // unvalidated id lets a member of org A plant an `assistant`-role message in ORG B's
+    // agent thread — content that is later replayed into that agent's prompt. A
+    // cross-tenant prompt-injection write, not just a mislabelled row.
+    {
+      const err = await assertAgentInOrg((req.body as any).agentId || null, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     const msg = { id: randomUUID(), agentId: (req.body as any).agentId ?? '', taskId: null, role: 'assistant' as const, content: body.body, createdAt: new Date() }
     await db.insert(schema.messages).values(msg)
     return { ok: true, message: msg, channel: 'internal' }

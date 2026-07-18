@@ -141,7 +141,21 @@ export async function agentRoutes(app: FastifyInstance) {
     if (body.advisorIds) {
       const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
       if (!agent) return reply.code(404).send({ error: 'Agent not found' })
-      const ids = typeof body.advisorIds === 'string' ? JSON.parse(body.advisorIds) : body.advisorIds
+      // GC-0b (audit nit) — `JSON.parse` here was uncaught, so malformed JSON in the
+      // string form threw and 500'd. That shape is not hypothetical: `AgentPatchSchema`
+      // above explicitly blesses `advisorIds` as `array | string`, so a string that is
+      // not valid JSON is a shape the contract INVITES and must answer with a 400.
+      // Non-array JSON (`"5"`, `"{}"`) is refused for the same reason — `ids.length`
+      // would otherwise be `undefined` and the same-org check below would silently
+      // not run.
+      let ids: unknown
+      if (typeof body.advisorIds === 'string') {
+        try { ids = JSON.parse(body.advisorIds) }
+        catch { return reply.code(400).send({ error: 'advisorIds must be a JSON array' }) }
+      } else ids = body.advisorIds
+      if (!Array.isArray(ids) || ids.some(i => typeof i !== 'string')) {
+        return reply.code(400).send({ error: 'advisorIds must be a JSON array' })
+      }
       if (ids.length > 0) {
         const found = await db.select({ id: schema.agents.id }).from(schema.agents)
           .where(and(inArray(schema.agents.id, ids), eq(schema.agents.orgId, agent.orgId)))

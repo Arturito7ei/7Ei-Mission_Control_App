@@ -146,6 +146,132 @@ test('[GC-0b] every opaque row-write sink is reviewed and justified', () => {
     'Unreviewed:\n  ' + unreviewed.join('\n  '))
 })
 
+// ─── LEG 2 — THE CREATE PATH (body-supplied org-scoped foreign key) ──────────
+//
+// The scan above deliberately covers UPDATE only, and instance #7 lived in the gap:
+//
+//     POST /api/orgs/ORG-A/tasks  { "agentId": "<an agent in ORG B>" }
+//
+// `orgId` comes from the PATH — correct, gate-checked, obviously safe — and that is
+// precisely what camouflages the body-supplied FK beside it. The task is created in
+// org A; `executeAgentTask` then resolves the agent BY ID ALONE and runs it under org
+// B's credentials, budget and connectors. No tenant column was ever rewritten, so
+// nothing in leg 1 could see it.
+//
+// WHAT A STATIC SCANNER CAN AND CANNOT DO HERE — stated plainly, because the honest
+// limit matters more than the coverage claim:
+//
+//   CANNOT: prove that a given FK is later executed. That is inter-procedural taint
+//   analysis (route → row → scheduler/executor), which a regex pass cannot express and
+//   which this repo has no infrastructure for.
+//
+//   CAN: enforce a STRUCTURAL CONVENTION. Every route handler that reads an executable
+//   org-scoped FK out of the request body must call the one named checker,
+//   `assertAgentInOrg` (services/tenant-guard.ts). The marker is what makes the
+//   property checkable — which is the actual reason that helper exists as a shared
+//   function rather than three hand-rolled `if` blocks.
+//
+// So this does not prove correctness; it proves nobody added a body-supplied agent id
+// without confronting the question. That is the review step that was missing when #7
+// shipped, and it is the most a scanner can honestly buy. The AUTHORITATIVE defence is
+// the runtime invariant in `executeAgentTask` (task.orgId === agent.orgId), which needs
+// no marker and no scanner because every execution passes through it.
+
+/**
+ * FKs that carry EXECUTION authority: naming another tenant's row here gets that row
+ * RUN. Deliberately not `projectId` / `goalId` / `parentTaskId` — those can dangle a
+ * reference but nothing executes them, so requiring the marker there would be noise
+ * without a threat, and a noisy guard is a deleted guard.
+ */
+const EXECUTABLE_FK_RE = /\b(?:body|b|patch|parsed\.data)\.(agentId|ownerAgentId|targetAgentId)\b|\bconst\s*\{[^}]*\bagentId\b[^}]*\}\s*=\s*(?:b|body|req\.body)\b/
+
+/** The one named way to assert an FK is same-org. */
+const MARKER = 'assertAgentInOrg'
+
+/**
+ * Handlers reviewed as not needing the marker, with the reason. A handler lands here
+ * only when the FK provably cannot come from the caller's body.
+ */
+const REVIEWED_FK_HANDLERS: Record<string, string> = {
+  // `PATCH /api/scheduled/:id` reads body.title/input/enabled/cronExpression only; its
+  // update builder never assigns agentId, so the CREATE-time check cannot be bypassed.
+  // (Listed because the destructure regex sees the create handler's `const { agentId }`
+  // spilling into the same file, not because this handler reads an FK.)
+}
+
+/** Split a route file into per-handler blocks: `app.<verb>('<path>'` … next `app.<verb>(`. */
+function handlerBlocks(src: string): Array<{ route: string; body: string }> {
+  const re = /app\.(get|post|put|patch|delete)\(\s*[`'"]([^`'"]+)[`'"]/g
+  const starts: Array<{ route: string; at: number }> = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(src))) starts.push({ route: `${m[1].toUpperCase()} ${m[2]}`, at: m.index })
+  return starts.map((s, i) => ({
+    route: s.route,
+    body: src.slice(s.at, i + 1 < starts.length ? starts[i + 1].at : src.length),
+  }))
+}
+
+function scanCreatePath() {
+  const offenders: string[] = []
+  for (const file of readdirSync(ROUTES_DIR).filter(f => f.endsWith('.ts'))) {
+    const src = readFileSync(join(ROUTES_DIR, file), 'utf-8')
+    for (const { route, body } of handlerBlocks(src)) {
+      // Strip comments so prose about the defect isn't mistaken for the defect.
+      const code = body.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+      if (!EXECUTABLE_FK_RE.test(code)) continue
+      if (code.includes(MARKER)) continue
+      if (REVIEWED_FK_HANDLERS[`${file}:${route}`]) continue
+      offenders.push(`${file}  →  ${route}`)
+    }
+  }
+  return offenders
+}
+
+test('[GC-0b] every route taking an executable agent id from the body asserts same-org', () => {
+  const offenders = scanCreatePath()
+  assert.deepEqual(offenders, [],
+    'CROSS-TENANT EXECUTION RISK: a route handler reads an agent id out of the REQUEST\n' +
+    'BODY without calling `assertAgentInOrg`.\n' +
+    'This is the CREATE-side half of the GC-0 class and it does NOT look like the\n' +
+    'others: `orgId` comes from the path and is perfectly correct, which is exactly what\n' +
+    'hides the foreign key beside it. `executeAgentTask` resolves the agent BY ID ALONE\n' +
+    'and then uses ITS org for the LLM keys, budget, knowledge base and connectors — so\n' +
+    'a body-supplied agent id from another tenant gets that tenant\'s agent RUN, billed\n' +
+    'to them, with the output readable by the caller.\n' +
+    'FIX: `const err = await assertAgentInOrg(body.agentId, orgId); if (err) return\n' +
+    'reply.code(400).send({ error: err })` — see routes/tasks.ts POST /api/orgs/:orgId/tasks.\n' +
+    'Handlers:\n  ' + offenders.join('\n  '))
+})
+
+test('[GC-0b] the create-path guard bites — a planted create-shape offender is detected', () => {
+  // The auditor planted this exact shape and the old guard passed it silently. Proven
+  // here against the real block-splitter and the real regex, on synthetic source.
+  const planted = `
+    app.post('/api/orgs/:orgId/widgets', async (req, reply) => {
+      const { orgId } = req.params as any
+      const body = req.body as any
+      const widget = { id: randomUUID(), orgId, agentId: body.agentId, createdAt: new Date() }
+      await db.insert(schema.widgets).values(widget)
+      reply.code(201); return { widget }
+    })`
+  const blocks = handlerBlocks(planted)
+  assert.equal(blocks.length, 1, 'the handler splitter failed to find the planted route')
+  assert.ok(EXECUTABLE_FK_RE.test(blocks[0].body), 'a body-supplied `agentId` was NOT recognised — the guard is blind')
+  assert.ok(!blocks[0].body.includes(MARKER), 'the planted offender must not appear pre-approved')
+
+  // And the fixed form passes, or the guard is unsatisfiable and will be deleted.
+  const fixed = planted.replace('const widget =', 'const err = await assertAgentInOrg(body.agentId, orgId)\n      if (err) return reply.code(400).send({ error: err })\n      const widget =')
+  assert.ok(handlerBlocks(fixed)[0].body.includes(MARKER), 'the FIXED form does not satisfy the guard')
+
+  // A handler with no body-sourced FK is not flagged — noise check.
+  const clean = `
+    app.get('/api/orgs/:orgId/widgets', async (req) => {
+      const { orgId } = req.params as any
+      return { widgets: await db.select().from(schema.widgets).where(eq(schema.widgets.orgId, orgId)) }
+    })`
+  assert.ok(!EXECUTABLE_FK_RE.test(handlerBlocks(clean)[0].body), 'a clean read handler was flagged')
+})
+
 test('[GC-0b] the guard actually bites — a planted offender is detected', () => {
   // A guard that has never been seen to fail is a guard nobody knows works. This
   // exercises the real classifier against the real defect shape, and against the

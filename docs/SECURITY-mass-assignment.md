@@ -1,7 +1,18 @@
 # The mass-assignment / gate-order class (GC-0, GC-0b)
 
-> Six routes in this repo shipped the same defect. This note exists so there is no seventh.
+> Nine routes in this repo shipped the same defect. This note exists so there is no tenth.
 > Enforced by `backend/src/tests/gc0b-mass-assignment-guard.test.ts` — a static scan, not a convention.
+
+**The class has two legs.** Getting only the first is how instances #7–#9 survived the first fix:
+
+| Leg | Shape | Consequence |
+|---|---|---|
+| **(a) UPDATE** | body-writable **tenant column** (`orgId`) | the row walks into another tenant |
+| **(b) CREATE** | body-supplied **org-scoped reference** that is later **executed** | another tenant's *agent* runs, under *their* credentials |
+
+Leg (b) is the one that hides, because on a create route `orgId` comes from the **path** —
+correct, gate-checked, obviously safe — and that is exactly what makes the foreign key
+beside it read as harmless. See "The create-path leg" below.
 
 ## The shape
 
@@ -81,7 +92,47 @@ later and it is writable, with no diff to review.
 That last row is the one people miss. Before adding a field to an allow-list, grep for a
 `requireOrgRole('owner')` route that already writes it.
 
-## The six instances
+## The create-path leg (instances #7–#9)
+
+```ts
+POST /api/orgs/ORG-A/tasks   { "agentId": "<an agent in ORG B>" }
+```
+
+The task is correctly created in org A. Then `executeAgentTask` resolves the agent **by
+id alone** and treats `agent.orgId` as ambient authority — org B's LLM credentials,
+budget, knowledge base and connectors — while the output lands in a row org A can read.
+No tenant column was ever rewritten, so nothing that looks for leg (a) can see it.
+
+`POST /api/orgs/:orgId/scheduled` was worse: cron re-executes it indefinitely, **and**
+the route mints a webhook token whose trigger endpoint is registered *outside* the
+authenticated scope — so the URL fires the victim's agent with no session at all, and
+keeps working after the attacker leaves their own org.
+
+### Two layers, deliberately
+
+1. **Per-route (ergonomic).** `assertAgentInOrg(agentId, orgId)` from
+   `services/tenant-guard.ts`, returning a message or `null`. 400s at CREATE so the bad
+   row never exists and the operator gets a real error. **Run it before any integration
+   -config check** (`if (!cfg) return 'not connected'`) — behind one, the guard is
+   skipped for orgs without that integration and runs only in production. Our own
+   ordering test caught exactly that.
+2. **In the executor (authoritative).** `executeAgentTask` refuses when
+   `task.orgId !== agent.orgId`, marks the task `failed` / `needs_attention`, and bills
+   nothing.
+
+The invariant belongs to **execution**, not to any entry point — there are eight call
+sites into the executor and six paths that create an executable row. Route checks are a
+convention that has now failed three times; one check at the single point every
+execution passes through is a total guarantee. Keep both: the route check gives a good
+error, the executor check is the one that is actually load-bearing.
+
+### Fail closed, and don't build an oracle
+
+`assertAgentInOrg` refuses a **missing** agent identically to a **foreign** one, with
+the same message. Distinguishing them tells an attacker whether an id exists in another
+tenant.
+
+## The nine instances
 
 | # | Route | Severity | What it allowed |
 |---|---|---|---|
@@ -91,9 +142,20 @@ That last row is the one people miss. Before adding a field to an allow-list, gr
 | 4 | `PATCH /api/agents/:agentId` | **Critical** | Cross-org move **+** member sets `trustMode: autonomous`, escalating into the CONN-7 connector gate |
 | 5 | `PATCH /api/tasks/:taskId` | High | Cross-org move; `agentId` re-pointable at another org's agent |
 | 6 | `PATCH /api/orgs/:orgId` | **Critical** | Deny-list; member overwrites `deployConfig` (plaintext LLM keys), `telegramBotToken`, `budgetMonthlyUsd` |
+| 7 | `POST /api/orgs/:orgId/tasks` | **Critical** | *(leg b)* Body `agentId` → another org's agent executes, on their credentials |
+| 7b | `POST /api/orgs/:orgId/scheduled` | **Critical** | *(leg b)* Same, on **cron**, plus an **unauthenticated** webhook trigger URL |
+| 8 | `POST /api/orgs/:orgId/jira/sync` | **Critical** | *(leg b)* Imports a whole backlog as executable tasks on a foreign agent |
+| 9 | `POST /api/orgs/:orgId/jira/issues` | **Critical** | *(leg b)* Same, when the optional `agentId` is present |
 
-#6 was **not** on the reported list. It was found by sweeping for the *shape* rather than
-working the list — which is the whole argument for treating this as a class.
+Also closed alongside: `POST …/goals` (`ownerAgentId` — cross-tenant *reference*, not
+execution) and `POST …/comms/inbox/send` (body `agentId` written to `messages`, which are
+replayed as an agent's **conversation history** — a cross-tenant prompt-injection write).
+
+**How each was found matters more than the list.** #1–#2 were reported. **#6** came from
+sweeping for the *shape* rather than working the list. **#7** came from an auditor
+noticing the class had a second leg the guard didn't scan. **#8 and #9 were found by the
+widened guard itself, on its first run** — in a file nobody thought of as task-creating.
+That is the argument for a mechanical check over careful reading.
 
 ### The skills special case
 
@@ -135,5 +197,26 @@ Cover, per route: the exploit at 200 before / blocked after; the 15 exotic shape
 - **Inline object literals** (`.set({ status, kanbanColumn })`) are self-evidently
   allow-lists and always pass, so the guard stays quiet enough to keep.
 
+**Leg (b) — the create path.** A second scan requires that any handler reading an
+executable org-scoped FK out of the **body** (`body.agentId`, `ownerAgentId`,
+`targetAgentId`) calls `assertAgentInOrg`.
+
+*The honest limit:* a regex pass **cannot** prove a given FK is later executed — that is
+inter-procedural taint analysis (route → row → scheduler → executor) and this repo has no
+infrastructure for it. What it **can** do is enforce a structural convention: the marker
+must be present. That is the entire reason `assertAgentInOrg` exists as one shared named
+function instead of three hand-rolled `if` blocks — a scanner can look for a name.
+
+So the guard does not prove correctness; it proves nobody added a body-supplied agent id
+without confronting the question. That is the review step that was missing when #7
+shipped, and it is the most a scanner can honestly buy here. The **authoritative** defence
+is the runtime invariant in `executeAgentTask`, which needs no marker and no scanner
+because every execution passes through it.
+
+Scope note: `projectId` / `goalId` / `parentTaskId` are deliberately **not** watched —
+they can dangle a reference but nothing executes them, and a noisy guard is a deleted guard.
+
 Verified to bite: planting instance #7 in `webhooks.ts` — both as a raw body **and** as the
 subtler deny-list variant — fails the test in a route the guard had no prior knowledge of.
+The create-path scan is proven the same way against a planted create shape, and it earned
+its keep immediately: **it found #8 and #9 on its first run.**
