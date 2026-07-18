@@ -67,6 +67,40 @@ test('[APPR-1] a dangerous approve is routed to step-up, never sent bare', () =>
   assert.match(body.slice(gate, send), /return/, 'the step-up branch must return, not fall through to the headerless send')
 })
 
+test('[APPR-1 audit nit a] a missing approval row never falls through to the headerless send', () => {
+  const body = decideBody()
+  // If `approvals.find()` misses we cannot know whether the row is dangerous.
+  // Guessing "safe" would send a bare approve the server correctly 403s — a dead
+  // end for the operator. The miss must be handled and returned on explicitly.
+  const miss = /!approval/.exec(body)
+  assert.ok(miss, 'decide() must handle the approvals.find() miss explicitly')
+  const send = body.indexOf('await api(')
+  assert.ok(miss!.index < send, 'the miss check must precede the decide request')
+  assert.match(
+    body.slice(miss!.index, send),
+    /return/,
+    'the miss branch must RETURN — otherwise a dangerous approve whose row is not in view is sent with no step-up header',
+  )
+})
+
+test('[APPR-1 audit nit b] a mint failure is not reported as an expired step-up', () => {
+  const src = readFileSync(new URL('./cockpit/StepUpDialog.tsx', import.meta.url), 'utf8')
+  // The mint and the decide are separate legs with separate catches: a 403 from
+  // the MINT is an authorization problem (retrying never helps); a 403 from the
+  // DECIDE is a stale session (retrying re-mints and usually works). Conflating
+  // them told an operator without permission to keep typing APPROVE at a wall.
+  const catches = src.match(/catch \(e: any\)/g) ?? []
+  assert.ok(catches.length >= 2, 'the mint and decide legs must be caught separately, not under one catch')
+  const mintIdx = src.indexOf('arturita/session')
+  const decideIdx = src.indexOf('/decide')
+  assert.ok(mintIdx !== -1 && decideIdx !== -1 && mintIdx < decideIdx)
+  // The mint's own catch must not claim the step-up expired.
+  const mintLeg = src.slice(mintIdx, decideIdx)
+  assert.doesNotMatch(mintLeg, /expired/i,
+    'the mint failure path must not say "expired" — that is the decide leg\'s diagnosis')
+  assert.match(mintLeg, /not allowed|authoriz/i, 'the mint failure path should name it as an authorization problem')
+})
+
 test('[APPR-1] the step-up dialog sends the header and is the only bare-approve path', () => {
   const src = readFileSync(new URL('./cockpit/StepUpDialog.tsx', import.meta.url), 'utf8')
   assert.match(src, /'x-arturita-session'/, 'the step-up dialog must send the x-arturita-session header')

@@ -97,6 +97,15 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   // unchanged apart from now being honest about failure.
   const decide = async (id: string, decision: ApprovalDecision, note?: string) => {
     const approval = approvals.find(a => a.id === id)
+    // AUDIT nit (a) — a MISS must not fall through to the headerless path. If the
+    // row isn't in state we cannot tell whether it is dangerous, and guessing
+    // "safe" would send a bare approve that the server correctly 403s: not
+    // exploitable (the gate holds, and the failure now surfaces) but a dead end
+    // the operator can't act on. Local state is stale in that case, so say so.
+    if (decision === 'approved' && !approval) {
+      setDecideErr(prev => ({ ...prev, [id]: 'This approval is no longer in view — refresh before deciding.' }))
+      return
+    }
     if (decision === 'approved' && approval && approvalNeedsStepUp(approval)) {
       setStepUp(approval) // the dialog owns the mint + decide + card removal
       return

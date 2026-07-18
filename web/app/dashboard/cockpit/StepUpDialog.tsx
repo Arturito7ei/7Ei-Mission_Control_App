@@ -54,14 +54,34 @@ export default function StepUpDialog({ approval, orgId, getToken, onCancel, onAp
   const submit = useCallback(async () => {
     if (!typedConfirmationOk(typed) || busy) return
     setBusy(true); setError(null)
+    // AUDIT nit (b) — WHICH call failed changes what the operator should do, so the
+    // two legs are caught separately. A 403 from the MINT means this account may not
+    // mint a step-up session (an authorization problem — retrying will never help);
+    // a 403 from the DECIDE means the session was stale or refused (retrying re-mints
+    // and usually works). Classifying both as "step-up expired" told an operator
+    // lacking permission to keep typing APPROVE at a wall.
+    let stepUpToken: string
     try {
       const token = await getToken()
       if (!token) throw new Error('Not signed in — reload and try again.')
       // Fresh session per approval; held only in this local var, never logged.
-      const { token: stepUpToken } = await api<{ token: string }>(
+      const minted = await api<{ token: string }>(
         `/api/orgs/${orgId}/arturita/session`,
         { token, method: 'POST', body: JSON.stringify({ source: 'desk' }) },
       )
+      stepUpToken = minted.token
+    } catch (e: any) {
+      const msg = String(e?.message ?? '')
+      setError(/\b(401|403)\b/.test(msg)
+        ? 'Could not start step-up: this account is not allowed to approve dangerous actions here. Nothing was approved.'
+        : msg || 'Could not start step-up — nothing was approved. Please try again.')
+      setTyped(''); setBusy(false)
+      return
+    }
+
+    try {
+      const token = await getToken()
+      if (!token) throw new Error('Not signed in — reload and try again.')
       await api(`/api/approvals/${approval.id}/decide`, {
         token,
         method: 'POST',

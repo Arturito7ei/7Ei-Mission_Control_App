@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync, type Dirent } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 
@@ -27,16 +30,36 @@ async function appWithCors(env: NodeJS.ProcessEnv = {} as NodeJS.ProcessEnv) {
   return app
 }
 
-const preflight = (app: Awaited<ReturnType<typeof appWithCors>>, method: string, url: string) =>
+/**
+ * The probe defaults to asking for EVERY header the clients actually send, not a
+ * hardcoded pair.
+ *
+ * This helper previously hardcoded 'authorization,content-type', and that is
+ * precisely why the whole suite stayed green while `x-arturita-session` was
+ * undeliverable: the probe never asked for the header that was missing, so there
+ * was nothing for it to fail on. A probe that cannot express the failure is not a
+ * guard. Callers may still pass an explicit list to test a specific case.
+ */
+const preflight = (
+  app: Awaited<ReturnType<typeof appWithCors>>,
+  method: string,
+  url: string,
+  requestHeaders: readonly string[] = CORS_ALLOWED_HEADERS,
+) =>
   app.inject({
     method: 'OPTIONS',
     url,
     headers: {
       origin: ORIGIN,
       'access-control-request-method': method,
-      'access-control-request-headers': 'authorization,content-type',
+      'access-control-request-headers': requestHeaders.join(',').toLowerCase(),
     },
   })
+
+/** The headers a preflight response actually grants, lower-cased. */
+const grantedHeaders = (res: { headers: Record<string, unknown> }): string[] =>
+  String(res.headers['access-control-allow-headers'] ?? '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
 
 test('[AGFIX1] preflight allows every verb the dashboard uses', async () => {
   const app = await appWithCors()
@@ -57,6 +80,16 @@ test('[AGFIX1] preflight allows every verb the dashboard uses', async () => {
       .split(',').map(s => s.trim().toUpperCase())
     assert.ok(allowed.includes(method), `${method} ${url}: allow-methods was "${allowed.join(',')}"`)
     assert.equal(res.headers['access-control-allow-origin'], ORIGIN)
+    // BOTH AXES, every case. The method bug (AGFIX1) and the header bug (APPR-1)
+    // are the same failure wearing different clothes: an explicit allow-list that
+    // silently omits something a client sends, answered with a 204 the browser
+    // then refuses to act on. Checking only one axis per test is how the second
+    // one went unnoticed for a whole story, so every case now checks both.
+    const granted = grantedHeaders(res)
+    for (const h of CORS_ALLOWED_HEADERS) {
+      assert.ok(granted.includes(h.toLowerCase()),
+        `${method} ${url}: the browser may not send "${h}" — granted "${granted.join(',')}"`)
+    }
   }
   await app.close()
 })
@@ -117,15 +150,56 @@ test('[APPR-1] preflight allows the x-arturita-session step-up header', async ()
 })
 
 test('[APPR-1] every header a client actually sends is in CORS_ALLOWED_HEADERS', () => {
-  // Kept as a named list rather than a source scan: web/ is a separate workspace
-  // the backend test run cannot import. Add a header here when a client starts
-  // sending one — the preflight test above proves the list is what ships.
+  // Guards REMOVAL of the three known headers. (Authorization / Content-Type are
+  // not custom, so the source scan below cannot see them — this covers them.)
   for (const h of ['Authorization', 'Content-Type', 'x-arturita-session']) {
     assert.ok(
       (CORS_ALLOWED_HEADERS as readonly string[]).some(x => x.toLowerCase() === h.toLowerCase()),
       `${h} is sent by a client but missing from CORS_ALLOWED_HEADERS`,
     )
   }
+})
+
+test('[APPR-1] no client sends a custom header the browser would be refused', () => {
+  // The check above is a hand-maintained list, so it catches a header being
+  // REMOVED from the allowance but NOT a client starting to send a new one —
+  // which is the direction this bug actually travelled. This one closes that:
+  // it reads the client sources and requires every custom (`x-…`) header literal
+  // to be allowed at preflight.
+  //
+  // Read as TEXT, never imported: web/ and apps/mobile/ are separate workspaces
+  // and the backend CI job installs only backend/ — an import would fail there
+  // while passing locally. The `x-` convention is what makes this low-noise;
+  // a non-`x-` custom header would need adding to the list above by hand.
+  const roots = ['../../../web/lib', '../../../web/app', '../../../apps/mobile/src']
+  const found = new Set<string>()
+  const walk = (dir: string) => {
+    let entries: Dirent[]
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const p = join(dir, e.name)
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || e.name === '.next' || e.name === 'dist') continue
+        walk(p)
+      } else if (/\.(ts|tsx)$/.test(e.name)) {
+        for (const m of readFileSync(p, 'utf8').matchAll(/['"](x-[a-zA-Z0-9-]+)['"]/g)) {
+          found.add(m[1].toLowerCase())
+        }
+      }
+    }
+  }
+  for (const r of roots) walk(fileURLToPath(new URL(r, import.meta.url)))
+
+  // The scan must actually see something, or it is a guard that can never fire.
+  assert.ok(found.has('x-arturita-session'),
+    'the scan found no x-arturita-session in any client — it is not looking where the clients live')
+
+  const allowed = new Set((CORS_ALLOWED_HEADERS as readonly string[]).map(h => h.toLowerCase()))
+  const unallowed = [...found].filter(h => !allowed.has(h))
+  assert.deepEqual(unallowed, [],
+    `a client sends custom header(s) the browser will refuse at preflight: ${unallowed.join(', ')}. ` +
+      'Add them to CORS_ALLOWED_HEADERS — otherwise the request never leaves the browser and the ' +
+      'failure surfaces as a generic "Network error", not as the missing-header bug it is.')
 })
 
 test('[AGFIX1] allowed origins come from ALLOWED_ORIGINS, trimmed', () => {
