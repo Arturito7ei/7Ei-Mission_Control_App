@@ -20,8 +20,9 @@ import { tk, text, space } from '../tokens'
 import { Button, Card, Pill, SectionLabel, Select, Skeleton } from '../ui'
 import { sx, type CAgent, type Getter } from './shared'
 import {
-  ACTIVITY_KINDS, KIND_GLYPH, KIND_LABEL, OUTCOME_LABEL, OWNER_ONLY_KINDS,
-  activityAgo, activityQuery, type ActivityEvent, type ActivityKind, type ActivityOutcome,
+  ACTIVITY_KINDS, KIND_GLYPH, KIND_LABEL, OWNER_ONLY_KINDS,
+  activityAgo, activityQuery, auditPhrase, auditRunLabel, awaitsOperator, buildFeedRows, outcomeLabel,
+  type ActivityEvent, type ActivityKind, type ActivityOutcome,
 } from '@/lib/activityKinds'
 import type { PillTone } from '../ui'
 
@@ -36,6 +37,56 @@ export const OUTCOME_TONE: Record<ActivityOutcome, PillTone> = {
   failed: 'fail',
   rejected: 'fail',
   info: 'muted',
+}
+
+/** FIX-1 — tone follows the same kind-awareness as the label. `warn` is the desk's
+ *  "this wants you" colour, and spending it on a QUEUED task (every task is born
+ *  `pending`) is the colour half of the same lie the badge copy was telling. A queued
+ *  task is routine, so it reads muted; a pending APPROVAL keeps the warn it earns. */
+export function outcomeTone(kind: ActivityKind, outcome: ActivityOutcome): PillTone {
+  if (outcome === 'pending') return awaitsOperator({ kind, outcome }) ? 'warn' : 'muted'
+  return OUTCOME_TONE[outcome] ?? 'muted'
+}
+
+/** One feed row. Extracted so a collapsed audit run can render the SAME row for its
+ *  expanded children — an expanded audit event must not be a second, lesser rendering
+ *  of the same event. */
+function Row({ e, now, onOpenAgent, muted }: {
+  e: ActivityEvent; now: number; onOpenAgent?: (agentId: string) => void; muted?: boolean
+}) {
+  // FIX-1 — an audit row's own `title` is a machine string (`post.orgs`) and its target
+  // is a method + a uuid-bearing path. Both are replaced by the shared human phrase;
+  // the raw pair stays in the tooltip, so the forensic detail is one hover away.
+  const isAudit = e.kind === 'audit_event'
+  const label = isAudit ? auditPhrase(e.title, e.target) : e.title
+  const raw = isAudit ? [e.title, e.target].filter(Boolean).join(' · ') : e.title
+  return (
+    <div style={{ ...sx.row, ...(muted ? { opacity: 0.75 } : null) }}>
+      <span aria-hidden style={{ width: 18, textAlign: 'center', flexShrink: 0 }}>{KIND_GLYPH[e.kind] ?? '•'}</span>
+      <span style={{ ...sx.badge, flexShrink: 0 }}>{KIND_LABEL[e.kind] ?? e.kind}</span>
+      <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={raw}>
+        {label}
+      </span>
+      {!isAudit && e.target && (
+        <span style={{ ...sx.badge, flexShrink: 0, fontWeight: 500 }} title={e.target}>{e.target}</span>
+      )}
+      {e.agentName && (
+        onOpenAgent && e.agentId ? (
+          <button
+            type="button"
+            onClick={() => onOpenAgent(e.agentId!)}
+            style={{ ...sx.badge, flexShrink: 0, cursor: 'pointer', background: 'transparent' }}
+          >{e.agentName}</button>
+        ) : (
+          <span style={{ ...sx.badge, flexShrink: 0 }}>{e.agentName}</span>
+        )
+      )}
+      <Pill tone={outcomeTone(e.kind, e.outcome)} style={{ flexShrink: 0 }}>{outcomeLabel(e.kind, e.outcome)}</Pill>
+      <span style={{ color: tk.muted, fontSize: text.xs.fontSize, flexShrink: 0, width: 76, textAlign: 'right' }}>
+        {activityAgo(e.at, now)}
+      </span>
+    </div>
+  )
 }
 
 type FeedResponse = {
@@ -61,6 +112,9 @@ export default function ActivityLogSection({ orgId, getToken, agents, onOpenAgen
   const [isOwner, setIsOwner] = useState(true)
   const [kind, setKind] = useState<ActivityKind | 'all'>('all')
   const [agentId, setAgentId] = useState<string>('all')
+  /** FIX-1 — which collapsed audit runs the operator has expanded. Keyed by the run's
+   *  first event id, so appending a page never re-collapses something already open. */
+  const [openRuns, setOpenRuns] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   // Rendered ages are relative, so they need a "now". Taken once per load rather than
@@ -173,36 +227,34 @@ export default function ActivityLogSection({ orgId, getToken, agents, onOpenAgen
               : 'No activity matches this filter. Try “Everything”, or a different agent.'}
           </p>
         ) : (
-          events.map(e => {
-            const tone = OUTCOME_TONE[e.outcome] ?? 'muted'
-            return (
-              <div key={e.id} style={sx.row}>
-                <span aria-hidden style={{ width: 18, textAlign: 'center', flexShrink: 0 }}>{KIND_GLYPH[e.kind] ?? '•'}</span>
-                <span style={{ ...sx.badge, flexShrink: 0 }}>{KIND_LABEL[e.kind] ?? e.kind}</span>
-                <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.title}>
-                  {e.title}
-                </span>
-                {e.target && (
-                  <span style={{ ...sx.badge, flexShrink: 0, fontWeight: 500 }} title={e.target}>{e.target}</span>
-                )}
-                {e.agentName && (
-                  onOpenAgent && e.agentId ? (
-                    <button
-                      type="button"
-                      onClick={() => onOpenAgent(e.agentId!)}
-                      style={{ ...sx.badge, flexShrink: 0, cursor: 'pointer', background: 'transparent' }}
-                    >{e.agentName}</button>
-                  ) : (
-                    <span style={{ ...sx.badge, flexShrink: 0 }}>{e.agentName}</span>
-                  )
-                )}
-                <Pill tone={tone} style={{ flexShrink: 0 }}>{OUTCOME_LABEL[e.outcome] ?? e.outcome}</Pill>
-                <span style={{ color: tk.muted, fontSize: text.xs.fontSize, flexShrink: 0, width: 76, textAlign: 'right' }}>
-                  {activityAgo(e.at, now)}
-                </span>
+          // FIX-1 — the default view leads with what HAPPENED. Runs of routine audit
+          // rows collapse into one muted line the operator can expand in place; picking
+          // the Audit chip passes collapse:false, so asking for them explicitly still
+          // shows every one. Nothing is dropped and the order never changes.
+          buildFeedRows(events, { collapse: kind === 'all' }).map(r =>
+            r.row === 'event' ? (
+              <Row key={r.event.id} e={r.event} now={now} onOpenAgent={onOpenAgent} />
+            ) : (
+              <div key={r.run.key}>
+                <button
+                  type="button"
+                  onClick={() => setOpenRuns(s => { const n = new Set(s); n.has(r.run.key) ? n.delete(r.run.key) : n.add(r.run.key); return n })}
+                  aria-expanded={openRuns.has(r.run.key)}
+                  style={{ ...sx.row, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', color: tk.muted, font: 'inherit', fontSize: text.sm.fontSize }}
+                >
+                  <span aria-hidden style={{ width: 18, textAlign: 'center', flexShrink: 0 }}>{KIND_GLYPH.audit_event}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{auditRunLabel(r.run.count)}</span>
+                  <span style={{ ...sx.badge, flexShrink: 0 }}>{openRuns.has(r.run.key) ? 'Hide' : 'Show'}</span>
+                  <span style={{ color: tk.muted, fontSize: text.xs.fontSize, flexShrink: 0, width: 76, textAlign: 'right' }}>
+                    {activityAgo(r.run.items[0].at, now)}
+                  </span>
+                </button>
+                {openRuns.has(r.run.key) && r.run.items.map(e => (
+                  <Row key={e.id} e={e} now={now} onOpenAgent={onOpenAgent} muted />
+                ))}
               </div>
-            )
-          })
+            ),
+          )
         )}
       </Card>
 

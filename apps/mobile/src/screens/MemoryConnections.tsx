@@ -232,6 +232,11 @@ export default function MemoryConnections({ onOpenNote }: { onOpenNote: (path: s
               {graph.source === 'graphify' ? ' · ⬡ Graphify' : ' · ◇ native parse'}
             </Text>
           ) : null}
+          {/* FIX-1 — a graph.json we found but could not use is not the same as not
+              having one. Same rule, same words, as the desk. */}
+          {graph?.graphifyError ? (
+            <Text style={s.warn} numberOfLines={2}>⚠ graphify file unusable — {graph.graphifyError}</Text>
+          ) : null}
           {/* A partial vault must say it is partial — same rule as the desk. */}
           {graph?.stats.capped ? (
             <Text style={s.capped}>
@@ -279,6 +284,8 @@ const s = StyleSheet.create({
   },
   stats: { color: theme.textDim, fontSize: font.sm, marginBottom: space.sm },
   capped: { color: theme.textFaint, fontSize: font.sm, marginBottom: space.sm, lineHeight: 18 },
+  // FIX-1 — the unusable-graphify notice. warn, not danger: the fallback worked.
+  warn: { color: theme.warn, fontSize: font.sm, marginBottom: space.sm, lineHeight: 18 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

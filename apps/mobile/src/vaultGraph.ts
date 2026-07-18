@@ -70,6 +70,10 @@ export type GraphLite = {
   repo: string
   root: string
   branch: string
+  /** FIX-1 — set when a graphify graph.json was FOUND but could not be used
+   *  (corrupt, or scoped to a different root). Distinct from simply not having
+   *  one: the phone says so rather than silently reading "◇ native parse". */
+  graphifyError?: string
 }
 
 /** Why there is no force-directed canvas here. Rendered on the screen, not just here. */

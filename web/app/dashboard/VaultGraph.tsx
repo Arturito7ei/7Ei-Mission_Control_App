@@ -35,7 +35,7 @@ type GraphResp = {
   nodes: GNode[]; edges: GEdge[]
   stats: { notes: number; tags: number; links: number; unresolved: number; communities?: number; truncated?: boolean; capped?: number; totalNodes?: number }
   repo: string; root: string; branch: string
-  hasGraphify: boolean; graphPath?: string; rebuildCommand: string; cached?: boolean
+  hasGraphify: boolean; graphPath?: string; graphifyError?: string; rebuildCommand: string; cached?: boolean
 }
 
 // Folder → hue. Ten tokenised slots derived from Okabe–Ito, tuned per theme in
@@ -357,6 +357,14 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
             ? <span title={data.graphPath}>⬡ Graphify · {data.stats.notes} notes · {data.stats.links} links{data.stats.communities ? ` · ${data.stats.communities} concepts` : ''}</span>
             : <span>◇ Native parse · {data.stats.notes} notes · {data.stats.links} links{data.stats.unresolved ? ` · ${data.stats.unresolved} unresolved` : ''}{data.stats.truncated ? ' · truncated' : ''}</span>}
         </span>}
+        {/* FIX-1 — a graph.json we FOUND but could not use is not the same as not
+            having one. Silently falling back said "◇ Native parse" and left the
+            operator with no idea their committed graph was corrupt or wrongly rooted. */}
+        {data?.graphifyError && (
+          <span style={{ ...s.meta, color: 'var(--warn)' }} title={data.graphifyError} role="status">
+            ⚠ graphify file unusable
+          </span>
+        )}
         <Button onClick={() => load(true)} disabled={loading} style={{ fontSize: text.sm.fontSize }}>↻ Rebuild</Button>
       </div>
 

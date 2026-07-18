@@ -25,6 +25,23 @@
   --t-base: 180ms ease;
 }
 
+/* ─── Native UI chrome (FIX-1) ─────────────────────────────────────────
+   `color-scheme` is what tells the BROWSER which palette to draw the UI it
+   owns and we cannot style: <select> option popups, scrollbars, spinners,
+   date pickers, form-control focus rings. It was declared NOWHERE, so those
+   surfaces defaulted to LIGHT while the app ran dark — a dark-theme select
+   popup drew light chrome under near-white inherited option text. The GC-1
+   recipient picker worked around it locally by naming its option colours; this
+   is the root fix, and it de-risks every other raw <select> on the dashboard.
+
+   Keyed on [data-theme] rather than a prefers-color-scheme media query on
+   purpose: this app has an EXPLICIT theme toggle that overrides the OS, and
+   the two must not disagree — a user on a light OS who has chosen dark needs
+   dark chrome. `data-theme` is stamped pre-paint by THEME_INIT_SCRIPT in
+   app/layout.tsx and re-stamped by the toggle, so this follows both. */
+:root[data-theme='dark']  { color-scheme: dark; }
+:root[data-theme='light'] { color-scheme: light; }
+
 /* ─── Semantic tokens (MCA-86) ─────────────────────────────────────────
    The light/dark values (--s0/--s1/--s2, --line, --text, --accent, --ok,
    --warn, --info, --danger-*, …) are emitted from app/dashboard/tokens.ts
