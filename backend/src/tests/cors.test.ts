@@ -14,7 +14,7 @@ import cors from '@fastify/cors'
 // These tests exercise the actual preflight, not the options object, so a future
 // upgrade that changes the default cannot reintroduce the failure silently.
 
-import { CORS_METHODS, DEFAULT_ORIGINS, corsOptions } from '../middleware/cors'
+import { CORS_METHODS, CORS_ALLOWED_HEADERS, DEFAULT_ORIGINS, corsOptions } from '../middleware/cors'
 import { agentDetailRoutes } from '../routes/agent-detail'
 
 const ORIGIN = 'https://app.7ei.ai'
@@ -77,6 +77,55 @@ test('[AGFIX1] CORS_METHODS covers every verb the agent routes register', async 
   // Sanity: the guard is only meaningful if it actually saw the verbs at issue.
   assert.ok(seen.has('PUT') && seen.has('DELETE'))
   await app.close()
+})
+
+// ─── APPR-1 audit — the step-up header must survive preflight ────────────────
+//
+// The method bug above has an exact twin in the header axis: `allowedHeaders` is
+// an EXPLICIT list, so any custom header not named in it is refused by the
+// browser at preflight and the real request is never sent. Approving a dangerous
+// action from the desk requires `x-arturita-session` (routes/tasks.ts), so
+// omitting it made the entire web step-up flow unreachable from a browser while
+// every unit test passed — the phone was immune only because React Native does
+// no preflight.
+//
+// Note the `preflight()` helper above hardcodes 'authorization,content-type'.
+// That is why no existing test caught this: the probe never asked for the header
+// that was missing. These tests ask for the real thing.
+
+test('[APPR-1] preflight allows the x-arturita-session step-up header', async () => {
+  const app = await appWithCors()
+  const res = await app.inject({
+    method: 'OPTIONS',
+    url: '/api/orgs/o1/agents/a1/files',
+    headers: {
+      origin: ORIGIN,
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'authorization,content-type,x-arturita-session',
+    },
+  })
+  assert.ok(res.statusCode < 300, `preflight status ${res.statusCode}`)
+  const allowed = String(res.headers['access-control-allow-headers'] ?? '')
+    .split(',').map(s => s.trim().toLowerCase())
+  assert.ok(
+    allowed.includes('x-arturita-session'),
+    'REGRESSION: the browser may not send x-arturita-session, so approving a dangerous ' +
+      'action from the desk fails at preflight — the request never reaches the step-up ' +
+      `gate. Allow-Headers was "${allowed.join(',')}".`,
+  )
+  await app.close()
+})
+
+test('[APPR-1] every header a client actually sends is in CORS_ALLOWED_HEADERS', () => {
+  // Kept as a named list rather than a source scan: web/ is a separate workspace
+  // the backend test run cannot import. Add a header here when a client starts
+  // sending one — the preflight test above proves the list is what ships.
+  for (const h of ['Authorization', 'Content-Type', 'x-arturita-session']) {
+    assert.ok(
+      (CORS_ALLOWED_HEADERS as readonly string[]).some(x => x.toLowerCase() === h.toLowerCase()),
+      `${h} is sent by a client but missing from CORS_ALLOWED_HEADERS`,
+    )
+  }
 })
 
 test('[AGFIX1] allowed origins come from ALLOWED_ORIGINS, trimmed', () => {
