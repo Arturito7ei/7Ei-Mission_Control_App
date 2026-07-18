@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   nodeIdForPath, baseName, folderOf, frontmatter, extractTags, normalizeTag,
-  extractWikilinks, resolveWikilink, buildNativeGraph, parseGraphifyGraph, withDegrees,
+  extractWikilinks, resolveWikilink, buildNativeGraph, parseGraphifyGraph, withDegrees, capGraph,
   type GraphNode, type VaultGraph,
 } from '../services/vault-graph'
 
@@ -184,4 +184,76 @@ test('[M1] withDegrees counts undirected degree', () => {
   withDegrees(g)
   assert.equal(g.nodes[0].degree, 1)
   assert.equal(g.nodes[1].degree, 1)
+})
+
+// ─── MEM-1 · payload cap ─────────────────────────────────────────────────────
+
+/** n nodes with descending degree (n0 highest), chained so edges exist. */
+function ladder(n: number, kind: GraphNode['kind'] = 'note'): VaultGraph {
+  const nodes: GraphNode[] = Array.from({ length: n }, (_, i) => ({
+    id: `n${i}`, label: `n${i}`, kind, group: 'g', degree: n - i,
+  }))
+  const edges = nodes.slice(1).map(nd => ({ source: 'n0', target: nd.id, relation: 'link' as const, weight: 1 }))
+  return { source: 'native', nodes, edges, stats: { notes: n, tags: 0, links: edges.length, unresolved: 0 } }
+}
+
+test('[MEM-1] capGraph keeps the highest-degree nodes and reports the drop', () => {
+  const g = capGraph(ladder(10), 4)
+  assert.equal(g.nodes.length, 4)
+  assert.deepEqual(g.nodes.map(n => n.id), ['n0', 'n1', 'n2', 'n3'])
+  assert.equal(g.stats.capped, 6)
+  assert.equal(g.stats.totalNodes, 10)
+})
+
+test('[MEM-1] capGraph drops edges whose endpoints were cut', () => {
+  const g = capGraph(ladder(10), 3)
+  const ids = new Set(g.nodes.map(n => n.id))
+  assert.ok(g.edges.every(e => ids.has(e.source) && ids.has(e.target)))
+  // n0→n1, n0→n2 survive; the other seven point at dropped nodes.
+  assert.equal(g.edges.length, 2)
+})
+
+test('[MEM-1] capGraph is a no-op under the cap, but still reports the total', () => {
+  const g = capGraph(ladder(5), 50)
+  assert.equal(g.nodes.length, 5)
+  assert.equal(g.stats.capped, undefined)
+  assert.equal(g.stats.totalNodes, 5)
+})
+
+test('[MEM-1] capGraph preserves TRUE degree — radius means vault centrality, not survival', () => {
+  const g = capGraph(ladder(10), 3)
+  // n0 keeps degree 10 even though only 2 of its edges are still drawn.
+  assert.equal(g.nodes.find(n => n.id === 'n0')!.degree, 10)
+})
+
+test('[MEM-1] capGraph breaks degree ties notes-first, then by id — stable across fetches', () => {
+  const mk = (id: string, kind: GraphNode['kind']): GraphNode => ({ id, label: id, kind, group: 'g', degree: 5 })
+  const g: VaultGraph = {
+    source: 'graphify',
+    // deliberately unsorted, and tag/heading before the notes
+    nodes: [mk('z-tag', 'tag'), mk('a-head', 'heading'), mk('m-note', 'note'), mk('b-note', 'note')],
+    edges: [],
+    stats: { notes: 2, tags: 1, links: 0, unresolved: 0 },
+  }
+  const once = capGraph(g, 2).nodes.map(n => n.id)
+  const twice = capGraph(g, 2).nodes.map(n => n.id)
+  assert.deepEqual(once, ['b-note', 'm-note'])   // notes win the tie, then id order
+  assert.deepEqual(once, twice)                   // deterministic — same vault, same map
+})
+
+test('[MEM-1] capGraph tolerates a nonsense cap and an empty graph', () => {
+  const empty: VaultGraph = { source: 'native', nodes: [], edges: [], stats: { notes: 0, tags: 0, links: 0, unresolved: 0 } }
+  assert.equal(capGraph(empty, 100).nodes.length, 0)
+  assert.equal(capGraph(empty, 100).stats.totalNodes, 0)
+  // 0/negative/NaN mean "no cap", never "drop everything"
+  assert.equal(capGraph(ladder(5), 0).nodes.length, 5)
+  assert.equal(capGraph(ladder(5), -1).nodes.length, 5)
+  assert.equal(capGraph(ladder(5), Number.NaN).nodes.length, 5)
+})
+
+test('[MEM-1] capGraph does not mutate its input', () => {
+  const g = ladder(10)
+  capGraph(g, 3)
+  assert.equal(g.nodes.length, 10)
+  assert.equal(g.edges.length, 9)
 })

@@ -15,6 +15,7 @@ import type { BudgetLite } from './costs'
 // MOB-6e — same rule: the vault and org-chart wire shapes are defined in the
 // pure modules that read them (memory.ts / org.ts) and imported here.
 import type { VaultCfgLite, VaultEntryLite } from './memory'
+import type { GraphLite } from './vaultGraph'
 import type { OrgAgentLite } from './org'
 // MOB-6f — same rule: the governance, connector and settings wire shapes are
 // defined in the pure modules that read them.
@@ -306,6 +307,23 @@ export const Api = {
     api<{ path: string; markdown: string }>(
       base,
       `/api/orgs/${orgId}/memory/file?path=${encodeURIComponent(path)}`,
+      { token },
+    ),
+
+  // MEM-1 — the whole vault's LINK STRUCTURE in one response: every note, and
+  // every [[wikilink]]/#tag between them. The SAME endpoint the web's force
+  // graph reads; the phone renders it as searchable lists rather than a canvas
+  // (why: apps/mobile/src/vaultGraph.ts).
+  //
+  // `max` is asked DOWN from the server's 1500 ceiling — the desk draws its
+  // long tail as background texture, but a list has no use for the 900th
+  // least-connected note, and a phone on cellular has less use still. The
+  // server sheds the LOWEST-degree nodes, so what arrives is the connected core.
+  // It reports what it dropped (`stats.capped`), which the screen shows.
+  memoryGraph: (base: string, token: string, orgId: string, opts: { max?: number; rebuild?: boolean } = {}) =>
+    api<GraphLite>(
+      base,
+      `/api/orgs/${orgId}/memory/graph?max=${opts.max ?? 600}${opts.rebuild ? '&rebuild=1' : ''}`,
       { token },
     ),
 

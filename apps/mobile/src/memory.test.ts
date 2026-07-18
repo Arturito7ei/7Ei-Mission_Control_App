@@ -203,6 +203,14 @@ test('[MOB-6e] the dropped graph is explained on the screen, not just in a doc',
   assert.match(MEMORY_GRAPH_NOTE, /desktop/i)
 })
 
+test('[MEM-1] the note points at Links — the canvas is dropped, the data is not', () => {
+  // MEM-1 brought the link DATA to the phone as a list. A note still claiming
+  // the vault is "all here" while link structure lives one tab over would send
+  // the operator hunting in the tree for something the tree cannot show.
+  assert.match(MEMORY_GRAPH_NOTE, /links/i)
+  assert.doesNotMatch(MEMORY_GRAPH_NOTE, /the vault itself is all here/i)
+})
+
 // ─── Markdown — the web's subset, construct for construct ────────────────────
 
 test('[MOB-6e] every block the web’s mdToHtml handles survives the parse', () => {
