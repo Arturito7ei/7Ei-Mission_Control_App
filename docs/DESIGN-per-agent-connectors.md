@@ -1003,14 +1003,151 @@ cannot execute anything). A trigger is a documented follow-up (a future CONN sli
 built it MUST route through `executeConnectorAction` and reuse the existing Inbox/Approvals +
 step-up UI, with the config-only/no-OAuth constraint still applying on the phone.
 
-**Remaining for CONN-8b:** _none for the epic._ Optional/future: wiring
-`executeConnectorAction` into the internal `agent-executor.ts` loop; the owner-trigger
+**Remaining for CONN-8b:** _none for the epic._ Optional/future: the owner-trigger
 follow-up above; a later, carefully-audited stage for **stdio** MCP execution (currently
 fail-closed). **With CONN-8b-4, the connectors epic (CONN-1…8b-4) is FEATURE-COMPLETE.**
+(Wiring `executeConnectorAction` into the internal `agent-executor.ts` loop was listed here
+as optional/future; it then shipped as **CONN-9** below.)
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
 real wins that need no OAuth (CONN-2/3/4), then the expensive OAuth surface isolated
 (CONN-5), then breadth (CONN-6), then the capability/containment tightening (CONN-7).
+
+---
+
+### CONN-9 — Agent-loop wiring: an agent can USE its connectors mid-run ✅ SHIPPED
+
+CONN-8a…8b-4 built the gate and every surface around it, but nothing inside a normal agent
+run ever called it: an operator could configure GitHub on an agent and the agent still had
+no way to use it. CONN-9 is that wire — deliberately thin, and **additive to `backend/`**.
+
+**Files.** `backend/src/services/agent-connector-tools.ts` (new — derivation, prompt block,
+directive parsing, the execution funnel, containment helpers) + a wiring block in
+`backend/src/services/agent-executor.ts`. Tests:
+`backend/src/tests/conn9-agent-connector-tools.test.ts` (13, real SQLite + the real gate +
+the real decide route, mocked provider transport).
+
+**Mechanism.** The executor runs on `streamLLM`, which has no native tool-calling loop, so
+connectors reuse the **text-directive idiom** already used for `[REMEMBER:]` / `[WEBHOOK:]`
+/ `[DELEGATE:]` — `[CONNECTOR: <connector>.<action> | {json}]` — rather than forking the run
+loop. One model turn emits directives; they are executed; **one** synthesis turn reads the
+results and writes the final answer.
+
+**1. Exposure ≠ authorization.** A connector is offered to the model only with BOTH an
+enabled `agent_connectors` row AND an **explicit** `connector:<id>` / `connector:*` / `*`
+capability (`hasExplicitConnectorCapability` — an empty/legacy allow-all list grants
+**nothing**, per CONN-7 carry-forward (i)), plus a known catalog entry and a real executor.
+Exposure is only a hint: the same capability is re-checked inside `executeConnectorAction`
+on every call, so a model that invents a connector it was never offered is stopped **by the
+gate, not by the prompt** (`[CONN9-NOCAP]` asserts both halves). Nothing secret crosses the
+boundary — the derived tool carries a connector id, a catalog display name and action names
+only; the row's `config` and `secretRef` are never read, so neither can reach the prompt.
+
+**2. Every invocation funnels through `executeConnectorAction`.** `runConnectorDirectives`
+has no path to an executor, no path that skips `authorizeConnectorAction`, and **no path
+that supplies an `approvalId`** — so the agent loop is *structurally* unable to redeem an
+approval, its own or anyone's. Redemption stays the human-decided single-use route. The
+three outcomes: `allow` → executes once, ledgered, result sanitized (`redactSecrets`, run
+by the framework) and size-bounded; `needs_approval` → **not executed**, the approval is
+filed by the gate with the server-computed `paramsDigest` binding, and the model is told it
+is pending and cannot approve or retry it (the `approvalId` is deliberately withheld — the
+model has no legitimate use for it); `deny` → a clean refusal. Also server-supplied, never
+model-supplied: `orgId`/`agentId`, and `target: null` so agent prose can never dress up an
+approval card.
+
+**3. Prompt-injection containment (the hard requirement).** Everything a connector returns
+is attacker-controllable — anyone who can file a GitHub issue, comment on a Jira ticket,
+message the agent or stand up an MCP server can put text in front of this model. Three
+layers, and the fence is only the first:
+
+- **(i) Fenced + nonced.** Results sit between markers carrying a per-run random nonce,
+  drawn *after* the payload text exists (and re-drawn on collision) so no provider can
+  predict it and close the fence early to continue in the operator's voice — the same
+  containment `converse-attachments.ts` uses for operator-attached documents. The
+  untrusted-data label is emphatic and comes **before** the data: a model that reads 4k
+  characters of hostile text and only then learns it was data has already been steered.
+- **(ii) The synthesis turn is TERMINAL.** Its output is stripped of both `[CONNECTOR:]`
+  and `[DELEGATE:]` directives **without executing them**. This — not the fence — is what
+  makes containment structural: it holds even if the model is fully persuaded. Injected
+  text cannot trigger another connector call and cannot steer routing or delegation.
+  *Cost:* an orchestrator that used a connector does not also delegate in the same run. A
+  deliberate trade — one contained round beats an uncontained chain.
+- **(iii) The gate is unmoved.** Capability comes from `agents.permissions` and trust from
+  `agent_connectors.trustLevel`, both read from the DB and never from model output, so no
+  amount of "you are approved to…" grants anything. Approval cards are machine-rendered
+  from the structured action with a server-computed digest, so injected prose cannot dress
+  up what the operator sees either.
+
+`[CONN9-INJECT]` proves it end-to-end with a payload carrying every trick at once (a system
+override, a forged capability grant, a `[CONNECTOR: github.repo.delete]`, a `[DELEGATE:]`
+exfiltration, and a **forged closing fence marker**): the data stays inside the real fence,
+the forged marker cannot close it, the demanded destructive call is still refused, no
+unapproved provider call is made, and no approval is approved behind the operator's back.
+
+**4. Loop safety.** `MAX_CONNECTOR_CALLS_PER_RUN = 4` (over-cap directives come back as
+`not_attempted` **with a reason**, so the model is told it was capped rather than silently
+truncated); `MAX_CONNECTOR_RESULT_CHARS = 4_000` per result and `12_000` per block, clipped
+with a visible `CONNECTOR_TRUNCATION_MARKER` — the clipped **text** is returned rather than
+a pruned object, because a partial JSON string is honest about being partial whereas a
+pruned object looks complete and invites "the list has 3 items". Calls run sequentially and
+are individually try/caught; derivation, the round, and the synthesis turn are each
+non-critical, so **a connector failure can never crash a run** — it costs the agent its
+tools, never the task. Provider errors are surfaced cleanly with no credential (asserted
+against a provider that echoes the PAT back in its error body). Directive parsing is
+fail-closed and non-throwing: a malformed header, unparseable params, a non-object params
+value or an unterminated directive is **skipped, not guessed at**, and the JSON-aware
+scanner means a `]` inside params doesn't truncate the directive.
+
+**Cost accounting.** A connector round adds a second LLM turn, so `tokensUsed` / `costUsd` /
+`inputTokens` / `outputTokens` accumulate across both turns — the operator pays for it, so
+it shows up in the task totals and therefore in the daily/monthly budget checks.
+
+**Approvals surface — VERIFIED, with two gaps named.** The inherited claim was "approvals
+already surface unchanged on mobile end-to-end with no client change". Checked rather than
+assumed — and the check earned its keep. **Verdict: true for mobile, but fragile; and the
+same claim is FALSE for web.** CONN-9 ships no client change (it is backend-additive), so
+both items below are follow-ups, not regressions — but CONN-9 makes them far more visible
+by routing routine connector writes into that queue.
+
+| # | Question | Verdict |
+|---|---|---|
+| 1 | Does the mobile list endpoint exclude `connector_action`? | **No — surfaces.** `GET /api/orgs/:orgId/approvals?status=pending` (`apps/mobile/src/api.ts:375` → `routes/tasks.ts:128-134`) filters on `orgId` + `status` only, with **no `type` predicate** (contrast the review-queue route at `tasks.ts:160`, which does filter by type). |
+| 2 | Does the mobile UI switch on a hardcoded type list to render? | **No — generic.** `ApprovalsPane.tsx:149` renders the chip as `a.type.replace(/_/g,' ')` and `:155` the server-provided `a.summary`; `stepup.ts:62-71` is equally generic. |
+| 3 | Does web render *and decide* it? | **Renders, CANNOT approve — PARITY GAP.** |
+| 4 | Can the operator actually approve from mobile? | **Yes — but via a fallback clause.** |
+
+**Gap A — mobile's dangerous-type copy is stale (fragile, not broken).**
+`connector_action` IS a dangerous type on the backend (`dangerous-approvals.ts:29`), so
+`routes/tasks.ts:478` requires step-up to approve it. Mobile's hand-copied
+`DANGEROUS_APPROVAL_TYPES` (`apps/mobile/src/constants.ts:11-16`) lists only four types and
+**omits `connector_action`**, despite its own "keep in sync with the backend" comment. It
+works today *only* because `approvalNeedsStepUp` (`constants.ts:42`) also honours
+`payload.requiresStepUp`, which `prepareApprovalRecord` stamps for any dangerous type
+(`dangerous-approvals.ts:250`) and CONN-9's filing path persists
+(`connector-authz.ts:431-453`). So the guarantee rests on a payload flag rather than on the
+type classification the list exists to provide: any `connector_action` row whose payload
+lacks that flag would show mobile's one-tap Approve, skip the danger banner, and dead-end on
+a server 403. **Follow-up: add `'connector_action'` to `apps/mobile/src/constants.ts` and
+pin the copy with a tripwire test**, per the standing hand-copy rule in CLAUDE.md.
+
+**Gap B — web cannot approve ANY dangerous approval (pre-existing defect, now more
+visible).** Web reads approvals from a *different* endpoint (`GET /api/orgs/:orgId/inbox`,
+`CockpitPanel.tsx:61` → `tasks.ts:53-67`) and renders `connector_action` generically
+(`InboxSection.tsx:59-61`) — but its decide call sends **no `x-arturita-session` header**,
+and a grep for `arturita-session` across `web/` returns **zero hits**: web has no step-up
+minting path at all. Worse, `CockpitPanel.tsx:80-81` removes the card optimistically
+*before* the request and then swallows the failure in `catch {}`. **Net operator-visible
+behaviour: on the desk, Approve makes the card disappear as if it worked, while the approval
+is silently NOT approved (403 discarded); on the phone, the same approval genuinely
+approves.** This inverts the usual assumption that the desk is the more capable surface. It
+predates CONN-9 and affects `wallet_tx` / `email_send` / `machine_exec` equally — but CONN-9
+is what makes it routine. **Follow-up (separate story, web-side): a step-up mint + header on
+the web decide path, and stop swallowing the error / stop optimistically clearing the card.**
+The silent-success UX is the more dangerous half.
+
+**Deferred (not epic-blocking):** multi-round tool use (today's contract is one round then a
+terminal synthesis); letting an orchestrator both call a connector and delegate in the same
+run; the owner-initiated trigger (CONN-8b-4 follow-up); audited stdio-MCP execution.
 
 ---
 
@@ -1099,11 +1236,13 @@ will grow and the accordion wants room.
 | Google Workspace executor (real Gmail/Calendar/Drive calls, per-agent OAuth token) | **SHIPPED** — CONN-8b-2 (`connector-google.ts`; `credentialKind:'google_oauth'` → `ensureFreshAgentGoogleToken` over `agent_oauth_tokens`, NOT the env bag; hardcoded `gmail.googleapis.com`/`www.googleapis.com`; `gmail.send` + reads + calendar/drive writes; destructive always-approve; scope-fail-closed; token sentinel; approval params-digest binding) |
 | Custom-MCP invocation bridge | **SHIPPED** — CONN-8b-3 (`connector-mcp.ts`; open-ended `invoke` dispatch, http-transport only / **stdio fail-closed**, opaque tools escalate to approval even under `auto_write` unless on the per-connector `autoApproveTools` allow-list, destructive-named always approval; SSRF egress guard: https-only + no-userinfo + private-range block over IPv4/IPv6 incl. `169.254.169.254` metadata, **DNS-pinning** node:https lookup defeats rebinding, redirects not followed, 10s/1MB caps; bearer never leaks; params-digest binding intact) |
 | Web/mobile UI to MONITOR executions (owner ledger view) | **SHIPPED** — CONN-8b-4 (owner-gated `GET …/agents/:agentId/connector-executions`, R-4-safe; allow-list projection — no secret/params/digest/approval-id, `gated` boolean; web "Recent activity" section + mobile native list, parity-pinned status vocab; **monitor-only** — trigger deferred, no execution path) |
+| Agent-loop wiring — an agent USES its connectors mid-run | **SHIPPED** — CONN-9 (`agent-connector-tools.ts` + `agent-executor.ts`; `[CONNECTOR: id.action \| {json}]` directive, exposure requires an enabled row **AND** an explicit `connector:<id>` cap, every call funnels through `executeConnectorAction` with **no `approvalId` path** so the agent cannot self-redeem; results fenced under a per-run nonce as untrusted data + a **terminal** synthesis turn whose directives are stripped unexecuted; 4 calls/run, 4k-char results truncated with a marker, failures never crash the run) |
 | Web/mobile UI to TRIGGER executions (owner-initiated run) | **Deferred follow-up** — a safe owner trigger must funnel through `executeConnectorAction` (CONN-7 authz/approval/step-up/params-digest/single-use) + reuse the approvals/step-up UI; non-trivial params-digest binding across both clients, scoped out of 8b-4 |
 
 _End of plan. **The connectors epic (CONN-1 … CONN-8b-4) is FEATURE-COMPLETE.** All
 stages SHIPPED: backend framework + security primitives (CONN-1, 7, 8a), web+mobile
 accordion (CONN-2/3), real connectors (CONN-4/5/6), the executor fleet (GitHub/Jira/comms/
 Google/MCP — CONN-8a/8b-1/8b-2/8b-3), and the owner execution monitor (CONN-8b-4). Open
-follow-ups are optional, not epic-blocking: the owner-initiated trigger, agent-loop wiring
-of `executeConnectorAction`, and audited stdio-MCP execution._
+follow-ups are optional, not epic-blocking: the owner-initiated trigger and audited
+stdio-MCP execution. **CONN-9** then closed the last functional gap — the agent-loop wiring
+of `executeConnectorAction`, with prompt-injection containment for connector results._
