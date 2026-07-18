@@ -27,11 +27,18 @@ import {
   View,
 } from 'react-native'
 import { Api, type Approval } from '../api'
+import {
+  KIND_GLYPH, OUTCOME_LABEL, activityAgo, activityQuery, type ActivityEvent,
+} from '../activityKinds'
 import { useAuth } from '../auth'
 import { approvalNeedsStepUp } from '../constants'
 import { font, space, theme } from '../theme'
 import { Banner, Button, Card, Chip, Empty, Loading } from '../ui'
 import StepUpModal from './StepUpModal'
+
+/** How many freshly-decided approvals ride under the queue. Small and bounded: this is
+ *  a "what did I just decide" tail, not a history view — that is the Activity tab. */
+const DECIDED_LIMIT = 10
 
 export default function ApprovalsPane() {
   const { apiUrl, getToken, orgId } = useAuth()
@@ -40,7 +47,31 @@ export default function ApprovalsPane() {
   const [busyId, setBusyId] = useState<string | null>(null)
   // The dangerous approval currently mid-step-up (null = modal closed). MOB-4.
   const [stepUp, setStepUp] = useState<Approval | null>(null)
+  // ACT-1 — the recently DECIDED tail, mirroring the desk. Read from the unified
+  // activity feed (kind=approval_decided), so the phone and the desk render the SAME
+  // server projection of a decided approval rather than two hand-rolled shapes.
+  const [decisions, setDecisions] = useState<ActivityEvent[]>([])
+  const [now, setNow] = useState(() => Date.now())
 
+  // ACT-1 — the decided tail, on its own so a decision can refresh it without
+  // re-reading the pending queue. Deliberately does NOT clear the list on failure: a
+  // transient error must not read as "you have decided nothing".
+  const loadDecisions = useCallback(async () => {
+    const token = await getToken()
+    if (!token || !orgId) return
+    try {
+      const r = await Api.activity(
+        apiUrl, token, orgId,
+        activityQuery({ kind: 'approval_decided', limit: DECIDED_LIMIT }),
+      )
+      setDecisions(r.events ?? [])
+      setNow(Date.now())
+    } catch {
+      /* the queue is the load-bearing part; a missing tail must not blank it */
+    }
+  }, [apiUrl, getToken, orgId])
+
+  // Pull-to-refresh lands here: TWO cheap bounded reads, no rebuild, no re-crawl.
   const load = useCallback(async () => {
     const token = await getToken()
     if (!token || !orgId) return
@@ -51,7 +82,8 @@ export default function ApprovalsPane() {
       setError(e?.message ?? 'Failed to load approvals.')
       setItems([])
     }
-  }, [apiUrl, getToken, orgId])
+    loadDecisions()
+  }, [apiUrl, getToken, orgId, loadDecisions])
 
   useEffect(() => {
     load()
@@ -65,7 +97,8 @@ export default function ApprovalsPane() {
       setError(null)
       try {
         await Api.decideApproval(apiUrl, token, a.id, decision, note)
-        setItems((cur) => (cur ?? []).filter((x) => x.id !== a.id))
+        setItems((cur) => (cur ?? []).filter((x) => x.id !== a.id)) // ONLY on success
+        loadDecisions()                                            // re-read what was recorded
       } catch (e: any) {
         setError(e?.message ?? 'Decision failed.')
       } finally {
@@ -116,6 +149,7 @@ export default function ApprovalsPane() {
         onApproved={(id) => {
           setStepUp(null)
           setItems((cur) => (cur ?? []).filter((x) => x.id !== id))
+          loadDecisions() // ACT-1 — the step-up path confirms too; keep the tail fresh
         }}
       />
     ) : null}
@@ -192,6 +226,36 @@ export default function ApprovalsPane() {
           )
         })
       )}
+
+      {/* ACT-1 — RECENTLY DECIDED. Its own heading rather than mixed into the queue,
+          because telling "needs a decision now" apart from "already answered" is the
+          whole job of this screen. Read-only by design: an answered approval carries no
+          buttons, so there is nothing here to decide twice. Rows come from the server's
+          projection — no payload, no decision note. */}
+      {decisions.length > 0 ? (
+        <View style={{ marginTop: space.lg }}>
+          <Text style={s.decidedHead}>Recently decided</Text>
+          {decisions.map((d) => (
+            <Card key={d.id} style={{ marginBottom: space.sm }}>
+              <View style={s.decidedRow}>
+                <Text style={s.decidedGlyph}>{KIND_GLYPH.approval_decided}</Text>
+                <Text style={s.decidedTitle} numberOfLines={2}>
+                  {d.title}
+                </Text>
+                <Chip
+                  label={OUTCOME_LABEL[d.outcome] ?? d.outcome}
+                  tone={d.outcome === 'ok' ? 'ok' : d.outcome === 'rejected' ? 'danger' : 'neutral'}
+                />
+              </View>
+              <View style={s.decidedMeta}>
+                {d.target ? <Text style={s.decidedTarget}>{d.target}</Text> : null}
+                {d.agentName ? <Text style={s.decidedTarget}>{d.agentName}</Text> : null}
+                <Text style={s.decidedTarget}>{activityAgo(d.at, now)}</Text>
+              </View>
+            </Card>
+          ))}
+        </View>
+      ) : null}
     </ScrollView>
     </>
   )
@@ -221,4 +285,21 @@ const s = StyleSheet.create({
     lineHeight: 18,
     marginTop: space.sm,
   },
+  // ACT-1 — the recently-decided tail.
+  decidedHead: {
+    color: theme.textDim,
+    fontSize: font.sm,
+    fontWeight: '700',
+    marginBottom: space.sm,
+  },
+  decidedRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  decidedGlyph: { fontSize: font.base },
+  decidedTitle: { flex: 1, color: theme.text, fontSize: font.sm, fontWeight: '600' },
+  decidedMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.md,
+    marginTop: space.xs,
+  },
+  decidedTarget: { color: theme.textFaint, fontSize: font.sm - 1 },
 })

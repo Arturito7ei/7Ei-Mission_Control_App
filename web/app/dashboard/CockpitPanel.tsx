@@ -13,6 +13,7 @@ import InboxSection from './cockpit/InboxSection'
 import VoiceSection from './cockpit/VoiceSection'
 import AgentFleet from './cockpit/AgentFleet'
 import TimelineSection from './cockpit/TimelineSection'
+import ActivityLogSection from './cockpit/ActivityLogSection'
 import OrgChart, { type OrgRosterAgent } from './cockpit/OrgChart'
 import GoalsSection from './cockpit/GoalsSection'
 import BudgetsSection from './cockpit/BudgetsSection'
@@ -26,6 +27,7 @@ import HireDialog from './cockpit/HireDialog'
 import InviteAgentDialog from './cockpit/InviteAgentDialog'
 import StepUpDialog from './cockpit/StepUpDialog'
 import { approvalNeedsStepUp } from '@/lib/dangerousApprovals'
+import type { ActivityEvent } from '@/lib/activityKinds'
 
 // P0b — the same composition root can render either the full operator stack
 // (Operations) or a single promoted area. `only` filters which sections render
@@ -42,6 +44,9 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [approvals, setApprovals] = useState<Approval[]>([])
+  // ACT-1 — the recently DECIDED tail shown under the Inbox queue. Sourced from the
+  // unified activity feed so there is ONE projected shape for a decided approval.
+  const [decisions, setDecisions] = useState<ActivityEvent[]>([])
   const [goals, setGoals] = useState<GoalNode[] | null>(null)
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [preflight, setPreflight] = useState<Preflight | null>(null)
@@ -58,6 +63,18 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   const [deciding, setDeciding] = useState<Set<string>>(new Set())
   const [decideErr, setDecideErr] = useState<Record<string, string>>({})
 
+  // ACT-1 — the decided tail, on its own so a decision can refresh it WITHOUT
+  // re-running the 10-way cockpit load. This is the freshness leg of the APPR-1 lesson:
+  // the queue clears a card only on confirmed success, and the decided list is then
+  // re-read from the server rather than guessed at locally, so what the operator sees
+  // after deciding is what the server actually recorded.
+  const loadDecisions = useCallback(async () => {
+    try {
+      const r = await api<{ events: ActivityEvent[] }>(`/api/orgs/${orgId}/activity?kind=approval_decided&limit=8`, { token: await getToken() })
+      setDecisions(r.events ?? [])
+    } catch { /* the queue is the load-bearing part; a missing tail must not blank it */ }
+  }, [orgId, getToken])
+
   const load = useCallback(async () => {
     try {
       const token = await getToken()
@@ -73,9 +90,10 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
         api<{ workspaces: Workspace[] }>(`/api/orgs/${orgId}/workspaces`, { token }),
         api<{ plugins: Plugin[] }>(`/api/orgs/${orgId}/plugins`, { token }),
       ])
+      loadDecisions()
       setData(c); setTimeline(tl.timeline); setRoster(oc.agents ?? []); setInbox(ib.items); setApprovals(ib.approvals ?? []); setGoals(gl.tree); setBudgets(bd.budgets ?? []); setPreflight(pf); setSecrets(se.secrets ?? []); setWorkspaces(ws.workspaces ?? []); setPlugins(pl.plugins ?? []); setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load') }
-  }, [orgId, getToken])
+  }, [orgId, getToken, loadDecisions])
 
   useEffect(() => { load() }, [load])
 
@@ -115,6 +133,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     try {
       await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision, note }) })
       setApprovals(x => x.filter(a => a.id !== id)) // ONLY on success
+      loadDecisions()                                // and re-read what was recorded
     } catch (e: any) {
       // Keep the card, and say what actually happened — a 403 must never read as success.
       setDecideErr(prev => ({ ...prev, [id]: e?.message ?? 'Decision failed — nothing was recorded.' }))
@@ -206,10 +225,13 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   // the focused single-area views (P0b). Each section self-titles (SectionLabel),
   // so a focused area needs no extra heading beyond the toolbar.
   const sections: { key: CockpitSectionKey; node: React.ReactNode }[] = [
-    { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} deciding={deciding} decideErr={decideErr} /> },
+    { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} deciding={deciding} decideErr={decideErr} agents={data?.agents ?? []} recentDecisions={decisions} focused={focused} /> },
     { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
     { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} onOpenAgent={onOpenAgent} /> },
-    { key: 'activity', node: <TimelineSection timeline={timeline} /> },
+    // ACT-1 — Activity is now BOTH: the 24h heartbeat swimlane (who was busy, when)
+    // and the unified log (what actually happened). The swimlane never knew about
+    // approvals, connector runs or the audit trail; the log does.
+    { key: 'activity', node: <><TimelineSection timeline={timeline} /><div style={{ marginTop: space.xl }}><ActivityLogSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} onOpenAgent={onOpenAgent} /></div></> },
     { key: 'org', node: <OrgChart agents={roster} onOpenAgent={onOpenAgent} onExport={exportOrg} onImport={importOrg} busy={orgBusy} /> },
     { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },
     { key: 'budgets', node: <><BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} /><PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} /></> },

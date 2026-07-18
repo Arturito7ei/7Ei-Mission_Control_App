@@ -11,6 +11,7 @@
 // definition per wire shape means a field rename can't leave the client agreeing
 // with itself while disagreeing with the backend.
 import type { TimelineLite } from './activity'
+import type { ActivityEvent, ActivityKind } from './activityKinds'
 import type { BudgetLite } from './costs'
 // MOB-6e — same rule: the vault and org-chart wire shapes are defined in the
 // pure modules that read them (memory.ts / org.ts) and imported here.
@@ -388,6 +389,25 @@ export const Api = {
   // types only the harmless fields so that stays hard to get wrong.
   orgSettings: (base: string, token: string) =>
     api<{ orgs: OrgSettingsLite[] }>(base, '/api/orgs', { token }).then((r) => r.orgs ?? []),
+
+  // ─── ACT-1 — the unified activity feed ────────────────────────────────────
+  // GET /api/orgs/:orgId/activity — the SAME endpoint, params and limits the desk
+  // uses (web/app/dashboard/cockpit/ActivityLogSection.tsx). `query` is built by the
+  // SHARED builder in activityKinds.ts so both surfaces provably ask the same
+  // question; it is passed in as a string rather than imported here because api.ts is
+  // loaded by api.test.ts under `node --test`, where a value import of a sibling .ts
+  // would need an extension that tsc rejects (the mobile .ts-extension trap).
+  //
+  // The server decides what this caller may see: `availableKinds` comes back narrowed
+  // for a non-owner, and the owner-only kinds are simply absent from `events`. The
+  // phone must present that, never try to widen it.
+  activity: (base: string, token: string, orgId: string, query: string) =>
+    api<{
+      events: ActivityEvent[]
+      nextCursor: string | null
+      availableKinds: ActivityKind[]
+      isOwner: boolean
+    }>(base, `/api/orgs/${orgId}/activity?${query}`, { token }),
 
   pendingApprovals: (base: string, token: string, orgId: string) =>
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {

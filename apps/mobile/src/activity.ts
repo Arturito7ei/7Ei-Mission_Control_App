@@ -2,13 +2,26 @@
 // (web/app/dashboard/CockpitPanel.tsx → cockpit/TimelineSection.tsx) over the
 // same call: GET /api/orgs/:orgId/timeline.
 //
+// ⚠ ACT-1 STATUS: ActivityScreen NO LONGER USES THIS MODULE. The phone's Activity tab
+// now reads the unified feed (GET /api/orgs/:orgId/activity — see activityKinds.ts and
+// screens/ActivityScreen.tsx). What survives here is the `TimelineLite` type, still
+// referenced by `Api.timeline`. The pure helpers below (activityFeed, actionVerb,
+// formatWhen, …) and their tests are currently UNREACHABLE from any screen; they are
+// left in place rather than deleted in the ACT-1 PR, and removing them — together with
+// `Api.timeline` if nothing picks it up — is a tracked follow-up, not an oversight.
+//
 // WHAT THE WEB'S ACTIVITY ACTUALLY IS, because the name misleads: it is not an
 // audit log. It is a 24h heartbeat SWIMLANE — one lane per agent, each lane
 // carrying blocks for the runs and tasks that touched the window, projected onto
-// it as start/width percentages. (There IS an `audit_logs` table, and it would
-// have been the obvious source for an actor/action/target feed, but the plugin
-// that writes it is a no-op — it records nothing. A feed built on it would render
-// convincingly empty forever. The timeline is the surface that has the data.)
+// it as start/width percentages.
+//
+// ⚠ CORRECTION (ACT-1): this header used to claim the `audit_logs` table was useless
+// because "the plugin that writes it is a no-op — it records nothing". That was true
+// when it was written and STOPPED being true in #257, which hoisted the audit hook onto
+// the ROOT Fastify instance so its onResponse fires for every descendant route. It
+// records. The audit trail is now one of the six sources behind the unified feed. The
+// claim is corrected rather than deleted because it is exactly the kind of stale
+// justification that outlives its truth and quietly steers the next decision.
 //
 // WHAT THE PHONE DOES WITH IT: a swimlane is a chart, and a chart projected onto
 // 390pt is a smudge — 24 hours across ~340 usable points makes a 20-minute run
