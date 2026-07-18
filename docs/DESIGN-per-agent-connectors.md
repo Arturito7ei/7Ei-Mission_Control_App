@@ -729,10 +729,67 @@ triggering/monitoring executions from web/mobile is a later slice (CONN-8b).
   auto_write still needs approval, credential-never-leaks (sentinel, incl. echoed token &
   ledger), SSRF host-fixed, and the secured route (401/403/202). No real network.
 
-**Remaining for CONN-8b:** the Jira / Google / comms executors + the custom-MCP bridge
-(backend MCP client + per-agent server registry, honoring the baked carry-forward ii), and
-the web/mobile UI to trigger + monitor executions; optional wiring of `executeConnectorAction`
-into the internal `agent-executor.ts` loop.
+**Remaining for CONN-8b:** ~~the Jira / Google / comms executors~~ (CONN-8b-1, below) + the
+custom-MCP bridge (backend MCP client + per-agent server registry, honoring the baked
+carry-forward ii), and the web/mobile UI to trigger + monitor executions; optional wiring of
+`executeConnectorAction` into the internal `agent-executor.ts` loop.
+
+#### CONN-8b-1 — Jira + comms executors (Telegram / WhatsApp / Google Chat) ✅ SHIPPED
+
+The next real executors, plugged into the same CONN-8a framework (same interface, same
+authz gate, same single-use approvals, same credential-at-execution + `redactSecrets`
+backstop). **Backend-only** — no route change (they register in the framework's `EXECUTORS`
+map and are reached by the existing `POST /api/agent/connectors/:connectorId/execute`).
+**Mobile parity: N/A** — 8b-1 ships no UI; the execution UI is CONN-8b-4.
+
+- **Jira** (`services/connector-jira.ts`) — READ `issue.get`, `issue.search`; WRITE
+  `issue.create`, `issue.comment`, `issue.transition`; DESTRUCTIVE `issue.delete`. Basic
+  auth from the agent-scoped `JIRA_EMAIL:JIRA_API_TOKEN`. **SSRF:** the host is per-tenant
+  (not hardcodable), so it comes from the stored `JIRA_BASE_URL` secret — **never a param** —
+  and is re-validated on *every* execution: https, no embedded userinfo, and an Atlassian
+  Cloud host via CONN-4a's `isAtlassianHost` (`*.atlassian.net`). We then dial only that
+  URL's **origin** (scheme+host, discarding any path/query/fragment) + validated, encoded
+  path segments (issue key charset-restricted; JQL encoded into the query). A self-hosted
+  Jira is refused at execution (fail-closed).
+- **Telegram** (`services/connector-telegram.ts`) — WRITE `message.send` → POST
+  `https://api.telegram.org/bot<token>/sendMessage` (**host hardcoded**). Token from
+  `TELEGRAM_BOT_TOKEN`, chat id from the `chatId` param or the stored `TELEGRAM_CHAT_ID`.
+  **Token-in-URL leak defence:** the token lives in the URL path, so the URL is itself a
+  secret — it is **never** placed into an error or a returned value (errors surface only
+  Telegram's short `description` + status), and the token is validated to a strict
+  `^[0-9]+:[A-Za-z0-9_-]+$` charset so it can't break out of the fixed-host path. The
+  framework's `redactSecrets` strips the token value from any result/error as a backstop.
+- **WhatsApp** (`services/connector-whatsapp.ts`) — WRITE `message.send` → POST
+  `https://graph.facebook.com/v21.0/<phoneNumberId>/messages` (**host + API version
+  hardcoded**). Bearer `WHATSAPP_ACCESS_TOKEN`; `phoneNumberId` from param or stored
+  `WHATSAPP_PHONE_NUMBER_ID`, validated digits-only and encoded (can't escape the path);
+  recipient + text in the JSON body.
+- **Google Chat** (`services/connector-google-chat.ts`) — WRITE `message.send` → POST the
+  stored `GOOGLE_CHAT_WEBHOOK_URL`. **Webhook-URL-as-secret defence:** the incoming-webhook
+  URL embeds a key+token in its query, so the whole URL is both the credential *and* the
+  dial target — it is **never** param-supplied and is re-validated on every execution
+  (https, no userinfo, host **exactly** `chat.googleapis.com`) before dialing, and never
+  placed into an error (errors surface only a status). `redactSecrets` strips the URL value
+  as a backstop.
+- **Taxonomy alignment** — every action's declared `class` is asserted equal to
+  `classifyConnectorAction(connectorId, action)` (the CONN-7 taxonomy) in the test, so an
+  executor can never drift from the authorization policy. WRITE stays approval-gated unless
+  the (agent, connector) pair is `auto_write`; Jira's `issue.delete` is DESTRUCTIVE →
+  always needs approval even when trusted.
+- **Tests** — `src/tests/connector-execution-jira-comms.test.ts` (12, mocked transport, no
+  real network): taxonomy alignment for all four; all four registered; Jira READ executes;
+  WRITE→approval-not-executed→approved+stepped-up→executes-once (+ replay rejected); Jira
+  `issue.delete` destructive→always approval under auto_write; comms sends gated then
+  execute against their hardcoded/validated hosts; **credential-never-leaks per connector**
+  (sentinels incl. Telegram's bot-token-in-URL and the Google Chat webhook-URL-as-secret, in
+  result + error + ledger); **SSRF** — Jira baseUrl restricted to Atlassian (non-Atlassian +
+  userinfo-spoof + bad issue key refused, no call), Google Chat webhook restricted to
+  `chat.googleapis.com` (evil host / subdomain-suffix / userinfo / non-https refused),
+  Telegram token metachar refused.
+
+**Remaining for CONN-8b:** CONN-8b-2 Google Workspace (OAuth) executor, CONN-8b-3 the
+custom-MCP invocation bridge, CONN-8b-4 the web/mobile execution UI; optional wiring of
+`executeConnectorAction` into the internal `agent-executor.ts` loop.
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
 real wins that need no OAuth (CONN-2/3/4), then the expensive OAuth surface isolated
@@ -821,8 +878,9 @@ will grow and the accordion wants room.
 | Accordion UI, web + mobile | **SHIPPED both** — web CONN-2 + mobile CONN-3, each a local expandable (no shared Accordion primitive), parity-pinned |
 | Connector EXECUTION framework (authz-gated, single-use approvals, credential-at-exec) | **SHIPPED** — CONN-8a (`executeConnectorAction`; explicit-cap tightening; approved-once via `connector_executions` UNIQUE(approval_id); `POST /api/agent/connectors/:id/execute`) |
 | GitHub executor (real api.github.com calls) | **SHIPPED** — CONN-8a (`connector-github.ts`; read `repo.get`/`issues.list`/`issue.get`, write `issue.create`/`issue.comment`, destructive `repo.delete`; SSRF-fixed host; bounded) |
-| Jira / Google / comms executors + custom-MCP invocation bridge | **New** (CONN-8b) |
-| Web/mobile UI to trigger + monitor executions | **New** (CONN-8b) |
+| Jira + comms (Telegram/WhatsApp/Google Chat) executors | **SHIPPED** — CONN-8b-1 (`connector-jira.ts`: read `issue.get`/`issue.search`, write `issue.create`/`issue.comment`/`issue.transition`, destructive `issue.delete`, Atlassian-host-restricted baseUrl; `connector-telegram.ts`/`connector-whatsapp.ts`/`connector-google-chat.ts`: `message.send`, hardcoded/validated hosts, token-in-URL + webhook-as-secret leak defence) |
+| Google Workspace (OAuth) executor + custom-MCP invocation bridge | **New** (CONN-8b-2 / CONN-8b-3) |
+| Web/mobile UI to trigger + monitor executions | **New** (CONN-8b-4) |
 
 _End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3
 (mobile mirror) is next, then CONN-4… per the roadmap above._
