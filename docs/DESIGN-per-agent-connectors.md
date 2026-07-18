@@ -729,11 +729,6 @@ triggering/monitoring executions from web/mobile is a later slice (CONN-8b).
   auto_write still needs approval, credential-never-leaks (sentinel, incl. echoed token &
   ledger), SSRF host-fixed, and the secured route (401/403/202). No real network.
 
-**Remaining for CONN-8b:** ~~the Jira / Google / comms executors~~ (CONN-8b-1, below) + the
-custom-MCP bridge (backend MCP client + per-agent server registry, honoring the baked
-carry-forward ii), and the web/mobile UI to trigger + monitor executions; optional wiring of
-`executeConnectorAction` into the internal `agent-executor.ts` loop.
-
 #### CONN-8b-1 — Jira + comms executors (Telegram / WhatsApp / Google Chat) ✅ SHIPPED
 
 The next real executors, plugged into the same CONN-8a framework (same interface, same
@@ -787,8 +782,91 @@ map and are reached by the existing `POST /api/agent/connectors/:connectorId/exe
   `chat.googleapis.com` (evil host / subdomain-suffix / userinfo / non-https refused),
   Telegram token metachar refused.
 
-**Remaining for CONN-8b:** CONN-8b-2 Google Workspace (OAuth) executor, CONN-8b-3 the
-custom-MCP invocation bridge, CONN-8b-4 the web/mobile execution UI; optional wiring of
+#### CONN-8b-2 — Google Workspace executor (Gmail / Calendar / Drive) ✅ SHIPPED
+
+The first **OAUTH-credentialed** executor — the killer surface (an agent that sends email,
+touches Calendar/Drive with the user's Google account). Backend-only. **Mobile parity:
+N/A** — 8b-2 ships no UI (execution UI is 8b-4); the phone is a thin REST client to the
+same hosted backend and reaches this through the existing generic `.../execute` route.
+
+- **The credential is DIFFERENT from the env-secret executors.** github/jira/comms read a
+  value from the encrypted **env secret bag** (`resolveSecretsForAgent` → `ctx.secrets`).
+  Google does **not**: the credential is the agent's per-agent Google OAuth **access
+  token**, which lives AES-encrypted in CONN-5's **`agent_oauth_tokens`** (never the env
+  bag). The framework now carries a **credential kind** on each executor:
+  `credentialKind: 'google_oauth'` tells `runExecutor` to resolve the token via CONN-5's
+  **`ensureFreshAgentGoogleToken`** (decrypt → refresh if within 60s of expiry →
+  re-encrypt in place) and hand the executor `ctx.oauthAccessToken` (+ `ctx.oauthScopes`),
+  leaving `ctx.secrets` empty. The resolver is **injectable** (`ExecuteOptions.googleTokenResolver`,
+  mirroring the injectable `httpClient`) so tests never touch Google. The **refresh token
+  never reaches an executor** — only the access token + non-secret scope/label metadata.
+- **Fail closed on no connection / revoked.** If the resolver returns `null` (never
+  connected, or expired with no refresh token) or throws (refresh rejected — revoked
+  grant), the action does **NOT** execute: a clean `error` ("(re)connect the agent's
+  Google account") is returned and the ledger row is marked failed. The raw refresh error
+  is never surfaced.
+- **The Google executor** (`services/connector-google.ts`). Actions + taxonomy alignment
+  (each `class` MUST equal `classifyConnectorAction('google', action)`, asserted in tests):
+  - **READ** — `gmail.list` / `gmail.get`, `calendar.list` / `calendar.event.get`,
+    `drive.list` / `drive.file.get`.
+  - **WRITE** (approval unless `auto_write`) — **`gmail.send`** (the killer action; builds
+    an RFC 5322 message → base64url → `messages/send`), `calendar.event.create`,
+    `drive.file.create` / `drive.file.update`.
+  - **DESTRUCTIVE** (approval ALWAYS, even trusted) — `calendar.event.delete`,
+    `drive.file.delete` (real DELETEs), and `gmail.delete` which additionally **fails
+    closed on a missing scope** — CONN-5 requests only `gmail.readonly` + `gmail.send`, so
+    trashing/deleting mail (needs `gmail.modify` / full access) is refused until an
+    operator widens the grant.
+- **SSRF closed by construction.** Hosts are **hardcoded** — `gmail.googleapis.com` for
+  Gmail, `www.googleapis.com` for Calendar v3 + Drive v3. No param ever supplies a host,
+  origin, or path base. Every id (message / event / file) and `calendarId` is validated
+  against a strict charset **then** `encodeURIComponent`-encoded; query params travel
+  through `URLSearchParams`. To/Cc/Subject on `gmail.send` are rejected if they contain
+  control chars (header-injection guard). The framework transport's `redirect:'error'` +
+  10s timeout + 1 MB cap apply unchanged.
+- **Scope enforcement (best-effort, fail-closed).** One Google connection covers all three
+  services, but each action needs a specific granted scope. Before dialing, the action
+  pre-checks the granted scope string (`ctx.oauthScopes`, now returned by
+  `ensureFreshAgentGoogleToken`) and fails closed with a clean **"reconnect with X"**
+  instead of a raw Google 403. If the grant is unknown (null) it proceeds and the 403
+  handler still returns a clean, tokenless error (401/403 map to reconnect guidance).
+- **Credential never leaks.** The access token is used only in the `Authorization` header;
+  the framework registers it for the same deep `redactSecrets` backstop, so a provider that
+  echoes it in a 2xx body or an error is scrubbed. The `connector_executions` ledger stores
+  action/classification/status/sanitized-error only — proven by a sentinel over **both**
+  the access and refresh tokens.
+- **Gated exactly like GitHub.** Same CONN-7 authz, same single-use approved-once redemption
+  (`connector_executions` UNIQUE(`approval_id`)), same step-up. No new table, no route
+  change — registering `google` in the `EXECUTORS` map lights up the existing generic
+  `POST /api/agent/connectors/:connectorId/execute`.
+- **Params are bound to the approval (audit NIT-1 — a framework-level gap that 8b-2
+  elevates to high-consequence).** CONN-8a bound an approval to (connectorId, action,
+  agentId) but **not** the params, so an operator who approved "gmail.send to bob subject Y"
+  could have the agent redeem that SAME approval to send to eve with different content. Now
+  the shared `fileConnectorActionApproval` stores a **server-computed** sha256 `paramsDigest`
+  of the canonicalized (recursively key-sorted) params — the agent cannot forge it — and
+  `redeemAndExecute` **recomputes the digest from the params the agent submits at redemption
+  and requires an exact match** (a mismatch, or a missing/legacy digest → `rejected`,
+  nothing executes). So the approved params ARE the executed params. The operator card's
+  target line is also **derived server-side from the real params** for high-consequence
+  actions (`gmail.send` → recipient + subject, calendar/drive → summary/name/id — never the
+  untrusted agent label, never the message body). **NIT-2:** a pure `.`/`..` `calendarId` is
+  rejected (the one id charset that allows dots).
+- **Tests** — `src/tests/connector-google.test.ts` (17): taxonomy alignment + credential
+  kind, READ executes (mocked transport + injected resolver AND the real
+  `ensureFreshAgentGoogleToken` over a seeded encrypted row), hardcoded per-family hosts,
+  `gmail.send` WRITE→approval-not-executed→approved+stepped-up→executes-once→replay-rejected,
+  **params-binding (an approved send redeemed with DIFFERENT params → rejected + nothing
+  sent; the exact params with shuffled key order → executes once; the card shows the real
+  recipient, not the agent label)**,
+  DESTRUCTIVE under `auto_write` still needs approval, access-token-never-leaks +
+  refresh-never-seen (sentinels, incl. echoed token & ledger), no-connection / revoked →
+  fail closed, SSRF host-fixed + header-injection rejected, missing-scope clean reconnect,
+  `gmail.delete` fail-closed. No real network, no real Google.
+
+**Remaining for CONN-8b:** the custom-MCP bridge (8b-3: backend MCP client + per-agent
+server registry, honoring carry-forward ii) and the web/mobile UI to trigger + monitor
+executions (8b-4); optional wiring of
 `executeConnectorAction` into the internal `agent-executor.ts` loop.
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
@@ -879,7 +957,8 @@ will grow and the accordion wants room.
 | Connector EXECUTION framework (authz-gated, single-use approvals, credential-at-exec) | **SHIPPED** — CONN-8a (`executeConnectorAction`; explicit-cap tightening; approved-once via `connector_executions` UNIQUE(approval_id); `POST /api/agent/connectors/:id/execute`) |
 | GitHub executor (real api.github.com calls) | **SHIPPED** — CONN-8a (`connector-github.ts`; read `repo.get`/`issues.list`/`issue.get`, write `issue.create`/`issue.comment`, destructive `repo.delete`; SSRF-fixed host; bounded) |
 | Jira + comms (Telegram/WhatsApp/Google Chat) executors | **SHIPPED** — CONN-8b-1 (`connector-jira.ts`: read `issue.get`/`issue.search`, write `issue.create`/`issue.comment`/`issue.transition`, destructive `issue.delete`, Atlassian-host-restricted baseUrl; `connector-telegram.ts`/`connector-whatsapp.ts`/`connector-google-chat.ts`: `message.send`, hardcoded/validated hosts, token-in-URL + webhook-as-secret leak defence) |
-| Google Workspace (OAuth) executor + custom-MCP invocation bridge | **New** (CONN-8b-2 / CONN-8b-3) |
+| Google Workspace executor (real Gmail/Calendar/Drive calls, per-agent OAuth token) | **SHIPPED** — CONN-8b-2 (`connector-google.ts`; `credentialKind:'google_oauth'` → `ensureFreshAgentGoogleToken` over `agent_oauth_tokens`, NOT the env bag; hardcoded `gmail.googleapis.com`/`www.googleapis.com`; `gmail.send` + reads + calendar/drive writes; destructive always-approve; scope-fail-closed; token sentinel; approval params-digest binding) |
+| Custom-MCP invocation bridge | **New** (CONN-8b-3) |
 | Web/mobile UI to trigger + monitor executions | **New** (CONN-8b-4) |
 
 _End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3

@@ -349,13 +349,20 @@ export async function loadAgentGoogleToken(orgId: string, agentId: string, provi
 /**
  * Return a FRESH access token for the agent, refreshing + re-encrypting in place if
  * the stored one is within 60s of expiry. Mirrors google-auth.ensureFreshToken but
- * for the encrypted agent store. Throws if there is no usable credential.
+ * for the encrypted agent store. Returns null when there is no usable credential
+ * (never connected, or expired with no refresh token — i.e. revoked/needs reconnect).
+ *
+ * `scopes` is the GRANTED scope string (what Google actually gave), so a caller (e.g.
+ * the CONN-8b Google executor) can pre-check whether the agent's grant covers an
+ * action's required scope and fail closed with a clean "reconnect with X" instead of a
+ * raw Google 403. The refresh token NEVER leaves this module — only the access token +
+ * non-secret metadata are returned.
  */
-export async function ensureFreshAgentGoogleToken(orgId: string, agentId: string, provider = 'google'): Promise<{ accessToken: string; accountEmail: string | null } | null> {
+export async function ensureFreshAgentGoogleToken(orgId: string, agentId: string, provider = 'google'): Promise<{ accessToken: string; accountEmail: string | null; scopes: string | null } | null> {
   const tok = await loadAgentGoogleToken(orgId, agentId, provider)
   if (!tok) return null
   if (tok.expiresAt && tok.expiresAt.getTime() > Date.now() + 60000) {
-    return { accessToken: tok.accessToken, accountEmail: tok.accountEmail }
+    return { accessToken: tok.accessToken, accountEmail: tok.accountEmail, scopes: tok.scopes }
   }
   if (!tok.refreshToken) {
     // Expired and no refresh token — best we can do is hand back the (stale) access
@@ -366,7 +373,7 @@ export async function ensureFreshAgentGoogleToken(orgId: string, agentId: string
   await db.update(schema.agentOauthTokens)
     .set({ accessTokenEnc: encrypt(fresh.accessToken), expiresAt: fresh.expiresAt, updatedAt: new Date() })
     .where(agentTokWhere(orgId, agentId, provider))
-  return { accessToken: fresh.accessToken, accountEmail: tok.accountEmail }
+  return { accessToken: fresh.accessToken, accountEmail: tok.accountEmail, scopes: tok.scopes }
 }
 
 /** Delete the agent's stored Google token, best-effort revoking it at Google first.
