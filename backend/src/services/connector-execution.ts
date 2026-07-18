@@ -46,6 +46,7 @@ import {
   classifyConnectorAction, decideConnectorAuthorization, connectorCapability,
   fileConnectorActionApproval, connectorParamsDigest, type ConnectorActionClass,
 } from './connector-authz'
+import { githubExecutor } from './connector-github'
 import { jiraExecutor } from './connector-jira'
 import { telegramExecutor } from './connector-telegram'
 import { whatsappExecutor } from './connector-whatsapp'
