@@ -28,6 +28,14 @@ import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
 import { renderInstructionsBundle } from './agent-files'
 import { planWakeModel, parseTierOverrideConfig } from './model-profile'
+// CONN-9 — the agent's connectors as in-run tools. Derivation + parsing + fencing are
+// pure helpers there; EVERY invocation funnels through CONN-8a's executeConnectorAction,
+// which is the only place authorization is decided.
+import {
+  loadConnectorTools, buildConnectorToolsBlock, parseConnectorDirectives,
+  stripConnectorDirectives, runConnectorDirectives, buildConnectorSynthesisPrompt,
+} from './agent-connector-tools'
+import { parseCapabilities } from './governance2'
 
 export interface ExecuteResult {
   output: string; tokensUsed: number; costUsd: number; durationMs: number
@@ -255,7 +263,18 @@ export async function executeAgentTask(opts: {
       instructionsBundle = renderInstructionsBundle(fileRows)
     } catch { /* non-critical — the agent still runs on its profile fields */ }
 
-    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory, instructionsBundle)
+    // CONN-9 — which connectors may this agent attempt this run? Requires BOTH an enabled
+    // agent_connectors row AND an EXPLICIT connector:<id> capability, so an allow-all /
+    // empty permission list exposes nothing. Non-critical: a failure here costs the agent
+    // its tools, never the run.
+    let connectorTools: Awaited<ReturnType<typeof loadConnectorTools>> = []
+    try {
+      connectorTools = await loadConnectorTools(agent.orgId, agentId, parseCapabilities(agent.permissions))
+    } catch (err) {
+      console.warn('Connector tool derivation failed (non-critical):', err)
+    }
+
+    const systemPrompt = buildSystemPrompt(agent, memoryBlock, isOrchestrator, org, ragContext, driveContext, availableAgents, hierarchy, goalContext, sharedMemory, instructionsBundle, buildConnectorToolsBlock(connectorTools))
     // P2 — the routed tier (computed above) is the model for this wake. For an
     // execute turn this is the profile's primary; a cheap-tier turn only happens
     // via ask-mode (handled earlier) or an explicit override. reasoningEffort
@@ -288,8 +307,14 @@ export async function executeAgentTask(opts: {
     const usedModel = fb.used.model
     const usedProvider = fb.used.provider
 
-    const tokensUsed = result.usage.inputTokens + result.usage.outputTokens
-    const costUsd    = calcCost(usedModel, result.usage.inputTokens, result.usage.outputTokens)
+    // CONN-9 makes these MUTABLE: a connector round adds a second LLM turn, and a turn the
+    // operator pays for must show up in the task's tokens/cost (and therefore in the daily
+    // + monthly budget checks below). `inputTokens`/`outputTokens` accumulate alongside so
+    // the AG2 Costs strip stays consistent with the total.
+    let tokensUsed = result.usage.inputTokens + result.usage.outputTokens
+    let costUsd    = calcCost(usedModel, result.usage.inputTokens, result.usage.outputTokens)
+    let inputTokensTotal  = result.usage.inputTokens
+    let outputTokensTotal = result.usage.outputTokens
     const durationMs = Date.now() - start
 
     // Extract memory
@@ -302,9 +327,70 @@ export async function executeAgentTask(opts: {
     let cleanedOutput = stripAgentWebhooks(afterMemory)
     if (webhookCalls.length > 0) executeAgentWebhooks(webhookCalls).catch(() => {})
 
-    // Extract + execute delegations (orchestrator only)
+    // CONN-9 — the connector round. Parse what the model asked for, run each attempt
+    // through the CONN-8a gate, then hand the results back for ONE synthesis turn.
+    //
+    // CONTAINMENT (the reason this block is shaped the way it is): connector results are
+    // attacker-controlled text (an issue body, a Jira comment, an inbound message, an MCP
+    // tool result). They arrive fenced under a per-run nonce and labelled untrusted — and
+    // the synthesis turn is TERMINAL: its output is stripped of BOTH [CONNECTOR:] and
+    // [DELEGATE:] directives WITHOUT executing them. So text returned by a provider can
+    // never trigger another connector call and can never steer delegation/routing, no
+    // matter how convincingly it impersonates the operator. Capability and trust are read
+    // from the DB (agents.permissions / agent_connectors.trustLevel), never from model
+    // output, so injected prose cannot grant itself anything either.
+    //
+    // The cost of terminality is that an orchestrator which used a connector does not also
+    // delegate in the same run (its DELEGATE directives are stripped from the synthesis).
+    // That is a deliberate trade: one contained round beats an uncontained chain.
+    let connectorRoundRan = false
+    if (connectorTools.length > 0) {
+      const directives = parseConnectorDirectives(cleanedOutput)
+      if (directives.length > 0) {
+        const draft = stripConnectorDirectives(cleanedOutput)
+        const callResults = await runConnectorDirectives({
+          orgId: agent.orgId, agentId, directives,
+        }).catch((err) => {
+          console.warn('Connector round failed (non-critical):', err)
+          return []
+        })
+        if (callResults.length > 0) {
+          connectorRoundRan = true
+          const synthInput = buildConnectorSynthesisPrompt(input, draft, callResults)
+          try {
+            const synth = await streamLLM({
+              provider: usedProvider, model: usedModel, system: systemPrompt,
+              messages: [{ role: 'user', content: synthInput }],
+              orgApiKey, baseURL, reasoningEffort, onToken: (chunk) => onToken?.(chunk),
+            })
+            // Terminal: strip EVERY directive idiom, never execute any of them. This is the
+            // containment boundary. [WEBHOOK:] is stripped too (audit N2) — not because it
+            // could fire (parseAgentWebhooks has one pre-synthesis callsite, so it cannot),
+            // but because an injected result could talk the model into emitting a literal
+            // `[WEBHOOK: https://evil/...]` that would then be PERSISTED verbatim as the
+            // task's visible output. That reads to an operator like the agent tried to call
+            // an attacker's URL. Strip the whole class here rather than leave one idiom's
+            // safety resting on it happening to have no post-synthesis callsite.
+            cleanedOutput = stripAgentWebhooks(stripDelegateDirectives(stripConnectorDirectives(synth.output)))
+            tokensUsed += synth.usage.inputTokens + synth.usage.outputTokens
+            costUsd    += calcCost(usedModel, synth.usage.inputTokens, synth.usage.outputTokens)
+            inputTokensTotal  += synth.usage.inputTokens
+            outputTokensTotal += synth.usage.outputTokens
+          } catch (err) {
+            // A failed synthesis must not lose the work — keep the draft and say what ran.
+            console.warn('Connector synthesis turn failed (non-critical):', err)
+            cleanedOutput = draft
+          }
+        } else {
+          cleanedOutput = draft
+        }
+      }
+    }
+
+    // Extract + execute delegations (orchestrator only). Skipped after a connector round —
+    // the synthesis output has already had its directives stripped unexecuted (above).
     let delegatedAgentNames: string[] = []
-    if (isOrchestrator) {
+    if (isOrchestrator && !connectorRoundRan) {
       const directives = parseDelegateDirectives(cleanedOutput)
       cleanedOutput = stripDelegateDirectives(cleanedOutput)
       if (directives.length > 0) {
@@ -332,7 +418,7 @@ export async function executeAgentTask(opts: {
     await db.update(schema.tasks).set({
       output: cleanedOutput, status: 'done', tokensUsed, costUsd,
       // AG2 — persist the split behind the total so the agent Costs strip is real.
-      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      inputTokens: inputTokensTotal, outputTokens: outputTokensTotal,
       cachedTokens: result.usage.cachedTokens ?? 0,
       durationMs, llmModel: usedModel, completedAt: new Date(),
     }).where(eq(schema.tasks.id, taskId))
@@ -492,6 +578,10 @@ export function buildSystemPrompt(
   sharedMemory?: string,
   /** AG3 — rendered managed instructions bundle; '' when the agent has none. */
   instructionsBundle?: string,
+  /** CONN-9 — the agent's connector tool block; '' when it has no usable connector.
+   *  Built from `deriveConnectorTools`, which carries connector ids, catalog display
+   *  names and action names ONLY — never a config value or a credential. */
+  connectorToolsBlock?: string,
 ): string {
   const lines: string[] = []
 
@@ -549,6 +639,8 @@ export function buildSystemPrompt(
     'Memory: include [REMEMBER: key = value] to save to long-term memory (stripped from visible output).',
     'Outbound webhooks: include [WEBHOOK: https://url | {"json":"payload"}] to call external APIs (stripped from visible output).',
   )
+  // CONN-9 — the connector directive contract, alongside the other directives above.
+  if (connectorToolsBlock) lines.push('', connectorToolsBlock)
   if (isOrchestrator) {
     if (availableAgents && availableAgents.length > 0) {
       lines.push('', 'Available agents you can delegate to:')

@@ -224,6 +224,14 @@ export const EXECUTORS: Record<string, ConnectorExecutor> = {
 }
 
 export function getExecutor(connectorId: string): ConnectorExecutor | undefined {
+  // Object.hasOwn, not a bare bracket read (CONN-9 audit N1 — the remaining sibling of the
+  // same class already closed in `executorKnowsAction`/`runExecutor`): a plain object
+  // literal inherits from Object.prototype, so `getExecutor('__proto__')` would otherwise
+  // return a TRUTHY non-executor and every "is there an executor?" check would pass on it.
+  // Both callsites happen to validate against the catalog first, so this is defence in
+  // depth — but a lookup that can resolve a prototype key is one refactor away from being
+  // the bypass, and the guard costs nothing.
+  if (!Object.hasOwn(EXECUTORS, connectorId)) return undefined
   return EXECUTORS[connectorId]
 }
 
