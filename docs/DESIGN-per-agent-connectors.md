@@ -864,10 +864,93 @@ same hosted backend and reaches this through the existing generic `.../execute` 
   fail closed, SSRF host-fixed + header-injection rejected, missing-scope clean reconnect,
   `gmail.delete` fail-closed. No real network, no real Google.
 
-**Remaining for CONN-8b:** the custom-MCP bridge (8b-3: backend MCP client + per-agent
-server registry, honoring carry-forward ii) and the web/mobile UI to trigger + monitor
-executions (8b-4); optional wiring of
-`executeConnectorAction` into the internal `agent-executor.ts` loop.
+#### CONN-8b-3 — Custom-MCP invocation bridge ✅ SHIPPED
+
+The **riskiest** executor and the only **OPEN-ENDED** one. Unlike every fixed-host provider,
+the MCP server address is **user-configured** (an arbitrary `url` in the connector's
+non-secret config), so it is a real **SSRF / egress** surface, and the tool names are
+**opaque** (a third-party server's own vocabulary). Backend-only. **Mobile parity: N/A** —
+8b-3 ships no UI (execution UI is 8b-4); the phone reaches this through the existing generic
+`.../execute` route against the same hosted backend. `services/connector-mcp.ts`, registered
+as `mcp` in `EXECUTORS`.
+
+- **v1 = http-transport MCP servers only. stdio is DELIBERATELY not executed.** A `stdio`
+  MCP server means spawning a local **command** on the host — arbitrary host command
+  execution, a large and dangerous surface. A stdio-configured connector **fails closed**
+  with a clear "stdio MCP execution not yet supported" and no dial; it is deferred to a
+  later, carefully-audited stage. Only `transport: 'http'` executes.
+- **The action IS the tool name; params ARE the tool args.** An invoke maps to a single
+  JSON-RPC 2.0 `tools/call` (`{name: action, arguments: params}`) POSTed to the configured
+  URL. A built-in `tools.list` meta-read (JSON-RPC `tools/list`) is offered for display, but
+  **invocation gating never depends on trusting the server's self-description**. Because the
+  action set is not fixed, the framework gained an **open-ended dispatch hook**
+  (`ConnectorExecutor.invoke(action, ctx)`): when no fixed `actions[action]` spec matches,
+  `runExecutor` calls `invoke` — so any opaque tool name reaches one handler, while the class
+  was already resolved by `classifyConnectorAction` (authz is unaffected).
+- **Opaque-tool escalation — the key containment (CONN-7 carry-forward ii, generalized).** An
+  MCP tool name is opaque, so `classifyConnectorAction('mcp', …)` treats it as **WRITE by
+  default** and a **destructive-named** tool (`hasDestructiveVerb`) as **destructive → ALWAYS
+  approval**, even under `auto_write`. Critically, the framework's new
+  `ConnectorExecutor.escalateAllowToApproval(action, config)` hook (which **supersedes**
+  `mustEscalateUnknownWrite` for MCP) escalates **any otherwise-allowed tool — read- OR
+  write-classified — that the operator has NOT explicitly allow-listed** to `needs_approval`.
+  So neither `auto_write` nor a read-looking name (`get_*`, `list_*`) can blanket-approve an
+  arbitrary third-party tool. **Only** tool names on the per-connector **`autoApproveTools`**
+  allow-list (a new NON-secret field on the MCP config schema) may auto-run under
+  `auto_write`; the built-in `tools.list` meta-read is the one exemption. An empty/absent
+  allow-list ⇒ **every** opaque tool needs approval (fail-closed for the opaque surface).
+- **SSRF / EGRESS policy (the crux — the URL is user-supplied).** Enforced in two layers so
+  the value validated is the value connected:
+  - **Synchronous URL-shape guard** (`validateMcpUrlShape`, runs before any dial): **https
+    only** (http and every other scheme rejected — no http-to-localhost dev exception in v1),
+    **no embedded userinfo** (`user:pass@host` rejected — the classic host-spoof), and a
+    **literal-IP host is validated on the spot** and refused if private (this is the ONE case
+    the DNS lookup never sees, since `net.connect` skips the custom lookup for IP literals;
+    IPv6 brackets are stripped first).
+  - **DNS-pinning transport** (`createMcpHttpsClient`, a node:https client set as the
+    executor's `defaultHttpClient`): its custom `lookup` resolves the host, **refuses if ANY
+    resolved address is in a blocked range**, and returns **only validated addresses**, so
+    `net.connect` dials exactly what was checked — **no DNS-rebinding TOCTOU** (no re-resolve
+    between check and connect; a mixed public+private answer is refused wholesale, no
+    cherry-picking). Redirects are **NOT followed** (a 3xx is an error — equivalent to
+    `boundedHttpClient`'s `redirect:'error'`, and the classic redirect-to-internal pivot is
+    blocked at connect on the new host anyway); a hard **10 s timeout** and a **1 MB size
+    cap** apply. `boundedHttpClient` (global fetch) is intentionally **not** used for MCP —
+    fetch cannot pin the resolved IP, so it cannot defend against rebinding.
+  - **Blocked ranges** (`isBlockedAddress`, IPv4 + IPv6, fail-closed on any non-IP):
+    `0.0.0.0/8`, `10/8`, `100.64/10` (CGNAT), `127/8` (loopback), `169.254/16` (link-local,
+    **incl. `169.254.169.254` cloud metadata**), `172.16/12`, `192.0.0/24`, `192.168/16`,
+    `198.18/15`, `224/4` (multicast), `240/4` (reserved incl. broadcast); IPv6 `::1`, `::`,
+    `fc00::/7` (ULA), `fe80::/10` (link-local), `ff00::/8` (multicast), and **IPv4-mapped**
+    forms (`::ffff:127.0.0.1` dotted AND `::ffff:7f00:1` hex) validated against their embedded
+    v4.
+- **Credential never leaks.** The optional bearer (`CONNECTOR_MCP_SECRET`, resolved by the
+  framework into `ctx.secrets` from the env bag) is used **only** as the `Authorization:
+  Bearer` header to the configured server. The framework's deep `redactSecrets` backstop
+  covers it, so a server echoing it in a 2xx body or an error is scrubbed; the
+  `connector_executions` ledger stores action/classification/status/sanitized-error only —
+  proven by a sentinel over the result, the error, and the ledger.
+- **Gated exactly like the others + params-digest intact.** Same CONN-7 authz, same
+  single-use approved-once redemption (`connector_executions` UNIQUE(`approval_id`)), same
+  step-up, same NIT-1 **server-computed `paramsDigest`** binding (approve with params X, try
+  to redeem with Y → `rejected`, nothing dialed). Registering `mcp` in `EXECUTORS` lights up
+  the existing generic execute route — no new table, no route change.
+- **Tests** — `src/tests/connector-execution-mcp.test.ts` (17): taxonomy alignment
+  (`tools.list`=read) + open-ended registration; opaque invoke → WRITE → `needs_approval`
+  **even under `auto_write`** (not allow-listed); destructive-named → **always** approval;
+  allow-listed tool under `auto_write` → executes once (action=tool-name, params=args, bearer
+  as auth); gated write → approve+step-up → executes once → replay rejected; params-digest
+  mismatch → rejected, no dial; `tools.list` free read; **stdio → fail-closed, no dial**; the
+  SSRF egress guard tested **directly** (private/internal range blocker over every required
+  IPv4/IPv6 range incl. metadata + mapped; URL-shape guard over http/userinfo/literal-private;
+  the **DNS-pinning guarded lookup** refusing a private-resolving name AND a mixed answer AND
+  pinning a public one; the **real node:https client** refusing to open a socket when the host
+  resolves private); a server redirect not treated as success; bearer never in
+  result/error/ledger. No real network, no real MCP server.
+
+**Remaining for CONN-8b:** the web/mobile UI to trigger + monitor executions (8b-4);
+optional wiring of `executeConnectorAction` into the internal `agent-executor.ts` loop.
+A later, carefully-audited stage for **stdio** MCP execution (currently fail-closed).
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
 real wins that need no OAuth (CONN-2/3/4), then the expensive OAuth surface isolated
@@ -958,7 +1041,7 @@ will grow and the accordion wants room.
 | GitHub executor (real api.github.com calls) | **SHIPPED** — CONN-8a (`connector-github.ts`; read `repo.get`/`issues.list`/`issue.get`, write `issue.create`/`issue.comment`, destructive `repo.delete`; SSRF-fixed host; bounded) |
 | Jira + comms (Telegram/WhatsApp/Google Chat) executors | **SHIPPED** — CONN-8b-1 (`connector-jira.ts`: read `issue.get`/`issue.search`, write `issue.create`/`issue.comment`/`issue.transition`, destructive `issue.delete`, Atlassian-host-restricted baseUrl; `connector-telegram.ts`/`connector-whatsapp.ts`/`connector-google-chat.ts`: `message.send`, hardcoded/validated hosts, token-in-URL + webhook-as-secret leak defence) |
 | Google Workspace executor (real Gmail/Calendar/Drive calls, per-agent OAuth token) | **SHIPPED** — CONN-8b-2 (`connector-google.ts`; `credentialKind:'google_oauth'` → `ensureFreshAgentGoogleToken` over `agent_oauth_tokens`, NOT the env bag; hardcoded `gmail.googleapis.com`/`www.googleapis.com`; `gmail.send` + reads + calendar/drive writes; destructive always-approve; scope-fail-closed; token sentinel; approval params-digest binding) |
-| Custom-MCP invocation bridge | **New** (CONN-8b-3) |
+| Custom-MCP invocation bridge | **SHIPPED** — CONN-8b-3 (`connector-mcp.ts`; open-ended `invoke` dispatch, http-transport only / **stdio fail-closed**, opaque tools escalate to approval even under `auto_write` unless on the per-connector `autoApproveTools` allow-list, destructive-named always approval; SSRF egress guard: https-only + no-userinfo + private-range block over IPv4/IPv6 incl. `169.254.169.254` metadata, **DNS-pinning** node:https lookup defeats rebinding, redirects not followed, 10s/1MB caps; bearer never leaks; params-digest binding intact) |
 | Web/mobile UI to trigger + monitor executions | **New** (CONN-8b-4) |
 
 _End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3

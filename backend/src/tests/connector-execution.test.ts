@@ -222,16 +222,21 @@ test('[CONN8A-DENY] cross-tenant agent → denied (scoping)', async () => {
   assert.equal(calls.length, 0)
 })
 
-test('[CONN8A-NOEXEC] a configured connector with NO executor → rejected, fail-closed', async () => {
-  // Configure mcp for AGENT (it has connector:*), then execute → no executor exists in 8a.
+test('[CONN8A-NOEXEC] the no-executor branch stays fail-closed (mcp gained an executor in CONN-8b-3)', async () => {
+  // In 8a, mcp had NO executor and execution was rejected fail-closed. CONN-8b-3 added the
+  // mcp bridge, so that era is over — every catalog connector now has an executor, which
+  // means the "no executor" branch is currently unreachable via a configured connector. We
+  // still assert the guard is intact by proving (a) the branch rejects an id with no
+  // executor, and (b) mcp now routes through the bridge instead.
+  assert.equal(getExecutor('mcp'), (await import('../services/connector-mcp')).mcpExecutor)
+  const { client, calls } = makeHttp()
+  // Configure mcp (opaque http server); an opaque tool now escalates through CONN-8b-3
+  // rather than hitting "no executor". Not trusted → pending_approval, no network call.
   const c = await owner.inject({ method: 'POST', url: cu(AGENT, '/mcp'), payload: { config: { name: 'srv', transport: 'http', url: 'https://mcp.example.com' } } })
   assert.ok(c.statusCode === 200 || c.statusCode === 201, c.body)
-  const { client, calls } = makeHttp()
   const r = await executeConnectorAction({ orgId: ORG, agentId: AGENT, connectorId: 'mcp', action: 'do_thing' }, { httpClient: client })
-  assert.equal(r.status, 'rejected')
-  assert.match((r as any).reason, /no executor/)
-  assert.equal(calls.length, 0)
-  assert.equal(getExecutor('mcp'), undefined)
+  assert.equal(r.status, 'pending_approval', JSON.stringify(r))
+  assert.equal(calls.length, 0, 'the opaque tool escalates, it does not execute')
 })
 
 // ─── 3. READ executes with a mocked client ────────────────────────────────────
