@@ -235,11 +235,17 @@ test('[CONN8B3-SSRF-UNIT] the private/internal address blocker covers every requ
     '0.0.0.0', '100.64.0.1', '255.255.255.255', '224.0.0.1',
     '::1', '::', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'ff02::1',
     '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:7f00:1', // IPv4-mapped loopback (dotted + hex)
+    // N1: the other three IPv4-in-IPv6 embeddings must ALSO decode/block (not just ::ffff:).
+    '::7f00:1', '::a00:1',              // IPv4-compatible ::/96 → 127.0.0.1 / 10.0.0.1
+    '::0.0.0.1', '::c0a8:1',            // compatible dotted + hex → blocked (0.0.0.1 / 192.168.0.1)
+    '64:ff9b::a00:1', '64:ff9b::7f00:1', // NAT64 64:ff9b::/96 → 10.0.0.1 / 127.0.0.1
+    '2002:7f00:1::', '2002:a00:1::',   // 6to4 2002::/16 → 127.0.0.1 / 10.0.0.1
     'not-an-ip', '',
   ]) {
     assert.equal(isBlockedAddress(blocked), true, `'${blocked}' must be blocked`)
   }
-  for (const ok of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '2606:4700:4700::1111']) {
+  // Legit PUBLIC addresses (incl. a real IPv6 literal) must NOT be over-blocked.
+  for (const ok of ['8.8.8.8', '1.1.1.1', '93.184.216.34', '2606:4700:4700::1111', '2001:4860:4860::8888']) {
     assert.equal(isBlockedAddress(ok), false, `'${ok}' (public) must be allowed`)
   }
 })
@@ -253,11 +259,17 @@ test('[CONN8B3-SSRF-SHAPE] the url-shape guard rejects http / userinfo / literal
     'https://10.0.0.5/rpc',                       // private literal
     'https://169.254.169.254/latest/meta-data',   // cloud metadata literal
     'https://[::1]/rpc',                          // ipv6 loopback literal
+    // N1: the other IPv4-in-IPv6 embeddings as literal hosts must be refused at the shape guard.
+    'https://[::7f00:1]/rpc',                     // IPv4-compatible → 127.0.0.1
+    'https://[64:ff9b::a00:1]/rpc',               // NAT64 → 10.0.0.1
+    'https://[2002:7f00:1::]/rpc',                // 6to4 → 127.0.0.1
     'ftp://mcp.example.com',                      // wrong scheme
     'not a url', '',
   ]) {
     assert.equal(validateMcpUrlShape(bad).ok, false, `'${bad}' must be refused`)
   }
+  // …but a legit PUBLIC IPv6 literal host is accepted (no over-block).
+  assert.equal(validateMcpUrlShape('https://[2001:4860:4860::8888]/rpc').ok, true)
 })
 
 test('[CONN8B3-SSRF-CONFIG] a stored MCP url on a private literal / http / userinfo is refused before any call', async () => {
@@ -268,6 +280,9 @@ test('[CONN8B3-SSRF-CONFIG] a stored MCP url on a private literal / http / useri
     'https://10.1.2.3/rpc',
     'http://mcp.example.com/rpc',
     'https://sneaky@169.254.169.254/rpc',
+    'https://[::7f00:1]/rpc',        // N1: IPv4-compatible ::/96 loopback
+    'https://[64:ff9b::a00:1]/rpc',  // N1: NAT64 → 10.0.0.1
+    'https://[2002:7f00:1::]/rpc',   // N1: 6to4 → 127.0.0.1
   ]) {
     await setMcpConfig({ name: 'X', transport: 'http', url: badUrl, autoApproveTools: ['probe'] })
     const h = makeHttp()

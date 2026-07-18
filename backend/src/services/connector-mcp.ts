@@ -89,19 +89,39 @@ function isBlockedIpv4(ip: string): boolean {
   )
 }
 
-/** Is this IPv6 a loopback / unspecified / ULA / link-local / multicast, OR an IPv4-mapped
- *  address whose embedded IPv4 is itself blocked? Fail-closed on any ambiguity. */
+/** Decode the low-32-bit IPv4 embedded in an IPv6 tail — either dotted (`a.b.c.d`), a pair
+ *  of hex groups (`hi:lo`), or a single hex group (`lo`, high 16 bits implied zero). Returns
+ *  a dotted IPv4 string, or null if the tail isn't a v4 embedding. Pure. */
+function embeddedV4(tail: string): string | null {
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail)) return tail
+  const two = tail.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (two) {
+    const hi = parseInt(two[1], 16), lo = parseInt(two[2], 16)
+    return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`
+  }
+  const one = tail.match(/^([0-9a-f]{1,4})$/)
+  if (one) { const lo = parseInt(one[1], 16); return `0.0.${(lo >> 8) & 255}.${lo & 255}` }
+  return null
+}
+
+/** Is this IPv6 a loopback / unspecified / ULA / link-local / multicast, OR one of the FOUR
+ *  IPv4-in-IPv6 embeddings whose embedded IPv4 is itself blocked (mapped `::ffff:`,
+ *  compatible `::`, NAT64 `64:ff9b::`, 6to4 `2002::`)? Fail-closed on any ambiguity — the
+ *  transition prefixes are blocked WHOLESALE and the embedded v4 is re-checked besides, so a
+ *  literal like `[64:ff9b::a00:1]` can never smuggle an internal address past the guard. */
 function isBlockedIpv6(ip: string): boolean {
   const a = ip.toLowerCase().split('%')[0] // strip any zone id
-  // IPv4-mapped (::ffff:127.0.0.1) and IPv4-compatible — validate the embedded v4.
-  const dottedMapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
-  if (dottedMapped) return isBlockedIpv4(dottedMapped[1])
-  const hexMapped = a.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
-  if (hexMapped) {
-    const hi = parseInt(hexMapped[1], 16), lo = parseInt(hexMapped[2], 16)
-    return isBlockedIpv4(`${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`)
-  }
-  if (a === '::1' || a === '::') return true       // loopback / unspecified
+  if (a === '::1' || a === '::') return true        // loopback / unspecified
+  // IPv4-mapped ::ffff:0:0/96 — validate the embedded v4 (dotted or hex spelling).
+  const mapped = a.match(/^::ffff:(.+)$/)
+  if (mapped) { const v4 = embeddedV4(mapped[1]); return v4 ? isBlockedIpv4(v4) : true }
+  // NAT64 64:ff9b::/96 and 6to4 2002::/16 — block the transition prefixes wholesale (and,
+  // where present, the embedded v4 is caught by the compatible-decode below anyway).
+  if (a.startsWith('64:ff9b:')) return true
+  if (a.startsWith('2002:')) return true            // 6to4 (embedded v4 in the first 32 bits)
+  // IPv4-compatible ::/96 (`::a.b.c.d` / `::hi:lo`) — NOT `::`, `::1`, `::ffff:*` (handled).
+  const compat = a.match(/^::([0-9a-f.:]+)$/)
+  if (compat) { const v4 = embeddedV4(compat[1]); if (v4) return isBlockedIpv4(v4) }
   if (/^f[cd]/.test(a)) return true                 // fc00::/7 unique-local
   if (/^fe[89ab]/.test(a)) return true              // fe80::/10 link-local
   if (/^ff/.test(a)) return true                    // ff00::/8 multicast

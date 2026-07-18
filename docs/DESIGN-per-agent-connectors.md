@@ -921,9 +921,12 @@ as `mcp` in `EXECUTORS`.
     `0.0.0.0/8`, `10/8`, `100.64/10` (CGNAT), `127/8` (loopback), `169.254/16` (link-local,
     **incl. `169.254.169.254` cloud metadata**), `172.16/12`, `192.0.0/24`, `192.168/16`,
     `198.18/15`, `224/4` (multicast), `240/4` (reserved incl. broadcast); IPv6 `::1`, `::`,
-    `fc00::/7` (ULA), `fe80::/10` (link-local), `ff00::/8` (multicast), and **IPv4-mapped**
-    forms (`::ffff:127.0.0.1` dotted AND `::ffff:7f00:1` hex) validated against their embedded
-    v4.
+    `fc00::/7` (ULA), `fe80::/10` (link-local), `ff00::/8` (multicast), and **all four
+    IPv4-in-IPv6 embeddings** — IPv4-mapped `::ffff:0:0/96`, IPv4-compatible `::/96`, NAT64
+    `64:ff9b::/96`, and 6to4 `2002::/16` — with the transition prefixes blocked wholesale AND
+    the embedded IPv4 decoded (dotted or hex spelling) and re-checked, so a literal like
+    `[64:ff9b::a00:1]` cannot smuggle an internal address past the shape guard (a legit public
+    IPv6 literal such as `[2001:4860:4860::8888]` is still allowed — no over-block).
 - **Credential never leaks.** The optional bearer (`CONNECTOR_MCP_SECRET`, resolved by the
   framework into `ctx.secrets` from the env bag) is used **only** as the `Authorization:
   Bearer` header to the configured server. The framework's deep `redactSecrets` backstop
