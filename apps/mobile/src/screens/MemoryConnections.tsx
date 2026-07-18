@@ -193,7 +193,12 @@ export default function MemoryConnections({ onOpenNote }: { onOpenNote: (path: s
       keyExtractor={n => n.id}
       contentContainerStyle={s.wrap}
       refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={() => load(true)} tintColor={theme.blue} />
+        /* Refetch, NOT `load(true)`. `?rebuild=1` busts the server's 10-minute
+           cache and re-crawls the vault — up to one GitHub call per note on the
+           native path. The web binds that to a deliberate ↻ Rebuild button; on a
+           phone the same cost must not hang off the most accidental gesture
+           there is. Pull-to-refresh re-reads; it doesn't rebuild. */
+        <RefreshControl refreshing={loading} onRefresh={() => load(false)} tintColor={theme.blue} />
       }
       renderItem={({ item }) => (
         <NodeRow node={item} detail={connectivityLabel(index, item.id)} onPress={visit} />

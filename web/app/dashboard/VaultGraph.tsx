@@ -151,6 +151,11 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   const view = useRef({ k: 1, x: 0, y: 0 })
   const drag = useRef<{ id: string | null; panning: boolean; sx: number; sy: number; ox: number; oy: number }>({ id: null, panning: false, sx: 0, sy: 0, ox: 0, oy: 0 })
   const rafRef = useRef<number | null>(null)
+  /** Set when a node pointer-down turned into a real drag, so the click that
+   *  the browser fires on release doesn't ALSO open the note. Without this the
+   *  drag is unusable: repositioning a node navigates to the Reader, which
+   *  unmounts the graph — you can never see the layout you just arranged. */
+  const draggedFar = useRef(false)
 
   const load = useCallback(async (rebuild = false) => {
     setLoading(true); setErr(null)
@@ -218,6 +223,13 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   const q = query.trim().toLowerCase()
   const matches = useCallback((n: GNode) => q !== '' && (n.label.toLowerCase().includes(q) || !!n.communityName?.toLowerCase().includes(q)), [q])
   const matchCount = useMemo(() => q === '' ? 0 : filtered.nodes.filter(matches).length, [q, filtered, matches])
+  /**
+   * A search hit is always labelled — UNLESS the search is so broad that
+   * labelling every hit re-creates the text soup the label budget exists to
+   * prevent. Typing a single common letter matches most of the vault; those
+   * matches still get the accent stroke, they just don't all shout their name.
+   */
+  const matchesFit = matchCount > 0 && matchCount <= 40
 
   // Keyboard order: hubs first. Arrowing through the graph should walk the most
   // connected notes before the leaves — that's the order the map is FOR.
@@ -280,7 +292,12 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   ), [filtered, labelCap])
 
   // Pan/zoom via direct DOM transform (no React re-render while dragging).
-  const onWheel = (e: React.WheelEvent) => {
+  //
+  // Registered as a NATIVE listener below, not via `onWheel`. React delegates
+  // `wheel` at the root as PASSIVE, so `preventDefault()` on the synthetic
+  // event is silently ignored — zooming the graph would also scroll the
+  // dashboard out from under it. Only a non-passive listener can hold the page.
+  const onWheel = (e: WheelEvent) => {
     e.preventDefault()
     const rect = svgRef.current!.getBoundingClientRect()
     const mx = (e.clientX - rect.left) * (W / rect.width), my = (e.clientY - rect.top) * (H / rect.height)
@@ -308,6 +325,8 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
       view.current.y = d.oy + (e.clientY - d.sy) * (H / rect.height)
       applyTransform()
     } else if (d.id) {
+      // 4px of slop: a click always jitters a pixel or two, a drag doesn't.
+      if (Math.abs(e.clientX - d.sx) > 4 || Math.abs(e.clientY - d.sy) > 4) draggedFar.current = true
       const p = toGraph(e.clientX, e.clientY)
       const node = layout.pnodes.find(n => n.id === d.id)
       if (!node) return
@@ -321,6 +340,28 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
     }
   }
   const endDrag = () => { drag.current = { id: null, panning: false, sx: 0, sy: 0, ox: 0, oy: 0 } }
+
+  // Non-passive wheel registration. The handler is re-created every render, so
+  // it goes through a ref — that keeps the listener itself stable (registered
+  // once per mounted svg) while always calling the current closure.
+  const wheelRef = useRef(onWheel)
+  wheelRef.current = onWheel
+  const wheelBound = useRef<((e: WheelEvent) => void) | null>(null)
+  // A ref CALLBACK, not an effect: the svg mounts and unmounts with the
+  // empty/error branches, and a callback ref fires exactly on that transition
+  // without needing to name the state that caused it.
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    if (svgRef.current && wheelBound.current) {
+      svgRef.current.removeEventListener('wheel', wheelBound.current)
+      wheelBound.current = null
+    }
+    svgRef.current = el
+    if (el) {
+      const h = (e: WheelEvent) => wheelRef.current(e)
+      wheelBound.current = h
+      el.addEventListener('wheel', h, { passive: false })
+    }
+  }, [])
   const [, forceRerender] = useState(0)
   useEffect(() => () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current) }, [])
 
@@ -442,8 +483,8 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
             </div>
           ) : (
           <svg
-            ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, touchAction: 'none', cursor: drag.current.panning ? 'grabbing' : 'grab' }}
-            onWheel={onWheel} onPointerDown={onPointerDownBg} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag}
+            ref={attachSvg} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, touchAction: 'none', cursor: drag.current.panning ? 'grabbing' : 'grab' }}
+            onPointerDown={onPointerDownBg} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag} onPointerCancel={endDrag}
             // One tab stop, roving focus. `application` is the role that carries
             // aria-activedescendant for a canvas-shaped widget.
             tabIndex={0} role="application" onKeyDown={onKeyDown}
@@ -464,15 +505,15 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
                 const hot = matches(n)
                 const isFocused = n.id === focusId
                 const r = radiusOf(n)
-                const showLabel = n.kind !== 'tag' && (labelled.has(n.id) || n.id === active || hot)
+                const showLabel = n.kind !== 'tag' && (labelled.has(n.id) || n.id === active || (hot && matchesFit))
                 return (
                   <g key={n.id} id={domId(n.id)} transform={`translate(${n.x},${n.y})`} opacity={dim ? 0.18 : 1}
                     role="option" aria-selected={isFocused}
                     aria-label={`${n.label}${n.communityName ? `, ${n.communityName}` : ''}, ${n.degree} link${n.degree === 1 ? '' : 's'}, folder ${n.group}`}
                     style={{ cursor: n.path ? 'pointer' : 'default' }}
-                    onPointerDown={(e) => { e.stopPropagation(); drag.current = { id: n.id, panning: false, sx: e.clientX, sy: e.clientY, ox: 0, oy: 0 }; (e.target as Element).setPointerCapture?.(e.pointerId) }}
+                    onPointerDown={(e) => { e.stopPropagation(); draggedFar.current = false; drag.current = { id: n.id, panning: false, sx: e.clientX, sy: e.clientY, ox: 0, oy: 0 }; (e.target as Element).setPointerCapture?.(e.pointerId) }}
                     onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover(h => h === n.id ? null : h)}
-                    onClick={() => { if (n.path) onOpenNote(n.path) }}>
+                    onClick={() => { if (draggedFar.current) { draggedFar.current = false; return } if (n.path) onOpenNote(n.path) }}>
                     <title>{n.label}{n.communityName ? ` — ${n.communityName}` : ''}</title>
                     {/* The keyboard focus ring is a RING, not a colour swap — it
                         has to be legible on a node of any hue, in either theme. */}
