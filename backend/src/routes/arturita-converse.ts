@@ -22,6 +22,9 @@ import { documentEndpoint } from '../services/openapi'
 import { buildArturitaAgent } from '../services/arturita-session'
 import { decideConverseMode, buildConverseSystemPrompt } from '../services/arturita-converse'
 import { routeVoiceCommand } from '../services/voice-routing'
+import { assertAgentInOrg } from '../services/tenant-guard'
+import { executeAgentTask } from '../services/agent-executor'
+import { admitHistory, pendingApprovalNote } from '../services/converse-agent-turn'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
 import { messageText } from '../services/llm-router'
 import { parseLlmChain, usableLlmChain, usableCloudProviders } from '../services/arturita-pipeline'
@@ -59,10 +62,25 @@ const ConverseBody = z.object({
   }).nullable().optional(),
   /** the operator opted this turn into the agent flow (UI "delegate" toggle). */
   explicitDelegate: z.boolean().optional(),
+  /** GC-1 — WHO the operator is talking to, from the Command Center's "To:" picker.
+   *  Absent (or Arturita's own id) → the pre-GC-1 behaviour, byte for byte. Naming a
+   *  real agent routes the turn to `executeAgentTask`, so that agent's own prompt,
+   *  memory, org-chart position and CONNECTORS apply.
+   *
+   *  This is a body-supplied FK that carries EXECUTION authority — the exact shape of
+   *  GC-0b instance #7 — so it is checked with `assertAgentInOrg` below and again by
+   *  the executor's task.orgId === agent.orgId invariant. Both, deliberately. */
+  agentId: z.string().nullable().optional(),
   /** conversational continuity — the running task thread, if any. */
   existingThreadId: z.string().nullable().optional(),
-  /** prior turns (role/content) so a direct answer has short-term memory. */
-  history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).max(20).optional(),
+  /** prior turns (role/content) so a direct answer has short-term memory.
+   *  GC-1: `fromAgent` marks a turn written by a picked agent — such turns are
+   *  re-admitted FENCED as untrusted (services/converse-agent-turn.ts). */
+  history: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string(),
+    fromAgent: z.string().max(120).nullable().optional(),
+  })).max(20).optional(),
   /** J-prod: the client can stream the answer itself from a local engine (e.g.
    *  browser→Ollama). When set + the turn is an ANSWER, the endpoint returns the
    *  built prompt (system + messages) INSTEAD of calling the LLM, so the client
@@ -153,12 +171,68 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
     const agent = await ensureArturita(orgId)
 
+    // ── GC-1 — WHO is this turn addressed to? ───────────────────────────────────
+    //
+    // `agent` above is Arturita, the fixed per-org front door and still the DEFAULT.
+    // `target` is who the operator picked. They are the same object unless the picker
+    // was used, which is what keeps every pre-GC-1 path below unchanged.
+    //
+    // The tenancy check is FIRST, before any work and before the org/Arturita rows are
+    // used for anything: `b.agentId` is a body-supplied foreign key that carries
+    // EXECUTION authority (naming another tenant's agent would run that agent under its
+    // own org's LLM credentials, budget and connectors, with the output landing here).
+    // That is GC-0b instance #7 exactly. `assertAgentInOrg` is the ergonomic layer — it
+    // 400s so no bad row is ever written and the operator gets a real message; the
+    // authoritative layer is the executor's task.orgId === agent.orgId invariant, which
+    // holds even if this check were removed. Both, on purpose.
+    //
+    // Missing and foreign ids are refused identically (the helper does not distinguish
+    // them) — "no such agent" vs "not your agent" is a cross-tenant existence oracle.
+    const requestedAgentId = b.agentId ?? null
+    let target = agent
+    if (requestedAgentId && requestedAgentId !== agent.id) {
+      const err = await assertAgentInOrg(requestedAgentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+      target = (await db.query.agents.findFirst({ where: eq(schema.agents.id, requestedAgentId) }))!
+    }
+    /** True only when the operator picked someone other than Arturita. */
+    const addressedToSpecialist = target.id !== agent.id
+    // Who the transcript should attribute the reply to. Sent on EVERY response shape so
+    // both clients render one rule ("show who replied") rather than special-casing.
+    const identityOf = (row: typeof agent) => ({
+      id: row.id,
+      name: row.name,
+      avatarEmoji: (row as any).avatarEmoji ?? null,
+      avatarUrl: (row as any).avatarUrl ?? null,
+      role: (row as any).role ?? null,
+    })
+    const identity = identityOf(target)
+    // GC-1 audit (LOW-1) — `agent` on a response means THE AUTHOR OF THIS REPLY, and
+    // on the delegate branch that is ARTURITA, not the agent the work was handed to.
+    // The two are the same object unless the picker was used, which is exactly why the
+    // bug was invisible: with a specialist picked, Arturita's own canned acknowledgement
+    // ("I've put it on the board for Bruno to run") rendered under Bruno's avatar and
+    // name, as if Bruno had said it. Not attacker-controllable, but the transcript named
+    // the wrong speaker — and the operator decides what to say next based on who he
+    // believes he is talking to. WHO WROTE IT and WHO IT WENT TO are now separate fields.
+    const arturitaIdentity = identityOf(agent)
+
     // ── Delegate: route into the existing task/agent flow (ask vs execute) ──────
     if (decision.mode === 'delegate') {
       const route = routeVoiceCommand({ transcript: message, existingThreadId: b.existingThreadId ?? null })
       const taskId = randomUUID()
       await db.insert(schema.tasks).values({
-        id: taskId, agentId: agent.id, orgId,
+        // GC-1 FIX — assign to the CHOSEN agent, not to Arturita.
+        //
+        // This line used to read `agentId: agent.id`, which is Arturita's own id. So
+        // "delegate" did not delegate: every task the Command Center created was
+        // assigned to the front door itself. The operator saw "I've put it on the
+        // board for the office to run" and the office never got it — the work sat on
+        // Arturita's own queue. With no picker there was no other id to use, which is
+        // why it went unnoticed; the picker is what makes the bug both visible and
+        // fixable. `target` is Arturita when nobody picked, so the default is
+        // unchanged (still her queue) — but a picked agent now actually receives it.
+        id: taskId, agentId: target.id, orgId,
         title: message.slice(0, 120),
         input: message,
         status: 'pending',
@@ -168,8 +242,8 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         createdAt: new Date(),
       } as any)
       let ack = decision.destructive
-        ? "Got it — I've put it on the board and I'll stop for your approval before anything irreversible."
-        : "Got it — I've put it on the board for the office to run."
+        ? `Got it — I've put it on the board${addressedToSpecialist ? ` for ${target.name}` : ''} and I'll stop for your approval before anything irreversible.`
+        : `Got it — I've put it on the board for ${addressedToSpecialist ? target.name : 'the office'} to run.`
       // Delegated tasks are executed later by an agent, so an attachment held only
       // for this turn cannot travel with them (persisting it is a separate story).
       // Say so rather than letting the operator believe the doc went with the task.
@@ -182,7 +256,119 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         mode: 'delegate',
         routing: { trigger: decision.trigger, reason: decision.reason, workMode: route.workMode, destructive: decision.destructive, approvalType: decision.approvalType ?? null, isFollowUp: route.isFollowUp },
         taskId,
+        // The ACK is Arturita's — she is the one confirming the hand-off — so SHE is
+        // the author. Who the work went TO rides separately (`assignedTo`), and the
+        // clients render it as an "→ assigned to X" chip rather than as the speaker.
+        agent: arturitaIdentity,
+        assignedTo: { id: target.id, name: target.name },
         reply: { text: ack, provider: 'arturita' },
+      }
+    }
+
+    // ── GC-1 — the turn is addressed to a REAL agent: run the executor ───────────
+    //
+    // `decideConverseMode` has already had its say and returned `answer`, so this is
+    // conversational rather than a build/destructive request — those took the delegate
+    // branch above and are still gated by A2 exactly as before. Deliberate ordering:
+    // routing is decided BEFORE the recipient is considered, so picking an agent can
+    // never turn a destructive intent into a direct execution. Picking changes WHO
+    // answers, never WHETHER the approval gate applies.
+    //
+    // Everything that makes this the chosen agent rather than Arturita — system prompt,
+    // per-agent memory, org-chart position, knowledge, connector tools — is derived by
+    // `executeAgentTask` from the agent row alone, so there is no executor change here
+    // and no second code path to keep in sync.
+    //
+    // CONSEQUENCE, stated plainly: this means CONNECTORS CAN FIRE FROM THE CHAT BOX.
+    // That is intended, and the defences are the executor's own, unchanged and unforked:
+    // the CONN-7 authorization gate, the operator step-up, and the server-computed
+    // params digest that binds an approval to the exact params. This route adds no
+    // bypass — it supplies an agent id and an input string, which is strictly less than
+    // `POST /api/agents/:agentId/chat` already accepted. What it DOES add is telling the
+    // operator when something parked at that gate, so a gated turn does not read as the
+    // agent having gone quiet.
+    if (addressedToSpecialist) {
+      const taskId = randomUUID()
+      await db.insert(schema.tasks).values({
+        id: taskId, agentId: target.id, orgId,
+        title: (message || 'Command Center message').slice(0, 120),
+        input: message,
+        status: 'pending',
+        // WHY `execute` AND NOT `ask` — the load-bearing choice on this branch.
+        //
+        // `ask` looks like the obvious fit (a chat turn is a question) and it is the
+        // SAFER-looking option, but it routes to `answerAskTask`, the lean path that is
+        // documented as "no RAG/Drive/memory context, no delegation or tool side-effects".
+        // No tools means no connectors — so a picked agent would answer with its prompt
+        // and its memory but could not actually DO anything, and the picker would ship as
+        // a personality switcher rather than a way to reach a specialist. It would also
+        // make the CONN-7 tests below vacuously green: a gate that is never reached
+        // always passes.
+        //
+        // `execute` is therefore deliberate, and its consequence is stated plainly:
+        // CONNECTORS FIRE FROM THE CHAT BOX. What keeps that safe is not this route:
+        //   • destructive / build intents never arrive here at all — `decideConverseMode`
+        //     sent them to the delegate branch above, which parks a pending task behind
+        //     the A2 approval gate;
+        //   • every connector call still passes the CONN-7 authorization gate, the
+        //     operator step-up, and the server-computed params digest;
+        //   • connector RESULTS are fenced under a per-run nonce and the synthesis turn
+        //     is terminal, so returned text cannot call another connector or steer
+        //     delegation.
+        // This route adds no bypass to any of those; it supplies an agent id and a string.
+        workMode: 'execute',
+        inboxState: 'none',
+        createdAt: new Date(),
+      } as any)
+
+      // History is admitted FENCED where a turn came from an agent (untrusted — it may
+      // quote a GitHub issue or an email). An unmarked transcript passes through
+      // unchanged, so a client that never sets the marker behaves as it did before.
+      const conversationHistory = admitHistory(b.history)
+
+      // An attached DOCUMENT rides along: its text is already extracted, and
+      // `withAttachmentContext` is the same delimiter the Arturita branch uses.
+      // A PHOTO cannot: `executeAgentTask` takes a string input, so there is nowhere
+      // for an image content block to go. Rather than silently drop it — the exact
+      // failure MOB-7b exists to prevent — say so in the input, so the agent tells the
+      // operator instead of answering as if it had seen the picture.
+      const agentInput = withAttachmentContext(
+        message || 'Please read the attached document.',
+        attachment,
+      ) + (image
+        ? `\n\n[The operator attached a photo ("${image.name}"). You CANNOT see it — an agent turn has no image channel. Say so plainly and ask them to describe it, or to ask Arturita directly, who can look at photos.]`
+        : '')
+
+      let result: Awaited<ReturnType<typeof executeAgentTask>>
+      try {
+        result = await executeAgentTask({
+          agentId: target.id, taskId, input: agentInput, conversationHistory,
+        })
+      } catch (e: any) {
+        // The executor throws on a genuine run failure (it has already marked the task
+        // `failed` and written a system notice). Answer honestly in the thread rather
+        // than 500-ing at a chat box.
+        return {
+          mode: 'agent', agent: identity, taskId, degraded: true,
+          routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
+          reply: { text: `${target.name} couldn't finish that turn: ${String(e?.message ?? e).slice(0, 300)}`, provider: 'agent_error' },
+          error: e?.message ?? 'agent run failed',
+        }
+      }
+
+      const note = pendingApprovalNote(result.pendingApprovals ?? 0)
+      return {
+        mode: 'agent',
+        agent: identity,
+        taskId,
+        routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
+        reply: { text: result.output, provider: result.provider ?? 'agent', model: null },
+        // Surfaced so the chat can show "an action is waiting" inline. The approval
+        // itself already reached the Inbox and push; this is the CHAT's copy of that
+        // fact, because the chat is the surface the operator is looking at.
+        pendingApprovals: result.pendingApprovals ?? 0,
+        pendingApprovalNote: note,
+        budgetWarning: result.budgetWarning ?? null,
       }
     }
 
@@ -194,7 +380,11 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       persona: agent.persona ?? null, personality: agent.personality ?? null,
       contextBlock,
     })
-    const history = (b.history ?? []).map(h => ({ role: h.role, content: h.content }))
+    // GC-1: a turn written by a picked AGENT re-enters fenced as untrusted — it may
+    // quote a GitHub issue, a Jira comment or an email. An unmarked transcript (every
+    // pre-GC-1 client, and every thread where the picker was never touched) passes
+    // through byte-for-byte, so this is a no-op on the default path.
+    const history = admitHistory(b.history)
     // The attached document rides on THIS turn only — delimited, after the
     // operator's question. It is never added to `history`, so it doesn't re-enter
     // the prompt (and re-bill) on every later turn of the thread.
@@ -222,6 +412,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     if (b.deferAnswer && !image) {
       return {
         mode: 'answer',
+        agent: identity,
         deferred: true,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         prompt: { system, messages },
@@ -251,6 +442,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // and answering from the text alone is the one thing we must not do.
       return {
         mode: 'answer',
+        agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         degraded: true,
         reply: { text: NO_VISION_MESSAGE, provider: 'text_only' },
@@ -276,6 +468,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       })
       return {
         mode: 'answer',
+        agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         reply: { text: fb.result.output, provider: fb.used.provider, model: fb.used.model },
       }
@@ -283,6 +476,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // Failover exhausted / no key configured → honest, non-fatal reply.
       return {
         mode: 'answer',
+        agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         degraded: true,
         reply: { text: NO_LLM_MESSAGE, provider: 'text_only' },

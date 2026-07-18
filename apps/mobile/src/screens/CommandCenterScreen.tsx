@@ -35,6 +35,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -51,7 +52,12 @@ import type * as DocumentPickerNS from 'expo-document-picker'
 import type * as FileSystemNS from 'expo-file-system'
 import type * as ImagePickerNS from 'expo-image-picker'
 import type * as SpeechNS from 'expo-speech'
-import { Api } from '../api'
+import { Api, type Agent } from '../api'
+import { AgentAvatar } from '../AgentAvatar'
+import {
+  ARTURITA_CHOICE, pickableAgents, resolveRecipient, toWireAgentId,
+  type PickedAgent,
+} from '../agentPicker'
 import { useAuth } from '../auth'
 import {
   attachmentChipLabel, canSendTurn, imageChipLabel, rejectAttachment, rejectImage,
@@ -126,11 +132,27 @@ type Msg = {
   role: 'user' | 'assistant'
   content: string
   via?: { label: string; tone: 'info' | 'delegate' | 'warn'; glyph: string }
+  /** GC-1 — WHO replied. A thread can switch agents mid-way, so attribution is
+   *  per-bubble rather than read off current picker state. */
+  agent?: PickedAgent | null
+  /** GC-1 — the reply came from a picked AGENT (not Arturita). This is the marker
+   *  that makes the server fence it as untrusted when it re-enters as history. */
+  fromAgent?: string | null
+  /** GC-1 — an action from this turn is parked at the CONN-7 approval gate. */
+  pendingApprovalNote?: string | null
+  /** GC-1 audit (LOW-1) — on a DELEGATE turn, who the work was handed to. Distinct
+   *  from `agent`, which is who WROTE the reply (Arturita, on that branch). */
+  assignedTo?: { id: string; name: string } | null
 }
 
 export default function CommandCenterScreen() {
   const { apiUrl, getToken, orgId } = useAuth()
   const [messages, setMessages] = useState<Msg[]>([])
+  // GC-1 — WHO the operator is talking to. Defaults to the Arturita sentinel so the
+  // bar is correct before the roster loads and no guessed id is ever sent.
+  const [recipient, setRecipient] = useState<string>(ARTURITA_CHOICE)
+  const [roster, setRoster] = useState<Agent[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -409,6 +431,26 @@ export default function CommandCenterScreen() {
     }
   }, [apiUrl, getToken, orgId])
 
+  // GC-1 — load the roster for the "To:" picker. Non-fatal: on failure the picker
+  // offers Arturita alone, which is the default anyway, so chat still works.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        if (!token || !orgId) return
+        const list = await Api.agents(apiUrl, token, orgId)
+        if (!cancelled) setRoster(pickableAgents(list))
+      } catch { /* picker falls back to Arturita-only */ }
+    })()
+    return () => { cancelled = true }
+  }, [apiUrl, getToken, orgId])
+
+  // GC-1 — the recipient as something renderable. Falls back to Arturita for an id
+  // that is not in the roster (deleted, or not yet loaded), so the bar never shows a
+  // blank or a raw uuid: the operator must always be able to read who is listening.
+  const activeRecipient: PickedAgent = resolveRecipient(recipient, roster as PickedAgent[])
+
   const send = useCallback(async (bodyText: string, explicitDelegate: boolean) => {
     const text = bodyText.trim()
     // A document alone is a legitimate turn ("read this") — the same gate the web
@@ -431,7 +473,14 @@ export default function CommandCenterScreen() {
     const sentImage = image
     setAttachment(null) // the attachment rides THIS turn only
     setImage(null)      // …and so does the photo
-    const history = messages.map((m) => ({ role: m.role, content: m.content }))
+    // GC-1 CONTAINMENT: carry the agent-authored marker up with each turn so the
+    // server can fence those as untrusted. Operator turns and Arturita's own replies
+    // carry nothing, so an untouched thread is admitted exactly as before.
+    const history = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.fromAgent ? { fromAgent: m.fromAgent } : {}),
+    }))
     // The bubble shows what the turn carried the way the web does: the operator's
     // words plus a 📎/🖼 line. The photo's BYTES never enter the transcript — it
     // is `history` on the next turn, and re-sending the image every turn would
@@ -445,9 +494,17 @@ export default function CommandCenterScreen() {
     setMessages(next)
     setBusy(true)
     try {
-      const r = await Api.converse(apiUrl, token, orgId, text, history, toConverseAttachment(sent), toConverseImage(sentImage))
+      const r = await Api.converse(apiUrl, token, orgId, text, history, toConverseAttachment(sent), toConverseImage(sentImage), toWireAgentId(recipient))
       const via =
-        r.mode === 'delegate'
+        // GC-1 — a picked agent RAN this turn (its own memory, tools, connectors).
+        // Labelling it as a plain answer would hide that an executor run happened.
+        r.mode === 'agent'
+          ? {
+              label: `${r.agent?.name ?? 'agent'}${r.reply?.provider ? ` · ${r.reply.provider}` : ''}`,
+              tone: 'delegate' as const,
+              glyph: '⚡',
+            }
+          : r.mode === 'delegate'
           ? {
               label: `delegated${r.routing?.workMode ? ` · ${r.routing.workMode}` : ''}`,
               tone: 'delegate' as const,
@@ -467,11 +524,18 @@ export default function CommandCenterScreen() {
       const reply =
         r.reply?.text ??
         (r.mode === 'delegate'
-          ? `Delegated to a task${r.taskId ? ` (${r.taskId.slice(0, 8)}…)` : ''}.`
+          ? `Delegated to ${r.assignedTo?.name ?? 'a task'}${r.taskId ? ` (${r.taskId.slice(0, 8)}…)` : ''}.`
           : '(no reply)')
       // The chip follows what actually answered, turn by turn.
       setLastLocal(replyProvenance(r.reply))
-      setMessages((cur) => [...cur, { role: 'assistant', content: reply, via }])
+      setMessages((cur) => [...cur, {
+        role: 'assistant', content: reply, via,
+        agent: r.agent ?? null,
+        assignedTo: r.assignedTo ?? null,
+        // ONLY a real agent turn is marked untrusted — never Arturita's.
+        fromAgent: r.mode === 'agent' && r.agent?.name ? r.agent.name : null,
+        pendingApprovalNote: r.pendingApprovalNote ?? null,
+      }])
       if (r.reply?.text) speak(r.reply.text)
     } catch (e: any) {
       setError(e?.message ?? 'Failed to send.')
@@ -692,7 +756,29 @@ export default function CommandCenterScreen() {
                         <Chip label={m.via.label} tone={m.via.tone} glyph={m.via.glyph} />
                       </View>
                     ) : null}
+                    {/* GC-1 — WHO WROTE THIS. Per-bubble, so a thread that switched
+                        agents still attributes each turn correctly. Keyed on
+                        `fromAgent`, not on the presence of `agent`: on a delegate turn
+                        the author is Arturita, and the assignee is a chip below. */}
+                    {m.fromAgent && m.agent ? (
+                      <View style={s.attribution}>
+                        <AgentAvatar agent={m.agent} size={18} round={9} />
+                        <Text style={s.attributionName}>{m.agent.name}</Text>
+                      </View>
+                    ) : null}
+                    {/* The ASSIGNEE — a chip, never the speaker. */}
+                    {m.assignedTo ? (
+                      <View style={{ marginBottom: space.xs, alignSelf: 'flex-start' }}>
+                        <Chip label={`assigned to ${m.assignedTo.name}`} tone="delegate" glyph="→" />
+                      </View>
+                    ) : null}
                     <Text style={s.bubbleText}>{m.content}</Text>
+                    {/* GC-1 — a connector call from this turn is waiting for approval.
+                        It already reached the Inbox and push, but the operator is
+                        looking HERE; silence reads as the agent having done nothing. */}
+                    {m.pendingApprovalNote ? (
+                      <Text style={s.pendingNote}>⏸ {m.pendingApprovalNote}</Text>
+                    ) : null}
                   </View>
                 </View>
               ))
@@ -701,7 +787,7 @@ export default function CommandCenterScreen() {
               <View style={[s.bubbleRow, s.left]}>
                 <View style={[s.bubble, s.botBubble, s.thinking]}>
                   <ActivityIndicator color={theme.blue} />
-                  <Text style={[s.bubbleText, { marginLeft: space.sm }]}>Arturita is thinking…</Text>
+                  <Text style={[s.bubbleText, { marginLeft: space.sm }]}>{activeRecipient.name} is thinking…</Text>
                 </View>
               </View>
             ) : null}
@@ -784,6 +870,66 @@ export default function CommandCenterScreen() {
         </View>
       ) : null}
 
+      {/* ── GC-1 — the "To:" recipient bar ───────────────────────────────────
+          ABOVE the composer and always visible. The operator has to know who is
+          listening BEFORE typing something sensitive, so this states the current
+          recipient rather than hiding it behind a menu. Built from core
+          react-native only (Pressable/Modal/Text) — no native package, so it is
+          boot-safe in Expo Go by construction. */}
+      <Pressable
+        style={s.recipientBar}
+        onPress={() => setPickerOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={`Talking to ${activeRecipient.name}. Tap to choose a different agent.`}
+      >
+        <Text style={s.recipientLabel}>TO</Text>
+        <AgentAvatar agent={activeRecipient} size={22} round={11} />
+        <Text style={s.recipientName} numberOfLines={1}>{activeRecipient.name}</Text>
+        {recipient !== ARTURITA_CHOICE ? (
+          <Chip label="agent" tone="delegate" glyph="⚡" />
+        ) : null}
+        <Text style={s.recipientCaret}>▾</Text>
+      </Pressable>
+
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={s.modalBackdrop} onPress={() => setPickerOpen(false)}>
+          <Pressable style={s.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.modalTitle}>Who are you talking to?</Text>
+            <ScrollView style={{ maxHeight: 380 }}>
+              {[
+                { id: ARTURITA_CHOICE, name: 'Arturita', role: 'Chief of Staff', avatarEmoji: '🌸' } as PickedAgent,
+                ...(roster as PickedAgent[]),
+              ].map((a) => {
+                const on = a.id === recipient
+                return (
+                  <Pressable
+                    key={a.id}
+                    style={[s.optionRow, on ? s.optionRowOn : null]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    onPress={() => {
+                      setRecipient(a.id)
+                      setPickerOpen(false)
+                    }}
+                  >
+                    <AgentAvatar agent={a} size={30} round={15} />
+                    <View style={{ flex: 1, marginLeft: space.sm }}>
+                      <Text style={s.optionName}>{a.name}</Text>
+                      {a.role ? <Text style={s.optionRole}>{a.role}</Text> : null}
+                    </View>
+                    {on ? <Text style={s.optionTick}>✓</Text> : null}
+                  </Pressable>
+                )
+              })}
+            </ScrollView>
+            <Text style={s.modalHint}>
+              Arturita answers directly. Another agent runs the turn itself — its own memory,
+              tools and connectors — and anything irreversible still needs your approval.
+            </Text>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <View style={s.composer}>
         <Pressable
           accessibilityRole="button"
@@ -812,7 +958,7 @@ export default function CommandCenterScreen() {
           style={s.input}
           value={input}
           onChangeText={setInput}
-          placeholder={attachment ? 'Ask about the attached document…' : 'Message Arturita…'}
+          placeholder={attachment ? `Ask ${activeRecipient.name} about the attached document…` : `Message ${activeRecipient.name}…`}
           placeholderTextColor={theme.textFaint}
           multiline
           editable={!busy}
@@ -874,6 +1020,36 @@ function Toggle({
 }
 
 const s = StyleSheet.create({
+  // ── GC-1 — the "To:" recipient bar + its picker sheet ──────────────────────
+  recipientBar: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingHorizontal: space.md, paddingVertical: space.xs,
+    marginHorizontal: space.md, marginBottom: space.xs,
+    backgroundColor: theme.s2, borderWidth: 1, borderColor: theme.s3,
+    borderRadius: radius.pill,
+  },
+  recipientLabel: { color: theme.textDim, fontSize: font.sm, fontWeight: '700', letterSpacing: 0.6 },
+  recipientName: { flex: 1, color: theme.text, fontSize: font.base, fontWeight: '700' },
+  recipientCaret: { color: theme.textDim, fontSize: font.sm },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: space.lg },
+  modalSheet: {
+    backgroundColor: theme.s1, borderRadius: radius.lg, padding: space.md,
+    borderWidth: 1, borderColor: theme.s3,
+  },
+  modalTitle: { color: theme.text, fontSize: font.lg, fontWeight: '800', marginBottom: space.sm },
+  modalHint: { color: theme.textDim, fontSize: font.sm, marginTop: space.sm, lineHeight: 18 },
+  optionRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: space.sm, paddingHorizontal: space.sm,
+    borderRadius: radius.md,
+  },
+  optionRowOn: { backgroundColor: theme.s2 },
+  optionName: { color: theme.text, fontSize: font.base, fontWeight: '700' },
+  optionRole: { color: theme.textDim, fontSize: font.sm },
+  optionTick: { color: theme.blue, fontSize: font.lg, fontWeight: '800' },
+  attribution: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs },
+  attributionName: { color: theme.text, fontSize: font.sm, fontWeight: '700' },
+  pendingNote: { color: theme.orange, fontSize: font.sm, marginTop: space.xs, lineHeight: 18 },
   page: { padding: space.lg, gap: space.lg },
   hero: { alignItems: 'center', gap: space.lg, paddingVertical: space.lg },
   titleBlock: { alignItems: 'center' },

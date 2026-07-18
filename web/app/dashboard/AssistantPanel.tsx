@@ -24,8 +24,9 @@ import {
   revealStepFor, routingBadge, type Message, type ConverseResponse,
   rejectAttachment, attachmentChipLabel, canSendTurn, ATTACH_ACCEPT,
   rejectImage, imageChipLabel, imageMediaType, IMAGE_ACCEPT,
-  type AttachedDoc, type AttachedImage,
+  ARTURITA_CHOICE, type AttachedDoc, type AttachedImage, type AgentIdentity,
 } from './assistant.logic'
+import { AgentAvatar } from './agent/shared'
 import { provenanceChip, reactorChips } from './reactor.logic'
 import { decideSubmit, WAKE_WORD } from './cockpit/voicePanel.logic'
 import { probeOllama, streamOllamaChat, DEFAULT_OLLAMA_URL, type ChatMsg } from '@/lib/ollama'
@@ -35,6 +36,13 @@ import { probeWhisper, transcribeWithWhisper, pickRecorderMimeType, isWhisperEng
 import { resolveSttEngine, sttEngineLabel } from '@/lib/sttEngine'
 
 type Getter = () => Promise<string | null>
+
+/** GC-1 — the roster row the "To:" picker needs. A subset of the agents endpoint. */
+type RosterAgent = {
+  id: string; name: string; role?: string | null
+  avatarEmoji?: string | null; avatarUrl?: string | null
+  agentType?: string | null; status?: string | null
+}
 
 // The 7Ei honeycomb mark is now rendered INLINE at the reactor's glass core
 // (see Reactor.tsx) so it can carry the reactor's glow and scale crisply; the
@@ -112,6 +120,23 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // J-prod: browser-direct local Ollama (free, private, real token streaming) —
   // resolved from the pipeline config + a reachability probe; null → use backend.
   const [localLlm, setLocalLlm] = useState<{ model: string; baseUrl: string } | null>(null)
+  // GC-1 — WHO the operator is talking to. Defaults to the Arturita sentinel, so the
+  // panel renders a correct, honest recipient before the roster has even loaded and
+  // never sends a guessed id.
+  const [recipient, setRecipient] = useState<string>(ARTURITA_CHOICE)
+  const [roster, setRoster] = useState<RosterAgent[]>([])
+
+  // GC-1 — the recipient as an identity to RENDER (avatar + name). Resolved from the
+  // roster; falls back to Arturita, which is also what an id that has vanished from the
+  // roster resolves to — the bar must never show a blank or a raw uuid.
+  const activeRecipient: AgentIdentity = recipient === ARTURITA_CHOICE
+    ? { id: ARTURITA_CHOICE, name: 'Arturita', avatarEmoji: '🌸', role: 'Chief of Staff' }
+    : (() => {
+        const a = roster.find(x => x.id === recipient)
+        return a
+          ? { id: a.id, name: a.name, avatarEmoji: a.avatarEmoji ?? '🤖', avatarUrl: a.avatarUrl ?? null, role: a.role ?? null }
+          : { id: ARTURITA_CHOICE, name: 'Arturita', avatarEmoji: '🌸', role: 'Chief of Staff' }
+      })()
 
   const recogRef = useRef<any>(null)
   const braveRef = useRef(false)
@@ -122,9 +147,11 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const threadRef = useRef<string | null>(null)
   const wakeRef = useRef(wakeWord)
   const delegateRef = useRef(delegate)
+  const recipientRef = useRef(recipient)
   const voiceRef = useRef(voiceReplies)
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { wakeRef.current = wakeWord }, [wakeWord])
+  useEffect(() => { recipientRef.current = recipient }, [recipient])
   useEffect(() => { delegateRef.current = delegate }, [delegate])
   useEffect(() => { voiceRef.current = voiceReplies }, [voiceReplies])
 
@@ -179,6 +206,21 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     const match = preferred ? (voicesRef.current || []).find(v => v.name === preferred.name) ?? null : null
     run(match, false)
   }, [])
+
+  // GC-1 — load the roster for the "To:" picker. Non-fatal: if it fails the picker
+  // simply offers Arturita, which is the default anyway, so the chat still works.
+  // Arturita is filtered out of the list because she IS the default entry.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await api<{ agents: RosterAgent[] }>(`/api/orgs/${orgId}/agents`, { token: await getToken() })
+        if (cancelled) return
+        setRoster((r.agents ?? []).filter(a => a.agentType !== 'arturita' && a.status !== 'terminated'))
+      } catch { /* picker falls back to Arturita-only */ }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, getToken])
 
   // Resolve a browser-reachable local Ollama from the pipeline config (once).
   useEffect(() => {
@@ -304,7 +346,15 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
     setImage(null)        // …and so does the photo
     setThinking(true)
     const reqHistory = [...messages, userMsg]
-    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory, attachment: sentAttachment, image: sentImage })
+    const sentTo = recipientRef.current
+    const baseReq = toConverseRequest({ message, explicitDelegate: explicit, existingThreadId: threadRef.current, history: reqHistory, attachment: sentAttachment, image: sentImage, agentId: sentTo })
+    // GC-1 — a turn addressed to a REAL agent can never be deferred to local Ollama.
+    // Deferring hands the built prompt back for the browser to stream, which only
+    // works for Arturita's single conversational turn; an agent turn must run in the
+    // EXECUTOR (its memory, its connectors, the CONN-7 gate). Without this the picker
+    // would silently apply on cloud turns and be ignored whenever local Ollama is up
+    // — the operator would think he was talking to Bruno and be talking to Arturita.
+    const addressedToAgent = !!baseReq.agentId
     const post = async (body: object) => api<ConverseResponse>(`/api/orgs/${orgId}/arturita/converse`, { token: await getToken(), method: 'POST', body: JSON.stringify(body) })
     // When the backend answered but no LLM was reachable (degraded/text_only),
     // surface the actionable fix (enable local Ollama, or add a free cloud key)
@@ -320,7 +370,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       // A photo turn is never deferred to local Ollama: the local engine is
       // text-only by default, so streaming there would drop the image silently.
       // The backend enforces this too — this just keeps the request honest.
-      const resp = await post({ ...baseReq, deferAnswer: !!localLlm && !sentImage })
+      const resp = await post({ ...baseReq, deferAnswer: !!localLlm && !sentImage && !addressedToAgent })
 
       // Delegate → the office runs it as a task (gated at A2 if destructive).
       if (resp.mode === 'delegate') {
@@ -331,7 +381,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       }
 
       // Answer deferred to the client → stream tokens live from local Ollama.
-      if (resp.deferred && resp.prompt && localLlm) {
+      if (resp.deferred && resp.prompt && localLlm && !addressedToAgent) {
         const id = nextId()
         setThinking(false)
         setMessages(m => [...m, { id, role: 'arturita', text: '', streaming: true, mode: 'answer', routing: resp.routing ?? null, via: `local · ${localLlm.model}` }])
@@ -646,6 +696,52 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             >✕</button>
           </div>
         )}
+        {/* ── GC-1 — the "To:" recipient bar ───────────────────────────────────
+            ABOVE the input and always visible, never behind a menu. The operator
+            has to know who is listening BEFORE he types something sensitive, so
+            this is a persistent statement of the current recipient rather than a
+            control he has to go and check. The avatar + name are the same
+            treatment the transcript uses, so "who I'm talking to" and "who
+            replied" read as one idea. */}
+        <div style={s.recipientBar}>
+          <span style={{ color: tk.muted, fontWeight: 700, fontSize: text.xs.fontSize, letterSpacing: 0.4 }}>TO</span>
+          <AgentAvatar agent={{ name: activeRecipient.name, avatarEmoji: activeRecipient.avatarEmoji ?? '🤖', avatarUrl: activeRecipient.avatarUrl ?? null }} size={22} radius={tk.r.sm} />
+          <select
+            value={recipient}
+            onChange={e => {
+              setRecipient(e.target.value)
+              // A new recipient is a new thread: `existingThreadId` names a task on the
+              // PREVIOUS agent's queue, and carrying it over would file follow-up work
+              // against an agent the operator is no longer addressing.
+              threadRef.current = null
+            }}
+            aria-label="Choose which agent you are talking to"
+            title="Choose which agent you are talking to"
+            style={s.recipientSelect}
+          >
+            {/* AUDIT (cosmetic risk, de-risked without a browser): the SELECT is
+                transparent/borderless so it disappears into the pill, but a native
+                OPTION LIST does not inherit that — it is drawn by the browser. This app
+                sets `data-theme` and never declares `color-scheme`, so on the dark theme
+                a Chromium/Firefox popup defaults to LIGHT chrome while the options
+                inherit the near-white `--text`: white on white, unreadable. Naming the
+                option colours explicitly fixes it in both themes (they are theme
+                variables, so they follow the toggle). macOS draws this popup with system
+                chrome and ignores the styling entirely — which is readable anyway, so
+                the fix is a no-op there rather than a regression. Still unverified in a
+                real browser; this removes the failure mode rather than confirming the
+                pixels. */}
+            <option value={ARTURITA_CHOICE} style={sxOption}>Arturita — Chief of Staff (default)</option>
+            {roster.map(a => (
+              <option key={a.id} value={a.id} style={sxOption}>{a.name}{a.role ? ` — ${a.role}` : ''}</option>
+            ))}
+          </select>
+          {recipient !== ARTURITA_CHOICE && (
+            <span style={{ ...tagStyle, background: 'var(--accent-dim)', color: 'var(--purple-1)' }} title="This turn runs as that agent — its own memory, tools and connectors">
+              ⚡ agent
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: space.sm }}>
           {/* The pickers are hidden; the paperclip/frame buttons drive them (a bare
               file input can't be styled to match the glass composer). Two separate
@@ -681,15 +777,15 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             value={typed}
             onChange={e => setTyped(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submitTyped() }}
-            placeholder={attachment ? 'Ask about the attached document…' : 'Message Arturita…'}
-            aria-label="Message Arturita"
+            placeholder={attachment ? `Ask ${activeRecipient.name} about the attached document…` : `Message ${activeRecipient.name}…`}
+            aria-label={`Message ${activeRecipient.name}`}
             style={{ flex: 1 }}
           />
           <Button variant="primary" disabled={!canSendTurn({ typed, attachment, image, busy: thinking || attaching || reading })} onClick={submitTyped}>{thinking ? '…' : 'Send'}</Button>
         </div>
         <label style={{ ...s.toggle, alignSelf: 'flex-start' }}>
           <input type="checkbox" checked={delegate} onChange={e => setDelegate(e.target.checked)} />
-          <span>▸ Delegate this to the office <span style={{ color: tk.muted }}>(instead of a direct answer)</span></span>
+          <span>▸ Delegate this to {recipient === ARTURITA_CHOICE ? 'the office' : activeRecipient.name} <span style={{ color: tk.muted }}>(instead of a direct answer)</span></span>
         </label>
       </Card>
 
@@ -719,8 +815,25 @@ function ArturitaBubble({ msg, shown }: { msg: Message; shown: string }) {
   return (
     <div style={{ alignSelf: 'flex-start', maxWidth: '86%', background: tk.surface, border: `1px solid ${tk.line}`, borderRadius: tk.r.lg, padding: `${space.md}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.xs }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15 }}>🌸</span>
+        {/* GC-1 — WHO WROTE THIS. A thread can switch agents mid-way, so attribution is
+            per-bubble, read off the message rather than off current picker state.
+            Keyed on `fromAgent` (set only for mode:'agent'), NOT on the presence of
+            `agent`: on a delegate turn `agent` is Arturita — she wrote the ack — and on
+            the default path this keeps the bubble byte-identical to pre-GC-1, a bare 🌸
+            with no name. Who the work went TO is a separate chip below. */}
+        {msg.fromAgent && msg.agent
+          ? <>
+              <AgentAvatar agent={{ name: msg.agent.name, avatarEmoji: msg.agent.avatarEmoji ?? '🤖', avatarUrl: msg.agent.avatarUrl ?? null }} size={20} radius={tk.r.sm} />
+              <span style={{ fontSize: text.sm.fontSize, fontWeight: 700, color: tk.text }}>{msg.agent.name}</span>
+            </>
+          : <span style={{ fontSize: 15 }}>🌸</span>}
         <span style={{ ...tagStyle, background: badgeStyle.bg, color: badgeStyle.fg }}>{badge.icon} {badge.label}</span>
+        {/* The ASSIGNEE — deliberately a chip beside the badge, never the speaker. */}
+        {msg.assignedTo && (
+          <span style={{ ...tagStyle, background: 'var(--accent-dim)', color: 'var(--purple-1)' }} title="who the work was handed to">
+            → assigned to {msg.assignedTo.name}
+          </span>
+        )}
         {msg.via && <span style={{ ...tagStyle, background: 'var(--s2)', color: tk.muted }} title="which model produced this reply">{msg.via.startsWith('local') ? '🔒 ' : '☁ '}{msg.via}</span>}
         {msg.degraded && <span style={{ ...tagStyle, background: 'var(--warn-bg)', color: tk.amber }}>⚠ Degraded</span>}
       </div>
@@ -731,6 +844,14 @@ function ArturitaBubble({ msg, shown }: { msg: Message; shown: string }) {
         <div style={{ fontSize: text.xs.fontSize, color: tk.muted, borderTop: `1px solid ${tk.line}`, paddingTop: space.xs, marginTop: space.xxs }}>
           {msg.routing.reason}
           {msg.taskId && <span> · <span style={{ color: tk.accent }}>opened a task</span> — track it in the Inbox / Task board.</span>}
+        </div>
+      )}
+      {/* GC-1 — an action from this turn parked at the CONN-7 gate. It already reached
+          the Inbox and push, but the operator is looking HERE: without this line a
+          gated connector call reads as the agent having quietly done nothing. */}
+      {msg.pendingApprovalNote && (
+        <div style={{ fontSize: text.xs.fontSize, color: tk.amber, background: 'var(--warn-bg)', border: `1px solid ${tk.line}`, borderRadius: tk.r.sm, padding: `${space.xs}px ${space.sm}px`, marginTop: space.xxs }}>
+          ⏸ {msg.pendingApprovalNote}
         </div>
       )}
     </div>
@@ -746,10 +867,28 @@ function ArturitaThinking() {
   )
 }
 
+/** GC-1 audit — explicit colours for the recipient picker's native option list, which
+ *  does NOT inherit the transparent select's styling. Theme variables, so it follows the
+ *  light/dark toggle. See the comment at the call site. */
+const sxOption: React.CSSProperties = { background: 'var(--s1)', color: 'var(--text)' }
+
 const tagStyle: React.CSSProperties = { fontSize: text.xs.fontSize, lineHeight: text.xs.lineHeight, fontWeight: 700, borderRadius: tk.r.pill, padding: '1px 8px', whiteSpace: 'nowrap' }
 const sxHint: React.CSSProperties = { fontSize: text.xs.fontSize, color: tk.muted, margin: 0 }
 
 const s: Record<string, React.CSSProperties> = {
+  // GC-1 — the recipient bar sits above the composer and reads as part of it.
+  recipientBar: {
+    display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap',
+    padding: `${space.xs}px ${space.sm}px`, marginBottom: space.xs,
+    background: 'var(--s2)', border: '1px solid var(--line-strong)',
+    borderRadius: tk.r.pill,
+  },
+  recipientSelect: {
+    flex: 1, minWidth: 180, height: 26, boxSizing: 'border-box',
+    background: 'transparent', border: 'none', outline: 'none',
+    color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit',
+    fontWeight: 600, cursor: 'pointer',
+  },
   toggle: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: text.sm.fontSize, color: tk.textDim, cursor: 'pointer', userSelect: 'none' },
   interim: { minHeight: 20, fontSize: text.sm.fontSize, lineHeight: 1.5 },
   convoToggle: {

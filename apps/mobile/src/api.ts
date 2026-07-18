@@ -212,8 +212,14 @@ export type Approval = {
 export const CONVERSE_HISTORY_LIMIT = 10
 
 export type ConverseReply = { text: string; provider?: string; model?: string }
+/** GC-1 — who replied (or, on a delegate turn, who the work went to). */
+export type ConverseAgent = {
+  id: string; name: string
+  avatarEmoji?: string | null; avatarUrl?: string | null; role?: string | null
+}
 export type ConverseResult = {
-  mode: 'answer' | 'delegate'
+  /** GC-1 adds `agent`: a picked agent ran this turn through the executor. */
+  mode: 'answer' | 'delegate' | 'agent'
   routing?: { trigger?: string; reason?: string; workMode?: string; destructive?: boolean }
   reply?: ConverseReply
   taskId?: string
@@ -223,6 +229,15 @@ export type ConverseResult = {
    *  see it. Degraded like a no-LLM reply, but for a different reason and with a
    *  different fix, so the two must not be reported to the operator as one. */
   code?: string
+  /** GC-1 — who answered. Present on every response shape. */
+  agent?: ConverseAgent | null
+  /** GC-1 — on a delegate turn, who the work was assigned to. */
+  assignedTo?: { id: string; name: string } | null
+  /** GC-1 — connector actions this turn parked at the CONN-7 approval gate. The chat
+   *  says so inline: the approval already reached the Inbox and push, but the operator
+   *  is looking HERE, and silence reads as the agent having done nothing. */
+  pendingApprovals?: number
+  pendingApprovalNote?: string | null
 }
 
 export const Api = {
@@ -528,7 +543,11 @@ export const Api = {
     token: string,
     orgId: string,
     message: string,
-    history: { role: 'user' | 'assistant'; content: string }[],
+    // GC-1: `fromAgent` marks a turn a picked AGENT wrote. The server re-admits those
+    // FENCED as untrusted (they may quote a GitHub issue, a Jira comment or an email).
+    // Absent on operator turns and on Arturita's own replies, so an untouched thread is
+    // admitted byte-for-byte as before.
+    history: { role: 'user' | 'assistant'; content: string; fromAgent?: string }[],
     // CC-ATT: the document attached to THIS turn, already extracted to text. The
     // backend fences it into this turn's prompt only — it never enters history,
     // so it can't re-enter (and re-bill) later turns.
@@ -538,6 +557,10 @@ export const Api = {
     // extract — so it rides the turn itself and reaches the model as an image
     // block. Held for the request only: never stored, never in history.
     image?: { name: string; mediaType: string; data: string },
+    // GC-1: WHO the operator picked. `null` (the default, and what the Arturita
+    // sentinel maps to) omits the field entirely, so an operator who never touches the
+    // picker sends exactly the body the phone sent before this story.
+    agentId?: string | null,
   ) =>
     api<ConverseResult>(base, `/api/orgs/${orgId}/arturita/converse`, {
       token,
@@ -548,6 +571,7 @@ export const Api = {
         deferAnswer: false,
         ...(attachment ? { attachment } : {}),
         ...(image ? { image } : {}),
+        ...(agentId ? { agentId } : {}),
       }),
     }),
 
