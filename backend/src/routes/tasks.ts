@@ -22,6 +22,7 @@ import { decideWake, hasActiveRun, threadHistory, buildWakeInput } from '../serv
 import { normalizeWorkMode } from '../services/askmode'
 import { parseWatchdogSpec } from '../services/watchdogs'
 import { decideApproval } from '../services/approvals'
+import { toPublicApproval } from '../services/approval-public'
 import { notifyApprovalCreated } from '../services/push'
 // Epic ONB / ONB3 — deciding an `agent_join_request` card in this queue IS the
 // board-approval gate; it runs the same decision path as the dedicated owner routes.
@@ -59,6 +60,9 @@ export async function taskRoutes(app: FastifyInstance) {
       db.select({ id: schema.agents.id, name: schema.agents.name, avatarEmoji: schema.agents.avatarEmoji }).from(schema.agents).where(eq(schema.agents.orgId, orgId)),
       db.select().from(schema.approvalRequests).where(and(eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.status, 'pending'))).orderBy(desc(schema.approvalRequests.createdAt)).limit(50),
     ])
+    // GC-0: the approval row carries an agent-authored `payload` (machine_exec argv,
+    // wallet destinations, email recipients). Project it — see services/approval-public.ts.
+    const publicApprovals = approvals.map(toPublicApproval)
     const amap = new Map(agents.map(a => [a.id, a]))
     const items = buildInbox(tasks as any, dismissed).map(i => ({
       ...i, agentName: amap.get(i.agentId)?.name ?? '—', agentEmoji: amap.get(i.agentId)?.avatarEmoji ?? '🤖',
@@ -69,7 +73,7 @@ export async function taskRoutes(app: FastifyInstance) {
     // one grown on this route for the desk's convenience. `count` therefore stays the
     // decision-PENDING count — a badge that counts things already dealt with is a badge
     // nobody can clear.
-    return { items, approvals, count: items.length + approvals.length }
+    return { items, approvals: publicApprovals, count: items.length + publicApprovals.length }
   })
   app.get('/api/orgs/:orgId/inbox/count', async (req) => {
     const { orgId } = req.params as any
@@ -136,7 +140,11 @@ export async function taskRoutes(app: FastifyInstance) {
     const status = (req.query as any)?.status
     const conds = [eq(schema.approvalRequests.orgId, orgId)]
     if (status) conds.push(eq(schema.approvalRequests.status, status))
-    return { approvals: await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100) }
+    // GC-0: projected, not the raw row — this is the route the PHONE reads
+    // (`Api.pendingApprovals`, apps/mobile/src/api.ts), so it leaked the payload
+    // blob to a mobile device. See services/approval-public.ts.
+    const rows = await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100)
+    return { approvals: rows.map(toPublicApproval) }
   })
   app.post('/api/orgs/:orgId/approvals', async (req, reply) => {
     const { orgId } = req.params as any
@@ -165,7 +173,10 @@ export async function taskRoutes(app: FastifyInstance) {
     const status = (req.query as any)?.status ?? 'pending'
     const conds = [eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.type, REVIEW_CASE_TYPE)]
     if (status && status !== 'all') conds.push(eq(schema.approvalRequests.status, status))
-    return { cases: await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100) }
+    // GC-0: a review case IS an approval row — same blob, same projection. (No client
+    // consumes this route today; the desk reads the queue through Governance.)
+    const rows = await db.select().from(schema.approvalRequests).where(and(...conds)).orderBy(desc(schema.approvalRequests.createdAt)).limit(100)
+    return { cases: rows.map(toPublicApproval) }
   })
 
   // Server-side enforcement chokepoint: an action-producer asks whether a
@@ -538,8 +549,11 @@ export async function taskRoutes(app: FastifyInstance) {
       }
     }
 
+    // GC-0: the decided row echoes back projected too. Neither client reads this body
+    // (web drops the card on success, mobile refetches), so nothing depends on the blob.
+    const decided = await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) })
     return {
-      approval: await db.query.approvalRequests.findFirst({ where: eq(schema.approvalRequests.id, id) }),
+      approval: decided ? toPublicApproval(decided) : decided,
       ...(joinRequest !== undefined ? { joinRequest, agentToken: null } : {}),
     }
   })
