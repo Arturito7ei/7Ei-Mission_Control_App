@@ -38,6 +38,7 @@ import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJo
 import { agentApiRoutes } from './routes/agent-api'
 import { ensureIndex } from './services/vector-search'
 import { auditLogPlugin, auditLogQueryRoutes } from './middleware/audit-log'
+import { activityRoutes } from './routes/activity'
 import { clerkAuth } from './middleware/clerk-auth'
 import { loopbackAuth } from './middleware/loopback-auth'
 import { requireOrgMembership } from './middleware/rbac'
@@ -222,6 +223,12 @@ async function start() {
     // Clerk user — to the org-scoped, org-filtered path. See docs/AUDIT-ONB2-hardening.md.)
     await secured.register(auditLogQueryRoutes)       // GET /api/orgs/:orgId/audit-log (owner)
     await secured.register(telemetryQueryRoutes)      // GET /api/orgs/:orgId/traces  (owner)
+    // ACT-1 — GET /api/orgs/:orgId/activity: the unified feed (approvals filed/decided,
+    // connector executions, agent runs, tasks, audit events). Member-readable via the
+    // scope gate above; the OWNER-ONLY sources (connector executions, audit) are dropped
+    // per-caller inside the handler, so this composes the existing gates rather than
+    // becoming a side door around them.
+    await secured.register(activityRoutes)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────

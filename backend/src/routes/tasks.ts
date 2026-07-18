@@ -63,6 +63,12 @@ export async function taskRoutes(app: FastifyInstance) {
     const items = buildInbox(tasks as any, dismissed).map(i => ({
       ...i, agentName: amap.get(i.agentId)?.name ?? '—', agentEmoji: amap.get(i.agentId)?.avatarEmoji ?? '🤖',
     }))
+    // ACT-1 note: the recently-DECIDED tail is deliberately NOT added here. Both
+    // surfaces read it from `GET /api/orgs/:orgId/activity?kind=approval_decided`, so
+    // there is ONE projected+bounded shape for a decided approval rather than a second
+    // one grown on this route for the desk's convenience. `count` therefore stays the
+    // decision-PENDING count — a badge that counts things already dealt with is a badge
+    // nobody can clear.
     return { items, approvals, count: items.length + approvals.length }
   })
   app.get('/api/orgs/:orgId/inbox/count', async (req) => {

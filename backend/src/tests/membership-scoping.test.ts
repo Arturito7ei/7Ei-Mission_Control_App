@@ -142,6 +142,7 @@ before(async () => {
   const { webhookRoutes } = await import('../routes/webhooks')
   const { auditLogQueryRoutes } = await import('../middleware/audit-log')
   const { telemetryQueryRoutes } = await import('../services/telemetry')
+  const { activityRoutes } = await import('../routes/activity')
 
   securedApp = Fastify({ logger: false })
   registerJsonBodyParser(securedApp) // bodiless JSON must reach the preHandler, not 400
@@ -181,6 +182,7 @@ before(async () => {
     await secured.register(webhookRoutes)          // outbound webhook config — was MISSING from this boot (HIGH-1 blind spot)
     await secured.register(auditLogQueryRoutes)
     await secured.register(telemetryQueryRoutes)
+    await secured.register(activityRoutes)          // ACT-1 — GET /orgs/:orgId/activity
   })
   await securedApp.ready()
 

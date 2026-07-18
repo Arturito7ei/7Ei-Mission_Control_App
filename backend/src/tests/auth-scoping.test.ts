@@ -40,6 +40,7 @@ import { agentApiRoutes } from '../routes/agent-api'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from '../routes/agent-invites'
 import { auditLogPlugin, auditLogQueryRoutes } from '../middleware/audit-log'
 import { telemetryPlugin, telemetryQueryRoutes } from '../services/telemetry'
+import { activityRoutes } from '../routes/activity'
 import { PUBLIC_JOIN_IMPLEMENTED, TOKEN_CLAIM_IMPLEMENTED } from '../services/deployment-profile'
 import { recordRoute, collectedRoutes, resetOpenApi } from '../services/openapi'
 import { createClerkAuth } from '../middleware/clerk-auth'
@@ -105,6 +106,7 @@ async function bootLikeIndex() {
     // can never again be blind to a plugin-registered route.
     await secured.register(auditLogQueryRoutes)
     await secured.register(telemetryQueryRoutes)
+    await secured.register(activityRoutes)          // ACT-1 — GET /orgs/:orgId/activity
   })
 
   await app.register(commsWebhookRoutes)

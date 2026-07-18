@@ -27,7 +27,10 @@ export type OrgNode = { id: string; name: string; role: string; title?: string |
 export type InboxItem = { taskId: string; title: string; kind: string; priority: string; agentName: string; agentEmoji: string; retryable?: boolean; error?: string | null }
 export type GoalNode = { id: string; title: string; metric?: string | null; status?: string; children: GoalNode[] }
 export type ApprovalDecision = 'approved' | 'rejected' | 'revision_requested'
-export type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null; decisionNote?: string | null; payload?: any }
+// ACT-1 — `createdAt` was always on the wire (the /inbox route returns the whole
+// approval row) but was never typed, so the desk could not show an approval's AGE while
+// the phone could. It arrives as an ISO string over JSON.
+export type Approval = { id: string; type: string; summary: string; status: string; requestedByAgentId?: string | null; decisionNote?: string | null; payload?: any; createdAt?: string | number | null }
 export type Budget = { id: string; scope: string; scopeId?: string | null; limitUsd: number; spend: number; state: string; pct: number }
 export type Secret = { id: string; scope: string; scopeId?: string | null; key: string; masked: string }
 export type Workspace = { id: string; name: string; repoUrl?: string | null; baseBranch?: string | null; previewUrl?: string | null }

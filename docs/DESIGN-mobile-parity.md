@@ -932,3 +932,67 @@ rather than riding along here.
 **Gated on the operator setting up an Expo/EAS account + dev build:** **MOB-5e only** (wake word / hands-free / background audio). Plus, from the existing epic, **production remote APNs push** and lock-screen "Approve" notification actions (`DESIGN-mobile-expo.md` §5/§14 — already staged behind `EXPO_PUBLIC_EAS_PROJECT_ID`).
 
 **The honest headline: the dev build gates almost nothing you want.** One voice story. The real prerequisite for voice is a backend endpoint (MOB-5a) that the existing design doc assumed already existed. Everything else — all ~12 menus, push-to-talk, spoken replies — ships in stock Expo Go against the SDK 54 pin.
+
+---
+
+## 8. ACT-1 — Inbox + Activity (as-built)
+
+**Mirrored, same PR.** Both surfaces changed; nothing deferred to a follow-up story.
+
+**The backend did the parity work.** One new read endpoint — `GET /api/orgs/:orgId/activity` — serves both
+surfaces, so "mirroring" here is genuinely client work over an identical contract: same path, same params,
+same clamped limit, same cursor, same projected row shape. The usual hand-copy risk was narrowed by putting
+the **query builder itself** in the shared vocabulary module (`activityQuery`), not just the constants: the
+desk and the phone cannot drift on params, because they call the same function to build them.
+
+**What is shared, and what is deliberately not.**
+
+| Shared (pinned by `apps/mobile/src/activityKinds.test.ts`) | Surface-specific (on purpose) |
+|---|---|
+| `ACTIVITY_KINDS`, `ACTIVITY_OUTCOMES`, `OWNER_ONLY_KINDS` | Colour tone — the desk's `Pill` takes `fail`, the phone's `Chip` takes `danger` |
+| `KIND_LABEL` / `KIND_GLYPH` / `OUTCOME_LABEL` (the copy the owner reads) | Layout — the desk keeps the 24h swimlane above the log; the phone has no swimlane peer |
+| `activityQuery` (the request itself) and `activityAgo` | Paging control — a web button vs a native `FlatList` footer button |
+
+A shared *tone* map would have had to invent a third vocabulary that neither surface actually uses, and it
+would have drifted from both. Sharing the words while letting each surface speak its own design system is
+the line that held here.
+
+**The swimlane has no phone peer, and that is an N/A rather than a gap.** §6.6's reasoning for the memory
+canvas applies unchanged: a 24-hour chart projected onto ~340 usable points is a smudge. The phone reads the
+LOG, which is the part of "activity" that is list-shaped. The desk keeps both because a wide canvas earns the
+chart. This is the third time the same call has been made (memory graph, timeline, now activity) — the rule
+is not "the phone gets less", it is **the phone gets the data in the shape a phone reads**.
+
+**Two traps this story had to route around explicitly:**
+
+- **Cheap refresh (the MEM-1 lesson).** MEM-1 bound an expensive re-crawl to pull-to-refresh — the most
+  accidental gesture on a touch screen. Here refresh resets to page one and issues exactly one bounded read.
+  Asserted, not intended: `activityScreen.test.ts` fails if `onRefresh` points at anything but the ordinary
+  page-one load, or if a rebuild-shaped call appears on a refresh path.
+- **Bounded by a button, not by a scroll position.** `onEndReached` is deliberately absent from the phone
+  feed: a fast flick would page the entire ledger over a cellular connection. The test fails if it returns.
+
+**Freshness is the APPR-1 lesson applied to a second list.** The "Recently decided" tail exists on both
+surfaces and is re-READ from the server after a confirmed decision — including on the step-up path — never
+appended locally. A decided row carries no buttons, so there is nothing to decide twice.
+
+**Verified:** mobile 327/327 · typecheck · `expo export` · SDK 54, react 19.1.0, no new dependency.
+**Not verified visually** — no device or simulator run in that session; the mirror is proven by tests,
+typecheck and a successful export, not by looking at it.
+
+### 8.1 — post-audit addenda (AUDIT-ACT1)
+
+**A parity INVERSION, which is the failure mode this doc exists to catch, running backwards.** The audit's
+H-3 was that the desk's step-up path never refreshed the decided tail — so approving the single most
+dangerous class of action gave the operator the *least* confirmation. The phone had the invariant *and* a
+test naming it (`activityScreen.test.ts`, "both paths, or the tail lies"); the desk had neither.
+
+The standing rule is written as "not done until the phone has it", and that phrasing quietly assumes the
+desk is the reference implementation. Here the phone was. **The rule is symmetric in practice even though
+the sentence isn't**: when an invariant is identified on either surface, the peer needs it *and* needs the
+test — otherwise the surface with the test silently becomes the only one holding the line.
+
+**The de-emphasis fix (UX-2) is mirrored rather than web-only for a phone-specific reason.** The decided tail
+shipping with the same chrome as the pending queue is a legibility problem on a laptop and a worse one on a
+phone: there is no peripheral vision to fall back on, the screen *is* the list, so a tail that reads as a
+peer is a tail the operator scrolls past on their way to nothing. Same finding, stronger on the small screen.
