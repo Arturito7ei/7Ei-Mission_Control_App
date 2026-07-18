@@ -211,7 +211,8 @@ export function canSendTurn(input: {
 // ─── Conversation model ──────────────────────────────────────────────────────
 
 export type Role = 'user' | 'arturita'
-export type ConverseMode = 'answer' | 'delegate'
+/** GC-1 adds `agent`: a picked agent ran this turn through the executor. */
+export type ConverseMode = 'answer' | 'delegate' | 'agent'
 
 export interface Routing {
   trigger: string
@@ -220,6 +221,16 @@ export interface Routing {
   workMode?: 'ask' | 'execute'
   approvalType?: string | null
   isFollowUp?: boolean
+}
+
+/** GC-1 — who a turn is addressed to / who wrote it. Mirrors the `agent` block the
+ *  /converse route returns on every response shape. */
+export interface AgentIdentity {
+  id: string
+  name: string
+  avatarEmoji?: string | null
+  avatarUrl?: string | null
+  role?: string | null
 }
 
 export interface Message {
@@ -234,6 +245,17 @@ export interface Message {
   degraded?: boolean
   /** provenance — e.g. "local · llama3.2:3b" or "cloud · anthropic". */
   via?: string | null
+  /** GC-1 — WHO replied. Drives the name + avatar in the transcript, so a thread that
+   *  switched agents mid-way still attributes each bubble correctly. Absent on old
+   *  messages and on user turns. */
+  agent?: AgentIdentity | null
+  /** GC-1 — set when this reply came from a picked agent (as opposed to Arturita).
+   *  It is what marks the turn as UNTRUSTED when it is sent back as history: the
+   *  server fences any turn carrying it. */
+  fromAgent?: string | null
+  /** GC-1 — "an action is waiting for your approval". Rendered inline so a gated
+   *  connector call does not read as the agent having gone silent. */
+  pendingApprovalNote?: string | null
 }
 
 // Shape of the /converse response (subset the panel consumes).
@@ -251,6 +273,28 @@ export interface ConverseResponse {
   /** J-prod: answer deferred to the client for local streaming (browser→Ollama). */
   deferred?: boolean
   prompt?: { system?: string; messages?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> } | null
+  /** GC-1 — who answered (or, on a delegate turn, who the ack is from). */
+  agent?: AgentIdentity | null
+  /** GC-1 — on a delegate turn, who the work was assigned to. */
+  assignedTo?: { id: string; name: string } | null
+  /** GC-1 — connector actions this turn parked at the CONN-7 approval gate. */
+  pendingApprovals?: number
+  pendingApprovalNote?: string | null
+}
+
+/** GC-1 — the id the picker uses for "Arturita" (the default recipient).
+ *
+ *  Deliberately a SENTINEL rather than her real agent id: the panel must be able to
+ *  render a correct default before the roster has loaded, and it must never send a
+ *  guessed id. Sending `null` is what the server reads as "the default", so the
+ *  sentinel never leaves the client. */
+export const ARTURITA_CHOICE = '__arturita__'
+
+/** Map the picker's selection to the wire value. The sentinel and "nothing picked"
+ *  both become `null` — i.e. exactly the pre-GC-1 request body. */
+export function toWireAgentId(choice: string | null | undefined): string | null {
+  if (!choice || choice === ARTURITA_CHOICE) return null
+  return choice
 }
 
 /** Build the request body for POST /arturita/converse from the running thread. */
@@ -264,19 +308,31 @@ export function toConverseRequest(input: {
   attachment?: AttachedDoc | null
   /** MOB-7b: the photo attached to THIS turn (already read to base64). */
   image?: AttachedImage | null
+  /** GC-1 — the picker's selection. `null`/the Arturita sentinel omit the field
+   *  entirely, so an operator who never touches the picker sends the exact body
+   *  this function built before GC-1 existed. */
+  agentId?: string | null
 }): {
   message: string
   explicitDelegate: boolean
   existingThreadId: string | null
-  history: Array<{ role: 'user' | 'assistant'; content: string }>
+  history: Array<{ role: 'user' | 'assistant'; content: string; fromAgent?: string }>
   attachment?: { name: string; text: string; truncated: boolean }
   image?: { name: string; mediaType: string; data: string }
+  agentId?: string
 } {
   const limit = input.historyLimit ?? 10
   const history = input.history
     .filter(m => m.text.trim().length > 0)
     .slice(-limit)
-    .map(m => ({ role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant', content: m.text }))
+    .map(m => ({
+      role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: m.text,
+      // GC-1 CONTAINMENT: mark turns an AGENT wrote. The server fences those as
+      // untrusted (they may quote a GitHub issue or an email). Arturita's own replies
+      // and operator turns carry no marker and are admitted unchanged.
+      ...(m.role !== 'user' && m.fromAgent ? { fromAgent: m.fromAgent } : {}),
+    }))
   // Only a document that actually extracted to text is worth sending; an empty
   // one would just cost tokens for an empty block.
   const att = input.attachment?.text?.trim()
@@ -287,6 +343,7 @@ export function toConverseRequest(input: {
   const img = input.image?.data?.trim()
     ? { name: input.image.name, mediaType: input.image.mediaType, data: input.image.data }
     : undefined
+  const wireAgentId = toWireAgentId(input.agentId)
   return {
     message: input.message.trim(),
     explicitDelegate: !!input.explicitDelegate,
@@ -294,6 +351,7 @@ export function toConverseRequest(input: {
     history,
     ...(att ? { attachment: att } : {}),
     ...(img ? { image: img } : {}),
+    ...(wireAgentId ? { agentId: wireAgentId } : {}),
   }
 }
 
@@ -307,6 +365,11 @@ export function toArturitaMessage(input: { id: string; resp: ConverseResponse })
   const via = prov && prov !== 'arturita' && prov !== 'text_only'
     ? `cloud · ${prov}${model ? ` (${model})` : ''}`
     : null
+  // GC-1 — `mode: 'agent'` means a picked agent ran this turn. `fromAgent` is what
+  // marks the reply UNTRUSTED when it is sent back as history; it is set ONLY for a
+  // real agent, never for Arturita, so her replies keep re-entering as they always did.
+  const agent = resp.agent ?? null
+  const fromAgent = mode === 'agent' && agent?.name ? agent.name : null
   return {
     id, role: 'arturita', text,
     mode,
@@ -314,6 +377,9 @@ export function toArturitaMessage(input: { id: string; resp: ConverseResponse })
     taskId: resp.taskId ?? null,
     degraded: !!resp.degraded,
     via,
+    agent,
+    fromAgent,
+    pendingApprovalNote: resp.pendingApprovalNote ?? null,
     streaming: true,
   }
 }
@@ -352,5 +418,9 @@ export function routingBadge(msg: Pick<Message, 'mode' | 'routing'>): RoutingBad
     if (msg.routing?.destructive) return { icon: '⛔', label: 'Delegated · needs approval', tone: 'approval' }
     return { icon: '▸', label: 'Delegated to the office', tone: 'delegate' }
   }
+  // GC-1 — a picked agent RAN this turn (its own memory, tools and connectors). Says
+  // so distinctly: "Answered directly" would read as Arturita and hide the fact that
+  // an executor run — and possibly a connector call — happened.
+  if (msg.mode === 'agent') return { icon: '⚡', label: 'Answered by agent', tone: 'delegate' }
   return { icon: '💬', label: 'Answered directly', tone: 'answer' }
 }

@@ -42,6 +42,14 @@ export interface ExecuteResult {
   memorySaved?: Record<string, string>; provider?: string
   delegations?: string[]  // names of agents delegated to
   budgetWarning?: { percentUsed: number; remaining: number }
+  /** GC-1 — how many connector actions this run parked at the CONN-7 approval gate.
+   *  Reported so a SYNCHRONOUS caller (the Command Center chat, which shows the reply
+   *  immediately) can say "an action is waiting for you" instead of rendering an
+   *  answer that silently omits the thing the operator actually asked for. The
+   *  approvals themselves are filed exactly as before — this only counts them; it
+   *  grants nothing and changes no gate. Absent/0 for every run that gated nothing,
+   *  so existing callers are unaffected. */
+  pendingApprovals?: number
 }
 
 export async function executeAgentTask(opts: {
@@ -383,6 +391,8 @@ export async function executeAgentTask(opts: {
     // delegate in the same run (its DELEGATE directives are stripped from the synthesis).
     // That is a deliberate trade: one contained round beats an uncontained chain.
     let connectorRoundRan = false
+    // GC-1 — counted, not acted on. See ExecuteResult.pendingApprovals.
+    let pendingApprovals = 0
     if (connectorTools.length > 0) {
       const directives = parseConnectorDirectives(cleanedOutput)
       if (directives.length > 0) {
@@ -395,6 +405,10 @@ export async function executeAgentTask(opts: {
         })
         if (callResults.length > 0) {
           connectorRoundRan = true
+          // GC-1 — count what the CONN-7 gate parked. Read off the SAME results the
+          // gate produced, so this can never disagree with it; it is a tally of an
+          // already-made decision, not a second decision.
+          pendingApprovals = callResults.filter(r => r.outcome === 'pending_approval').length
           const synthInput = buildConnectorSynthesisPrompt(input, draft, callResults)
           try {
             const synth = await streamLLM({
@@ -481,6 +495,7 @@ export async function executeAgentTask(opts: {
       memorySaved: Object.keys(toSave).length > 0 ? toSave : undefined,
       delegations: delegatedAgentNames.length > 0 ? delegatedAgentNames : undefined,
       budgetWarning,
+      pendingApprovals: pendingApprovals > 0 ? pendingApprovals : undefined,
     }
     onDone?.(execResult)
     return execResult
