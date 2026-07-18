@@ -642,6 +642,25 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/tasks', async (req, reply) => {
     const { orgId } = req.params as any
     const body = req.body as any
+    // GC-0b (audit) — the CREATE-side half of the class. `orgId` correctly comes from
+    // the PATH, and that is exactly what made this invisible: with the tenant column
+    // safe, the body-supplied `agentId` looked harmless. It is not. `agentId` is what
+    // the executor runs the task AS — `POST /api/tasks/:taskId/execute` resolves the
+    // agent BY ID ALONE (services/agent-executor.ts) and then uses `agent.orgId` for
+    // the LLM keys, budget, knowledge base and connectors. So a member of org A could
+    // create a task in org A naming ORG B's agent, fire it, and have org B's agent run
+    // attacker-authored input under org B's credentials, billed to org B, with the
+    // output landing in a row org A can read.
+    //
+    // The membership gate cannot catch it: it authorises `:orgId` from the PATH, and
+    // nothing ever looks at `body.agentId`. Same fix as the PATCH sibling below —
+    // the agent must live in the org the task is being created in.
+    if (body.agentId != null) {
+      const target = await db.query.agents.findFirst({ where: eq(schema.agents.id, body.agentId) })
+      if (!target || target.orgId !== orgId) {
+        return reply.code(400).send({ error: 'Invalid agentId: not an agent in this organisation' })
+      }
+    }
     const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', workMode: normalizeWorkMode(body.workMode), llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
     await db.insert(schema.tasks).values(task)
     reply.code(201); return { task }
