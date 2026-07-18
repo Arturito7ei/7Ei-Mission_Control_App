@@ -237,6 +237,16 @@ test('[CONN-8b-4] the execution status vocab equals the backend CONNECTOR_EXECUT
   const backend = [...m![1].matchAll(/'([^']+)'/g)].map(x => x[1])
   assert.deepEqual([...EXECUTION_STATUSES], backend, 'web execution-status vocab drifted from the backend ledger')
   assert.deepEqual([...EXECUTION_STATUSES], ['running', 'succeeded', 'failed'])
+})
+
+test('[CONN-8b-4] the classification vocab equals the backend CONNECTOR_ACTION_CLASSES', () => {
+  // Symmetry with the status pin: the classification vocab is a backend runtime `const`
+  // array (connector-authz.ts `CONNECTOR_ACTION_CLASSES`, the type derived from it).
+  const src = readFileSync(new URL('../../backend/src/services/connector-authz.ts', import.meta.url), 'utf8')
+  const m = /CONNECTOR_ACTION_CLASSES\s*=\s*\[([^\]]*)\]/.exec(src)
+  assert.ok(m, 'could not locate CONNECTOR_ACTION_CLASSES in the backend source')
+  const backend = [...m![1].matchAll(/'([^']+)'/g)].map(x => x[1])
+  assert.deepEqual([...EXECUTION_CLASSIFICATIONS], backend, 'web classification vocab drifted from the backend CONN-7 taxonomy')
   assert.deepEqual([...EXECUTION_CLASSIFICATIONS], ['read', 'write', 'destructive', 'unknown'])
 })
 

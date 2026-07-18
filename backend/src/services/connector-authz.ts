@@ -41,7 +41,12 @@ import { notifyApprovalCreated } from './push'
 // snake (`delete_issue`) spellings are covered so a caller's vocabulary variations
 // land on the right class. A DESTRUCTIVE-keyword guard (below) is the backstop.
 
-export type ConnectorActionClass = 'read' | 'write' | 'destructive' | 'unknown'
+// The action-classification vocab is a runtime `const` array (not a bare type union) so
+// the CONN-8b-4 drift tripwire can text-read it and pin web=mobile=backend, exactly like
+// `CONNECTOR_EXECUTION_STATUSES`. The type is DERIVED from the array via `typeof[number]`,
+// so the array and the union can never diverge. Order is meaningful only for display.
+export const CONNECTOR_ACTION_CLASSES = ['read', 'write', 'destructive', 'unknown'] as const
+export type ConnectorActionClass = (typeof CONNECTOR_ACTION_CLASSES)[number]
 
 interface ConnectorActionMap {
   read: readonly string[]

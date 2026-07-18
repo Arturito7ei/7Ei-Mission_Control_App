@@ -255,6 +255,20 @@ test('[CONN-8b-4] the status vocab equals the backend CONNECTOR_EXECUTION_STATUS
     'client execution-status vocab drifted from the backend ledger — reconcile before merging')
 })
 
+test('[CONN-8b-4] the classification vocab equals the backend CONNECTOR_ACTION_CLASSES', () => {
+  // Symmetry with the status check: the classification vocab is ALSO a backend runtime
+  // `const` array (connector-authz.ts `CONNECTOR_ACTION_CLASSES`, the type derived from
+  // it) — text-read it and pin web=mobile=backend. Without this, a new backend class
+  // (`ConnectorActionClass`) would drift silently past a web↔mobile-only check.
+  const src = readFileSync(new URL('../../../backend/src/services/connector-authz.ts', import.meta.url), 'utf8')
+  const m = /CONNECTOR_ACTION_CLASSES\s*=\s*\[([^\]]*)\]/.exec(src)
+  assert.ok(m, 'could not locate CONNECTOR_ACTION_CLASSES in the backend source')
+  const backendClasses = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+  assert.ok(backendClasses.length > 0, 'backend classification vocab parsed empty — the check would be vacuous')
+  assert.deepEqual([...EXECUTION_CLASSIFICATIONS], backendClasses,
+    'client classification vocab drifted from the backend CONN-7 taxonomy — reconcile before merging')
+})
+
 test('[CONN-8b-4] a projected execution item carries no credential/params/digest field', () => {
   // The shape as the screen holds it from the GET. TypeScript already forbids a secret
   // field on ConnectorExecutionItem; this guards the runtime object.
