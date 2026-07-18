@@ -9,6 +9,27 @@ import { toPublicOrg } from '../services/org-public'
 
 // ─── ORGS ────────────────────────────────────────────────────────────────────
 
+// GC-0b — the COMPLETE set of `organisations` columns the general member-gated
+// `PATCH /api/orgs/:orgId` may write. See the rationale at that route. Deliberately
+// absent, each with its own owner-gated home:
+//   • `id` / `ownerId`     — identity, and `ownerId` is ROLE-DETERMINANT (enforceOrgRole
+//                            grandfathers the org owner), so writing it is member→owner.
+//   • `deployConfig`       — plaintext LLM API keys → `POST …/credentials` (owner)
+//   • `telegramBotToken`   — bot credential → the comms routes (owner)
+//   • `budgetMonthlyUsd`   — the spend cap → the budget routes (owner)
+//   • `deployMode` / `cloudProvider` / `preferredLlm` — deployment posture, set at org
+//                            creation and changed through the owner-gated surfaces.
+//   • `createdAt`          — immutable provenance.
+// Not `.strict()`, matching the other five: unknown keys are stripped, so a client that
+// round-trips a whole org object still succeeds — it just cannot write a credential.
+const OrgPatchSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().nullable().optional(),
+  logoUrl: z.string().max(2000).nullable().optional(),
+  mission: z.string().max(20_000).nullable().optional(),
+  culture: z.string().max(20_000).nullable().optional(),
+})
+
 export async function orgRoutes(app: FastifyInstance) {
   const OrgSchema = z.object({
     name: z.string().min(1).max(100),
@@ -151,14 +172,36 @@ export async function orgRoutes(app: FastifyInstance) {
     if (!org) return reply.code(404).send({ error: 'Not found' })
     return { org: toPublicOrg(org) }
   })
-  app.patch('/api/orgs/:orgId', async (req) => {
+  app.patch('/api/orgs/:orgId', async (req, reply) => {
     const { orgId } = req.params as any
-    // Strip identity/ownership columns from this general org-edit route. `ownerId` is
-    // now role-determinant (enforceOrgRole grandfathers the org owner as an implicit
-    // owner), so letting a plain member rewrite it via the unvalidated body would be a
-    // member→owner escalation. Ownership transfer, if ever needed, is a dedicated route.
-    const { ownerId: _o, id: _i, ...patch } = (req.body ?? {}) as any
-    await db.update(schema.organisations).set(patch).where(eq(schema.organisations.id, orgId))
+    // GC-0b — the SIXTH instance of the class, found by sweeping for the SHAPE rather
+    // than working the reported list. This route was a DENY-LIST: it stripped `ownerId`
+    // and `id`, then spread everything else into `db.update().set()`.
+    //
+    // The tenant leg was already closed (the org comes from the `:orgId` PATH, so there
+    // is no row-derived gate-ordering bug here, and `ownerId` was stripped). What the
+    // deny-list left open was a CREDENTIAL-WRITE ESCALATION: every column it did not
+    // name stayed writable by a plain MEMBER, and three of them are owner-gated
+    // everywhere else in the codebase —
+    //   • `deployConfig`     — holds the org's PLAINTEXT LLM API KEYS. Owner-gated on
+    //     `POST …/credentials` (routes/credentials.ts) and the custom-model routes. A
+    //     member could overwrite it: swap the key to redirect model spend, or wipe every
+    //     provider config. It also skipped the `snapshot()` audit trail those routes write.
+    //   • `telegramBotToken` — the org's bot credential (the same column the #294 leak
+    //     stopped SHIPPING on the read side; this was the write side of that row).
+    //   • `budgetMonthlyUsd` — the spend cap. A member could raise their own ceiling.
+    //
+    // So: an allow-list of the plain descriptive fields, and nothing else. Credentials,
+    // budget and deployment settings keep their dedicated owner-gated routes; there is
+    // no reason for this general edit route to be a second way in. The only client that
+    // calls it (`web/app/dashboard/page.tsx`, the Settings tab) sends exactly
+    // `{description, mission, culture}`, so this is a strict narrowing with no UI cost.
+    const parsed = OrgPatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid organisation' })
+    const patch = parsed.data
+    if (Object.keys(patch).length > 0) {
+      await db.update(schema.organisations).set(patch).where(eq(schema.organisations.id, orgId))
+    }
     return { ok: true }
   })
   app.delete('/api/orgs/:orgId', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
