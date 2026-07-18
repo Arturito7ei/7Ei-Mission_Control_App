@@ -29,13 +29,18 @@ import { Api } from '../api'
 import {
   KIND_GLYPH,
   KIND_LABEL,
-  OUTCOME_LABEL,
   OWNER_ONLY_KINDS,
   activityAgo,
   activityQuery,
+  auditPhrase,
+  auditRunLabel,
+  awaitsOperator,
+  buildFeedRows,
+  outcomeLabel,
   type ActivityEvent,
   type ActivityKind,
   type ActivityOutcome,
+  type FeedRow,
 } from '../activityKinds'
 import { useAuth } from '../auth'
 import { font, space, theme } from '../theme'
@@ -54,6 +59,14 @@ const OUTCOME_TONE: Record<ActivityOutcome, 'ok' | 'warn' | 'danger' | 'neutral'
   info: 'neutral',
 }
 
+/** FIX-1 — tone follows the same kind-awareness as the label. `warn` is the phone's
+ *  "this wants you" colour, and spending it on a QUEUED task (every task is born
+ *  `pending`) is the colour half of the same lie the badge copy was telling. */
+function outcomeTone(kind: ActivityKind, outcome: ActivityOutcome): 'ok' | 'warn' | 'danger' | 'neutral' {
+  if (outcome === 'pending') return awaitsOperator({ kind, outcome }) ? 'warn' : 'neutral'
+  return OUTCOME_TONE[outcome] ?? 'neutral'
+}
+
 const PAGE = 25
 
 export default function ActivityScreen() {
@@ -63,6 +76,9 @@ export default function ActivityScreen() {
   const [availableKinds, setAvailableKinds] = useState<ActivityKind[] | null>(null)
   const [isOwner, setIsOwner] = useState(true)
   const [kind, setKind] = useState<ActivityKind | 'all'>('all')
+  /** FIX-1 — which collapsed audit runs the operator has expanded. Keyed by the run's
+   *  first event id, so appending a page never re-collapses something already open. */
+  const [openRuns, setOpenRuns] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -137,41 +153,87 @@ export default function ActivityScreen() {
     [availableKinds],
   )
 
-  const renderRow = useCallback(
-    ({ item: e }: { item: ActivityEvent }) => (
-      <Card style={{ marginBottom: space.md }}>
-        <View style={s.head}>
-          <Text style={s.glyph}>{KIND_GLYPH[e.kind] ?? '•'}</Text>
-          <Text style={s.kind} numberOfLines={1}>
-            {KIND_LABEL[e.kind] ?? e.kind}
+  /** One event card. Extracted so an expanded audit run renders the SAME card for its
+   *  children — an expanded audit event must not be a second, lesser rendering. */
+  const EventCard = useCallback(
+    ({ e, muted }: { e: ActivityEvent; muted?: boolean }) => {
+      // FIX-1 — an audit row's own `title` is a machine string (`post.orgs`) and its
+      // target is a method + a uuid-bearing path. Both collapse into the shared human
+      // phrase; nothing is dropped from the payload, only from the glance.
+      const isAudit = e.kind === 'audit_event'
+      return (
+        <Card style={[{ marginBottom: space.md }, muted ? { opacity: 0.75 } : null]}>
+          <View style={s.head}>
+            <Text style={s.glyph}>{KIND_GLYPH[e.kind] ?? '•'}</Text>
+            <Text style={s.kind} numberOfLines={1}>
+              {KIND_LABEL[e.kind] ?? e.kind}
+            </Text>
+            <Chip label={outcomeLabel(e.kind, e.outcome)} tone={outcomeTone(e.kind, e.outcome)} />
+          </View>
+          <Text style={s.title} numberOfLines={2}>
+            {isAudit ? auditPhrase(e.title, e.target) : e.title}
           </Text>
-          <Chip
-            label={OUTCOME_LABEL[e.outcome] ?? e.outcome}
-            tone={OUTCOME_TONE[e.outcome] ?? 'neutral'}
-          />
-        </View>
-        <Text style={s.title} numberOfLines={2}>
-          {e.title}
-        </Text>
-        <View style={s.meta}>
-          {e.agentName ? <Text style={s.agent}>{e.agentName}</Text> : null}
-          {e.target ? (
-            <Text style={s.target} numberOfLines={1}>
-              {e.target}
+          <View style={s.meta}>
+            {e.agentName ? <Text style={s.agent}>{e.agentName}</Text> : null}
+            {!isAudit && e.target ? (
+              <Text style={s.target} numberOfLines={1}>
+                {e.target}
+              </Text>
+            ) : null}
+            <Text style={s.when}>{activityAgo(e.at, now)}</Text>
+          </View>
+          {/* Already truncated and sanitized server-side. Shown rather than hidden: a
+              failure the operator cannot see is a failure they cannot act on. */}
+          {e.error ? (
+            <Text style={s.error} numberOfLines={2}>
+              {e.error}
             </Text>
           ) : null}
-          <Text style={s.when}>{activityAgo(e.at, now)}</Text>
-        </View>
-        {/* Already truncated and sanitized server-side. Shown rather than hidden: a
-            failure the operator cannot see is a failure they cannot act on. */}
-        {e.error ? (
-          <Text style={s.error} numberOfLines={2}>
-            {e.error}
-          </Text>
-        ) : null}
-      </Card>
-    ),
+        </Card>
+      )
+    },
     [now],
+  )
+
+  const renderRow = useCallback(
+    ({ item }: { item: FeedRow }) => {
+      if (item.row === 'event') return <EventCard e={item.event} />
+      const open = openRuns.has(item.run.key)
+      return (
+        <View>
+          <Pressable
+            onPress={() =>
+              setOpenRuns((prev) => {
+                const next = new Set(prev)
+                if (next.has(item.run.key)) next.delete(item.run.key)
+                else next.add(item.run.key)
+                return next
+              })
+            }
+            accessibilityRole="button"
+            accessibilityState={{ expanded: open }}
+            accessibilityLabel={`${open ? 'Hide' : 'Show'} ${auditRunLabel(item.run.count)}`}
+            style={s.runRow}
+          >
+            <Text style={s.glyph}>{KIND_GLYPH.audit_event}</Text>
+            <Text style={s.runText} numberOfLines={1}>
+              {auditRunLabel(item.run.count)}
+            </Text>
+            <Text style={s.runToggle}>{open ? 'Hide' : 'Show'}</Text>
+          </Pressable>
+          {open ? item.run.items.map((e) => <EventCard key={e.id} e={e} muted />) : null}
+        </View>
+      )
+    },
+    [EventCard, openRuns],
+  )
+
+  // FIX-1 — the default view leads with what HAPPENED; runs of routine audit rows
+  // collapse into one tappable line. Picking the Audit chip passes collapse:false, so
+  // asking for them explicitly still shows every one. Order is never changed.
+  const rows = useMemo(
+    () => (events ? buildFeedRows(events, { collapse: kind === 'all' }) : []),
+    [events, kind],
   )
 
   return (
@@ -208,8 +270,8 @@ export default function ActivityScreen() {
         <Loading text="Loading activity…" />
       ) : (
         <FlatList
-          data={events}
-          keyExtractor={(e) => e.id}
+          data={rows}
+          keyExtractor={(r) => (r.row === 'event' ? r.event.id : r.run.key)}
           renderItem={renderRow}
           contentContainerStyle={s.list}
           refreshControl={
@@ -253,6 +315,14 @@ export default function ActivityScreen() {
 
 const s = StyleSheet.create({
   wrap: { flex: 1, padding: space.lg },
+  // FIX-1 — the collapsed audit line. Deliberately quieter than a Card: it is a
+  // signpost to routine plumbing, not an event in its own right.
+  runRow: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingVertical: space.sm, paddingHorizontal: space.md, marginBottom: space.md,
+  },
+  runText: { flex: 1, color: theme.textDim, fontSize: font.sm },
+  runToggle: { color: theme.blue, fontSize: font.sm, fontWeight: '600' },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md },
   filter: {
     borderWidth: 1,

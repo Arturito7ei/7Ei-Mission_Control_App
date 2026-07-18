@@ -15,7 +15,7 @@
 // Decisions + shapes are pure in ./assistant.logic (unit-tested).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import { tk, text, space, ui } from './tokens'
+import { tk, text, space, ui, density } from './tokens'
 import { Button, Card, TextInput } from './ui'
 import Reactor from './Reactor'
 import AssistantPipelineConfig from './AssistantPipelineConfig'
@@ -883,11 +883,29 @@ const s: Record<string, React.CSSProperties> = {
     background: 'var(--s2)', border: '1px solid var(--line-strong)',
     borderRadius: tk.r.pill,
   },
+  // FIX-1 — this control CLIPPED its own label at the baseline in production
+  // ("Arturita · Chief of Staff (default)" lost its descenders). The cause was
+  // geometric, not cosmetic: a hard `height: 26` with `boxSizing: 'border-box'`,
+  // no vertical padding, and `text.md`'s fontSize taken WITHOUT its 18px
+  // lineHeight — an 18px line box does not fit in a 26px border box once the
+  // UA's own select metrics are added on top.
+  //
+  // The fix is to stop pinning the height at all: `minHeight` on the shared
+  // control token gives the pill its stable resting size, while the explicit
+  // lineHeight + vertical padding let the box GROW rather than crop when the
+  // operator zooms, bumps their default font size, or picks an agent with a
+  // long name. `appearance: none` drops the UA's intrinsic metrics so ours are
+  // the only ones in play; `maxWidth: 100%` keeps a long name from pushing the
+  // pill wider than its container instead of ellipsising inside it.
   recipientSelect: {
-    flex: 1, minWidth: 180, height: 26, boxSizing: 'border-box',
+    flex: 1, minWidth: 180, maxWidth: '100%',
+    minHeight: density.ctrl, boxSizing: 'border-box',
+    padding: `${space.xs}px 0`,
+    appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
     background: 'transparent', border: 'none', outline: 'none',
-    color: tk.text, fontSize: text.md.fontSize, fontFamily: 'inherit',
-    fontWeight: 600, cursor: 'pointer',
+    color: tk.text, fontSize: text.md.fontSize, lineHeight: text.md.lineHeight,
+    fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer',
+    textOverflow: 'ellipsis',
   },
   toggle: { display: 'flex', alignItems: 'center', gap: space.xs, fontSize: text.sm.fontSize, color: tk.textDim, cursor: 'pointer', userSelect: 'none' },
   interim: { minHeight: 20, fontSize: text.sm.fontSize, lineHeight: 1.5 },

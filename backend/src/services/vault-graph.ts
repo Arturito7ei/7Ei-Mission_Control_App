@@ -221,35 +221,58 @@ export function resolveWikilink(raw: string, byBase: Map<string, string>, byId: 
  * Drops nodes outside the vault root (e.g. `.obsidian/` config, absolute-path
  * leaks) so the view stays scoped to notes. File-level nodes (source_location
  * `L1`) are `note`; deeper ones are `heading`.
+ *
+ * FIX-1 — ROOT-RELATIVE TOLERANCE. `source_file` is only meaningful relative to
+ * wherever graphify was run. A `graph.json` generated *inside* the vault records
+ * `00-Index/foo.md`; one generated a level up records `vault/00-Index/foo.md`.
+ * Scoping the first against root `vault` matches nothing, and the caller then
+ * renders a confident "⬡ Graphify · 0 notes" over a vault full of notes — which
+ * is exactly what shipped to production. So: if scoping ANNIHILATED a payload
+ * that did have nodes, re-scope treating the paths as vault-root-relative.
+ *
+ * The retry is deliberately conditioned on `kept === 0 && rawNodes.length > 0`,
+ * which is the only situation where it can change an answer:
+ *   - a correctly-rooted graph keeps ≥1 node, so the retry never fires and the
+ *     out-of-vault filtering it exists for is untouched;
+ *   - a genuinely empty payload has no raw nodes, so it stays empty rather than
+ *     being dressed up as a graph.
+ * The `..` traversal guard in `inVault` applies to both passes — this widens the
+ * accepted PREFIX, never the escape.
  */
 export function parseGraphifyGraph(json: any, root: string): VaultGraph {
   const rawNodes: any[] = Array.isArray(json?.nodes) ? json.nodes : []
   const rawLinks: any[] = Array.isArray(json?.links) ? json.links : (Array.isArray(json?.edges) ? json.edges : [])
   const r = String(root ?? '').replace(/^\/+|\/+$/g, '')
 
-  const keep = new Map<string, GraphNode>()
-  for (const n of rawNodes) {
-    const sf: string = String(n?.source_file ?? '')
-    if (!inVault(sf, r)) continue
-    if (/(^|\/)\.obsidian\//.test(sf)) continue
-    const isFile = String(n?.source_location ?? 'L1').replace(/^L/i, '') === '1'
-    // Semantic-pass fields (present after `graphify cluster-only/label`): the
-    // Louvain community id + its LLM-named concept. A placeholder "Community N"
-    // name is treated as absent so the UI can fall back to folder clustering.
-    const community = Number.isFinite(n?.community) ? Number(n.community) : undefined
-    const rawName = typeof n?.community_name === 'string' ? n.community_name.trim() : ''
-    const communityName = rawName && !/^Community\s+\d+$/i.test(rawName) ? rawName : undefined
-    keep.set(String(n.id), {
-      id: String(n.id),
-      label: String(n.label ?? baseName(sf) ?? n.id),
-      kind: isFile ? 'note' : 'heading',
-      path: isFile ? sf.replace(/^\/+/, '') : undefined,
-      group: folderOf(sf, r),
-      degree: 0,
-      ...(community !== undefined ? { community } : {}),
-      ...(communityName ? { communityName } : {}),
-    })
+  const collect = (scope: string): Map<string, GraphNode> => {
+    const keep = new Map<string, GraphNode>()
+    for (const n of rawNodes) {
+      const sf: string = String(n?.source_file ?? '')
+      if (!inVault(sf, scope)) continue
+      if (/(^|\/)\.obsidian\//.test(sf)) continue
+      const isFile = String(n?.source_location ?? 'L1').replace(/^L/i, '') === '1'
+      // Semantic-pass fields (present after `graphify cluster-only/label`): the
+      // Louvain community id + its LLM-named concept. A placeholder "Community N"
+      // name is treated as absent so the UI can fall back to folder clustering.
+      const community = Number.isFinite(n?.community) ? Number(n.community) : undefined
+      const rawName = typeof n?.community_name === 'string' ? n.community_name.trim() : ''
+      const communityName = rawName && !/^Community\s+\d+$/i.test(rawName) ? rawName : undefined
+      keep.set(String(n.id), {
+        id: String(n.id),
+        label: String(n.label ?? baseName(sf) ?? n.id),
+        kind: isFile ? 'note' : 'heading',
+        path: isFile ? sf.replace(/^\/+/, '') : undefined,
+        group: folderOf(sf, scope),
+        degree: 0,
+        ...(community !== undefined ? { community } : {}),
+        ...(communityName ? { communityName } : {}),
+      })
+    }
+    return keep
   }
+
+  let keep = collect(r)
+  if (keep.size === 0 && rawNodes.length > 0 && r) keep = collect('')
 
   const edges: GraphEdge[] = []
   let links = 0
@@ -268,6 +291,35 @@ export function parseGraphifyGraph(json: any, root: string): VaultGraph {
     stats: { notes: nodes.filter(n => n.kind === 'note').length, tags: 0, links, unresolved: 0, communities },
     generatedAt: typeof json?.generatedAt === 'string' ? json.generatedAt : undefined,
   })
+}
+
+/** Pick the first Graphify `graph.json` candidate that actually says something.
+ *
+ *  FIX-1 — this used to be an inline loop in the memory/graph route that `break`ed on
+ *  the first truthy parse. `parseGraphifyGraph` never returns null, so a graph.json
+ *  yielding ZERO nodes counted as success: it short-circuited the native-wikilink
+ *  fallback and the vault rendered a confident "⬡ Graphify · 0 notes · 0 links" over a
+ *  vault full of notes. An empty parse is not an answer — keep looking, and return null
+ *  so the caller falls through to the native parse.
+ *
+ *  Lifted out of the route so this decision is reachable by a test at all: `read` is the
+ *  only I/O, so a fake reader exercises the whole loop, including the case that shipped.
+ *  Returns null when no candidate yields a non-empty graph. */
+export async function selectGraphifyGraph(
+  candidates: readonly string[],
+  read: (path: string) => Promise<string | null>,
+  root: string,
+): Promise<{ graph: VaultGraph; path: string } | null> {
+  for (const cand of candidates) {
+    const raw = await read(cand)
+    if (!raw) continue
+    try {
+      const graph = parseGraphifyGraph(JSON.parse(raw), root)
+      if (graph.nodes.length === 0) continue
+      return { graph, path: cand }
+    } catch { /* not JSON — keep looking */ }
+  }
+  return null
 }
 
 function inVault(sourceFile: string, root: string): boolean {

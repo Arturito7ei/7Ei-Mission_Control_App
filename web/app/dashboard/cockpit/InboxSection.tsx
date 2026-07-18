@@ -11,7 +11,7 @@ import { EXT_PURPLE, KIND_C, KIND_LABEL, sx, type Approval, type ApprovalDecisio
 import { isReviewCase } from '@/lib/trust'
 import { isJoinRequestApproval, joinRequestChip } from '@/lib/invites.logic'
 import { approvalNeedsStepUp } from '@/lib/dangerousApprovals'
-import { activityAgo, OUTCOME_LABEL, type ActivityEvent } from '@/lib/activityKinds'
+import { activityAgo, outcomeLabel, type ActivityEvent } from '@/lib/activityKinds'
 import { OUTCOME_TONE } from './ActivityLogSection'
 
 export default function InboxSection({ inbox, approvals, onDismiss, onDecide, onRetry, deciding, decideErr, agents, recentDecisions, focused }: {
@@ -198,7 +198,7 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
                 <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.title}>{d.title}</div>
                 {d.target && <span style={{ ...sx.badge, flexShrink: 0, fontWeight: 500, opacity: 0.8 }}>{d.target}</span>}
                 {d.agentName && <span style={{ ...sx.badge, flexShrink: 0, opacity: 0.8 }}>{d.agentName}</span>}
-                <Pill tone={OUTCOME_TONE[d.outcome] ?? 'muted'} style={{ flexShrink: 0, opacity: 0.85 }}>{OUTCOME_LABEL[d.outcome] ?? d.outcome}</Pill>
+                <Pill tone={OUTCOME_TONE[d.outcome] ?? 'muted'} style={{ flexShrink: 0, opacity: 0.85 }}>{outcomeLabel(d.kind, d.outcome)}</Pill>
                 <span style={{ color: tk.mutedSoft, fontSize: text.xs.fontSize, flexShrink: 0, width: 70, textAlign: 'right' }}>{activityAgo(d.at, now)}</span>
               </div>
             ))}

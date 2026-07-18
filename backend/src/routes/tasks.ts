@@ -12,7 +12,7 @@ import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
 import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite, vaultTree } from '../services/vault-connector'
-import { buildNativeGraph, capGraph, parseGraphifyGraph, type VaultGraph } from '../services/vault-graph'
+import { buildNativeGraph, capGraph, selectGraphifyGraph, type VaultGraph } from '../services/vault-graph'
 
 // In-memory cache for the (expensive) native vault-graph build — keyed per
 // org+config. Small and TTL-bounded; a process restart just rebuilds on demand.
@@ -496,13 +496,16 @@ export async function taskRoutes(app: FastifyInstance) {
     //    vault root first, then repo-root `graphify-out/`.
     const root = String(cfg.root ?? '').replace(/^\/+|\/+$/g, '')
     const graphifyCandidates = [`${root}/graphify-out/graph.json`, 'graphify-out/graph.json'].filter(Boolean)
-    let graph: VaultGraph | null = null
-    let graphPath: string | undefined
-    for (const cand of graphifyCandidates) {
-      const gr = await vaultRead(token, cfg, cand)
-      if (!gr.ok || !gr.markdown) continue
-      try { graph = parseGraphifyGraph(JSON.parse(gr.markdown), cfg.root); graphPath = cand; break } catch { /* not JSON — keep looking */ }
-    }
+    // FIX-1 — the candidate loop lives in vault-graph.ts so its "an EMPTY parse is
+    // not an answer" rule is reachable by a test. It returns null when nothing
+    // useful was found, and the native fallback below then runs as it should.
+    const graphify = await selectGraphifyGraph(
+      graphifyCandidates,
+      async cand => { const gr = await vaultRead(token, cfg, cand); return gr.ok ? gr.markdown ?? null : null },
+      cfg.root,
+    )
+    let graph: VaultGraph | null = graphify?.graph ?? null
+    const graphPath: string | undefined = graphify?.path
 
     // 2) Native fallback — parse markdown ourselves.
     if (!graph) {

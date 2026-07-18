@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   nodeIdForPath, baseName, folderOf, frontmatter, extractTags, normalizeTag,
-  extractWikilinks, resolveWikilink, buildNativeGraph, parseGraphifyGraph, withDegrees, capGraph,
+  extractWikilinks, resolveWikilink, buildNativeGraph, parseGraphifyGraph, withDegrees, capGraph, selectGraphifyGraph,
   type GraphNode, type VaultGraph,
 } from '../services/vault-graph'
 
@@ -256,4 +256,130 @@ test('[MEM-1] capGraph does not mutate its input', () => {
   capGraph(g, 3)
   assert.equal(g.nodes.length, 10)
   assert.equal(g.edges.length, 9)
+})
+
+// ─── FIX-1 · the vault-root-relative graph.json ──────────────────────────────
+//
+// Live, the Graph tab read "⬡ Graphify · 0 notes · 0 links" over a vault whose Reader
+// tab listed the whole tree. `source_file` is only meaningful relative to wherever
+// graphify ran: a graph.json generated INSIDE the vault records `00-Index/foo.md`,
+// and scoping that against root `vault` matched nothing at all.
+
+test('[FIX-1] a vault-root-relative graph.json resolves against the root', () => {
+  const g = parseGraphifyGraph({
+    nodes: [
+      { id: 'a', label: 'Index', source_file: '00-Index/Home.md', source_location: 'L1' },
+      { id: 'b', label: 'Arch', source_file: '02-Architecture/ADR.md', source_location: 'L1' },
+    ],
+    links: [{ source: 'a', target: 'b', relation: 'link' }],
+  }, 'vault')
+  assert.equal(g.nodes.length, 2, 'root-relative paths were dropped — the live 0-notes bug')
+  assert.equal(g.stats.notes, 2)
+  assert.equal(g.edges.length, 1, 'edges vanish when their endpoints are filtered out')
+  // The retry must still produce a USABLE grouping, not just a node count.
+  assert.deepEqual(g.nodes.map(n => n.group).sort(), ['00-Index', '02-Architecture'])
+})
+
+test('[FIX-1] the retry does NOT fire when the root scoping kept anything', () => {
+  // The out-of-vault filtering is the reason parseGraphifyGraph takes a root at all.
+  // One surviving in-root node must be enough to keep the foreign node excluded —
+  // otherwise the tolerance above would have quietly become "no scoping at all".
+  const g = parseGraphifyGraph({
+    nodes: [
+      { id: 'in', label: 'In', source_file: 'vault/00-Index/Home.md', source_location: 'L1' },
+      { id: 'out', label: 'Out', source_file: 'other-repo/secret.md', source_location: 'L1' },
+    ],
+    links: [],
+  }, 'vault')
+  assert.deepEqual(g.nodes.map(n => n.id), ['in'], 'a foreign node survived — scoping is gone')
+})
+
+test('[FIX-1] a genuinely empty payload stays empty — no graph is invented', () => {
+  for (const payload of [{}, { nodes: [], links: [] }]) {
+    const g = parseGraphifyGraph(payload, 'vault')
+    assert.equal(g.nodes.length, 0, 'the empty case must stay empty')
+    assert.equal(g.edges.length, 0)
+  }
+})
+
+test('[FIX-1] the retry widens the PREFIX, never the traversal escape', () => {
+  // The retry re-scopes with an empty root, which `inVault` treats as "accept any
+  // prefix". The `..` guard is the one thing that must survive that, or a graph.json
+  // could name a file outside the vault entirely.
+  const g = parseGraphifyGraph({
+    nodes: [{ id: 'esc', label: 'Escape', source_file: '../../etc/passwd.md', source_location: 'L1' }],
+    links: [],
+  }, 'vault')
+  assert.equal(g.nodes.length, 0, 'a `..` path escaped the vault through the retry')
+})
+
+// ─── FIX-1 · an EMPTY graphify parse must fall through to the native builder ──
+//
+// The live failure: the route's candidate loop `break`ed on the first truthy parse, and
+// parseGraphifyGraph never returns null. A graph.json that yielded zero nodes therefore
+// counted as SUCCESS, the native wikilink fallback never ran, and the Graph tab reported
+// "⬡ Graphify · 0 notes" while the Reader tab listed the whole vault.
+
+const CANDS = ['vault/graphify-out/graph.json', 'graphify-out/graph.json'] as const
+const reader = (files: Record<string, string>) => async (p: string) => files[p] ?? null
+
+test('[FIX-1] an EMPTY graphify graph.json does NOT satisfy the loop — caller falls back', async () => {
+  const picked = await selectGraphifyGraph(
+    CANDS, reader({ 'vault/graphify-out/graph.json': JSON.stringify({ nodes: [], links: [] }) }), 'vault',
+  )
+  assert.equal(picked, null, 'an empty parse was accepted — the native fallback is skipped again')
+})
+
+test('[FIX-1] an empty FIRST candidate does not stop a good SECOND one', async () => {
+  const picked = await selectGraphifyGraph(CANDS, reader({
+    'vault/graphify-out/graph.json': JSON.stringify({ nodes: [], links: [] }),
+    'graphify-out/graph.json': JSON.stringify({
+      nodes: [{ id: 'a', label: 'A', source_file: 'vault/a.md', source_location: 'L1' }], links: [],
+    }),
+  }), 'vault')
+  assert.ok(picked, 'a usable second candidate was skipped')
+  assert.equal(picked!.path, 'graphify-out/graph.json')
+  assert.equal(picked!.graph.nodes.length, 1)
+  assert.equal(picked!.graph.source, 'graphify')
+})
+
+test('[FIX-1] a NON-empty graphify graph is still preferred, and reports its path', async () => {
+  // The fallback must not have become the default — that would silently retire graphify.
+  const picked = await selectGraphifyGraph(CANDS, reader({
+    'vault/graphify-out/graph.json': JSON.stringify({
+      nodes: [
+        { id: 'a', label: 'A', source_file: 'vault/a.md', source_location: 'L1' },
+        { id: 'b', label: 'B', source_file: 'vault/b.md', source_location: 'L1' },
+      ],
+      links: [{ source: 'a', target: 'b' }],
+    }),
+  }), 'vault')
+  assert.ok(picked)
+  assert.equal(picked!.path, 'vault/graphify-out/graph.json')
+  assert.equal(picked!.graph.nodes.length, 2)
+})
+
+test('[FIX-1] unreadable and non-JSON candidates fall through rather than throwing', async () => {
+  const missing = await selectGraphifyGraph(CANDS, reader({}), 'vault')
+  assert.equal(missing, null)
+  const garbage = await selectGraphifyGraph(
+    CANDS, reader({ 'vault/graphify-out/graph.json': 'not json at all {{{' }), 'vault',
+  )
+  assert.equal(garbage, null)
+})
+
+test('[FIX-1] the fallback yields a REAL native graph, not another empty one', async () => {
+  // End-to-end shape of the fix: empty graphify → null → the caller builds natively,
+  // and that native graph must actually carry the vault's notes and wikilinks.
+  const picked = await selectGraphifyGraph(
+    CANDS, reader({ 'vault/graphify-out/graph.json': '{}' }), 'vault',
+  )
+  assert.equal(picked, null)
+  const native = buildNativeGraph([
+    { path: 'vault/00-Index/Home.md', markdown: 'see [[ADR]]' },
+    { path: 'vault/02-Architecture/ADR.md', markdown: 'back to [[Home]]' },
+  ], 'vault')
+  assert.equal(native.source, 'native')
+  assert.equal(native.stats.notes, 2, 'the native fallback produced nothing — the fix is cosmetic')
+  assert.ok(native.stats.links > 0, 'wikilinks were not resolved by the fallback')
 })

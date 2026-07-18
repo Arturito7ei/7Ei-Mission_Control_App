@@ -28,7 +28,7 @@ import {
 } from 'react-native'
 import { Api, type Approval } from '../api'
 import {
-  KIND_GLYPH, OUTCOME_LABEL, activityAgo, activityQuery, type ActivityEvent,
+  KIND_GLYPH, outcomeLabel, activityAgo, activityQuery, type ActivityEvent,
 } from '../activityKinds'
 import { useAuth } from '../auth'
 import { approvalNeedsStepUp } from '../constants'
@@ -243,7 +243,7 @@ export default function ApprovalsPane() {
                   {d.title}
                 </Text>
                 <Chip
-                  label={OUTCOME_LABEL[d.outcome] ?? d.outcome}
+                  label={outcomeLabel(d.kind, d.outcome)}
                   tone={d.outcome === 'ok' ? 'ok' : d.outcome === 'rejected' ? 'danger' : 'neutral'}
                 />
               </View>
