@@ -197,6 +197,42 @@ export interface ConnectorDirective {
 
 const DIRECTIVE_TAG = '[CONNECTOR:'
 
+/** Zero-width and bidi-control characters: invisible in every log, diff and approval card
+ *  an operator will ever read, and NOT matched by `\s` (so `.trim()` leaves them attached).
+ *  U+200B/C/D zero-width space/non-joiner/joiner, U+2060 word-joiner, U+FEFF BOM, and the
+ *  U+200E…U+202E / U+2066…U+2069 bidi marks + overrides. */
+//  Written as \u ESCAPES, never as literal characters: a literal zero-width char in source
+//  is invisible in review, makes the file diff oddly, and plain grep can't find it again.
+//  NO /g flag — `.test()` on a global regex is STATEFUL (it advances `lastIndex` between
+//  calls), so a shared global instance would return alternating right/wrong answers.
+const INVISIBLE_RE = /[\u200B-\u200F\u2060\uFEFF\u202A-\u202E\u2066-\u2069]/
+
+/**
+ * Canonicalize one directive header token, or REJECT it (audit N3).
+ *
+ * Returns null when the token carries a zero-width/bidi character, or when NFKC
+ * normalization would change it at all. Both are rejections, not repairs.
+ *
+ * Rejecting rather than sanitizing is the deliberate choice. Stripping and accepting would
+ * silently turn `issue.get<ZWSP>` into `issue.get` — which executes fine, but means the
+ * string the model emitted is not the string the ledger and the approval card record, and
+ * it accepts attacker-shaped input as though it were ordinary. There is no legitimate
+ * reason for an invisible or a compatibility form in a directive header: every real action
+ * name is ASCII, so this rejects nothing a well-behaved model would ever write. It costs a
+ * misbehaving one a single capped call, loudly.
+ *
+ * Without this, `issue.get<ZWSP>` survived the `/[\s\]]/` guard with the ZWSP attached
+ * (`\s` does not match it and `.trim()` does not strip it). Every downstream branch did
+ * fail closed — no executor knows that action, and `hasDestructiveVerb` tokenizes on it —
+ * but "safe because three unrelated lookups all happen to miss" is luck, not a boundary.
+ */
+function canonicalHeaderToken(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (INVISIBLE_RE.test(trimmed)) return null
+  if (trimmed.normalize('NFKC') !== trimmed) return null
+  return trimmed
+}
+
 /**
  * Find the `]` that closes a directive opened at `open`, tracking JSON nesting and string
  * state so a params blob containing `]` (an array, or a `]` inside a string) does not end
@@ -256,8 +292,9 @@ export function parseConnectorDirectives(output: string): ConnectorDirective[] {
 
     const dot = head.indexOf('.')
     if (dot <= 0 || dot === head.length - 1) continue // need "<connector>.<action>"
-    const connectorId = head.slice(0, dot).trim()
-    const action = head.slice(dot + 1).trim()
+    const connectorId = canonicalHeaderToken(head.slice(0, dot))
+    const action = canonicalHeaderToken(head.slice(dot + 1))
+    if (connectorId === null || action === null) continue // invisible / non-NFKC → reject
     if (!/^[a-z0-9_]+$/i.test(connectorId)) continue
     if (!action || /[\s\]]/.test(action)) continue
 

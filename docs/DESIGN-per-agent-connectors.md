@@ -1096,7 +1096,26 @@ tools, never the task. Provider errors are surfaced cleanly with no credential (
 against a provider that echoes the PAT back in its error body). Directive parsing is
 fail-closed and non-throwing: a malformed header, unparseable params, a non-object params
 value or an unterminated directive is **skipped, not guessed at**, and the JSON-aware
-scanner means a `]` inside params doesn't truncate the directive.
+scanner means a `]` inside params doesn't truncate the directive. Header tokens are also
+**rejected — not repaired —** when they carry a zero-width/bidi character or a non-NFKC
+compatibility form (audit N3): `\s` doesn't match U+200B and `.trim()` doesn't strip it, so
+`issue.get<ZWSP>` previously reached the guard intact and survived it. Every downstream
+branch did fail closed, but that was three unrelated lookups happening to miss rather than a
+boundary. Rejecting is deliberate over sanitizing: stripping-and-accepting would make the
+string the model emitted differ from the one the ledger and approval card record, and would
+normalize attacker-shaped input into something that looks ordinary. No real action name is
+anything but ASCII, so this rejects nothing a well-behaved model would write.
+
+**Audit fixes folded before merge (all Low, all closing a class rather than an instance):**
+**N1** — `getExecutor` used a bare bracket read on an object literal, so
+`getExecutor('__proto__')` returned a truthy non-executor; now `Object.hasOwn`-guarded, the
+last sibling of a class already closed in `executorKnowsAction`/`runExecutor`. **N2** — the
+terminal synthesis strip now also removes `[WEBHOOK:]`. It could never fire (one
+pre-synthesis callsite), but an injected result could induce a literal
+`[WEBHOOK: https://evil/…]` that would be **persisted verbatim as the task's visible
+output** and read to an operator as though the agent had called an attacker's URL. Strip the
+whole directive class rather than leave one idiom's safety resting on callsite placement.
+**N3** — the zero-width/NFKC rejection above.
 
 **Cost accounting.** A connector round adds a second LLM turn, so `tokensUsed` / `costUsd` /
 `inputTokens` / `outputTokens` accumulate across both turns — the operator pays for it, so

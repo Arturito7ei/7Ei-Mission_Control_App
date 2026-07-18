@@ -363,8 +363,15 @@ export async function executeAgentTask(opts: {
               messages: [{ role: 'user', content: synthInput }],
               orgApiKey, baseURL, reasoningEffort, onToken: (chunk) => onToken?.(chunk),
             })
-            // Terminal: strip, never execute. This is the containment boundary.
-            cleanedOutput = stripDelegateDirectives(stripConnectorDirectives(synth.output))
+            // Terminal: strip EVERY directive idiom, never execute any of them. This is the
+            // containment boundary. [WEBHOOK:] is stripped too (audit N2) — not because it
+            // could fire (parseAgentWebhooks has one pre-synthesis callsite, so it cannot),
+            // but because an injected result could talk the model into emitting a literal
+            // `[WEBHOOK: https://evil/...]` that would then be PERSISTED verbatim as the
+            // task's visible output. That reads to an operator like the agent tried to call
+            // an attacker's URL. Strip the whole class here rather than leave one idiom's
+            // safety resting on it happening to have no post-synthesis callsite.
+            cleanedOutput = stripAgentWebhooks(stripDelegateDirectives(stripConnectorDirectives(synth.output)))
             tokensUsed += synth.usage.inputTokens + synth.usage.outputTokens
             costUsd    += calcCost(usedModel, synth.usage.inputTokens, synth.usage.outputTokens)
             inputTokensTotal  += synth.usage.inputTokens

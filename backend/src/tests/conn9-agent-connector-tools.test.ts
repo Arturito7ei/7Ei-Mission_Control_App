@@ -38,8 +38,8 @@ const { db, schema } = await import('../db/client')
 const { setupDatabase } = await import('../db/setup')
 const { agentConnectorRoutes } = await import('../routes/agent-connectors')
 const { taskRoutes } = await import('../routes/tasks')
-const { executeConnectorAction } = await import('../services/connector-execution')
-const { connectorParamsDigest } = await import('../services/connector-authz')
+const { executeConnectorAction, getExecutor } = await import('../services/connector-execution')
+const { connectorParamsDigest, classifyConnectorAction } = await import('../services/connector-authz')
 const { mintSession } = await import('../services/arturita-session')
 const {
   deriveConnectorTools, loadConnectorTools, buildConnectorToolsBlock,
@@ -446,4 +446,39 @@ test('[CONN9-FUNNEL] EVERY invocation goes through the gate — one call in, one
   assert.ok(seen.every(s => s.orgId === ORG && s.agentId === AGENT), 'the tenant/agent scope is server-supplied, never model-supplied')
   assert.ok(seen.every(s => s.target === null), 'no agent-authored approval-card label')
   assert.ok(seen.every(s => s.approvalId === undefined), 'the loop NEVER supplies an approvalId — redemption is out of reach')
+})
+
+test('[CONN9-ZW] a zero-width / bidi char in the header is rejected AT THE GUARD (audit N3)', () => {
+  // An invisible char is invisible everywhere an operator would look — a log line, a diff,
+  // an approval card. Downstream lookups DO all fail closed on it, but that is three
+  // unrelated misses lining up, not a boundary. It must die at the parser.
+  assert.deepEqual(parseConnectorDirectives('[CONNECTOR: github.issue.get\u200B | {"a":1}]'), [],
+    'a ZWSP-suffixed action is not a silently-different action — it is rejected')
+  assert.deepEqual(parseConnectorDirectives('[CONNECTOR: git\u200Bhub.repo.get | {}]'), [],
+    'an invisible inside the CONNECTOR id is rejected by the id charset guard')
+  assert.deepEqual(parseConnectorDirectives('[CONNECTOR: github.repo.get\u202E | {}]'), [],
+    'a bidi override cannot dress an action up as a different one')
+
+  // …and rejection must not be a NEW way to smuggle a destructive verb past the classifier
+  // by making it merely *unparsed*: a ZWSP-suffixed repo.delete is dropped entirely (no
+  // directive, so nothing to classify), never parsed-but-reclassified as harmless.
+  assert.deepEqual(parseConnectorDirectives('[CONNECTOR: github.repo.delete\u200B | {}]'), [],
+    'a ZWSP-suffixed destructive action is dropped, not silently normalized into a call')
+
+  // the ordinary form is unaffected — the guard rejects invisibles, not legitimate actions
+  const ok = parseConnectorDirectives('[CONNECTOR: github.repo.delete | {}]')
+  assert.equal(ok.length, 1)
+  assert.equal(classifyConnectorAction('github', ok[0].action), 'destructive')
+})
+
+test('[CONN9-PROTO] getExecutor cannot resolve a prototype key (audit N1)', () => {
+  // A plain object literal inherits from Object.prototype, so a bare bracket read would
+  // return a TRUTHY non-executor here and every "is there an executor?" check would pass.
+  for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    assert.equal(getExecutor(key), undefined, `getExecutor('${key}') must be undefined`)
+  }
+  assert.ok(getExecutor('github'), 'a real executor still resolves')
+  // …and derivation, which asks getExecutor whether a connector can run, offers nothing
+  // for such a key even if a row and a matching capability somehow existed.
+  assert.deepEqual(deriveConnectorTools([{ connectorId: '__proto__', status: 'connected' }], ['*']), [])
 })
