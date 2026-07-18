@@ -1,8 +1,10 @@
 import { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { db, schema } from '../db/client'
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { executeAgentTask } from '../services/agent-executor'
+import { assertAgentInOrg } from '../services/tenant-guard'
 import { buildInbox } from '../services/inbox'
 import { buildGoalTree } from '../services/goals'
 import { runHeartbeatSweep } from '../services/heartbeat-engine'
@@ -39,6 +41,65 @@ import { hashToken, isFresh } from '../services/arturita-session'
 import { validateManifest, grantedCapabilities, exposedTools } from '../services/plugins'
 
 // ─── TASKS ───────────────────────────────────────────────────────────────────
+
+// GC-0 (audit) — the COMPLETE set of `goals` columns a client may write, mirroring
+// `ProjectPatchSchema` in routes/projects.ts. Deliberately absent:
+//   • `orgId`     — the tenant boundary. THIS is the vulnerability (see PATCH below).
+//   • `id`        — identity; rewriting it orphans every child goal pointing at it.
+//   • `createdAt` — immutable provenance.
+// Not `.strict()`, for the same reason projects isn't: unknown keys are STRIPPED, so a
+// client that round-trips a whole goal object back through PATCH still succeeds — it
+// just cannot move the row.
+//
+// ⚠️ `parentGoalId` and `ownerAgentId` ARE writable (they are the point of the route),
+// and neither is validated to live in the same org. That is a PRE-EXISTING gap this
+// change does not widen: it can dangle a reference, but it cannot move the goal's
+// tenancy, which is what the gate depends on. Flagged in the audit as a follow-up.
+// GC-0b — the COMPLETE set of `tasks` columns a client may write through
+// `PATCH /api/tasks/:taskId`. Deliberately absent:
+//   • `orgId`     — the tenant boundary. THIS is the vulnerability (see the route).
+//   • `id`        — identity; rewriting it orphans every comment, run and attachment.
+//   • `createdAt` — immutable provenance, and an audit-ordering input.
+//   • `lockToken` / `lockedAt` — the MCA-EXEC S1.1 atomic checkout lock. Client-writable
+//     lock state would let one caller steal or forge another runner's claim.
+//   • `tokensUsed` / `inputTokens` / `outputTokens` / `cachedTokens` / `costUsd` /
+//     `durationMs` — metering the EXECUTOR writes. Client-writable spend understates
+//     usage against the org budget cap, so it is a billing-integrity field, not a data one.
+//
+// `agentId` IS present but is same-org validated in the handler — see there for why.
+// ⚠️ `projectId` / `goalId` / `parentTaskId` are org-scoped references that are NOT
+// same-org validated; that is the pre-existing dangling-reference gap the goals fix
+// flagged. They can dangle, they cannot move the task's tenancy. Follow-up, not widened.
+const TaskPatchSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  input: z.string().nullable().optional(),
+  output: z.string().nullable().optional(),
+  status: z.string().max(50).optional(),
+  priority: z.string().max(50).optional(),
+  kanbanColumn: z.string().max(50).nullable().optional(),
+  assignedTo: z.string().nullable().optional(),
+  dueAt: z.coerce.date().nullable().optional(),
+  inboxState: z.string().max(50).nullable().optional(),
+  workMode: z.string().max(50).optional(),
+  labels: z.string().nullable().optional(),
+  blockedBy: z.string().nullable().optional(),
+  branch: z.string().nullable().optional(),
+  agentId: z.string().optional(),
+  projectId: z.string().nullable().optional(),
+  goalId: z.string().nullable().optional(),
+  parentTaskId: z.string().nullable().optional(),
+  workspaceId: z.string().nullable().optional(),
+  completedAt: z.coerce.date().nullable().optional(),
+})
+
+const GoalPatchSchema = z.object({
+  title: z.string().min(1).max(300).optional(),
+  description: z.string().nullable().optional(),
+  metric: z.string().nullable().optional(),
+  status: z.enum(['active', 'done', 'paused', 'dropped']).optional(),
+  ownerAgentId: z.string().nullable().optional(),
+  parentGoalId: z.string().nullable().optional(),
+})
 
 export async function taskRoutes(app: FastifyInstance) {
   // ─── Unified inbox (MCA-PC A3) ──────────────────────────────────────────
@@ -116,6 +177,16 @@ export async function taskRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const b = (req.body ?? {}) as any
     if (!b.title) return reply.code(400).send({ error: 'title is required' })
+    // GC-0b (audit) — `ownerAgentId` is a body-supplied agent reference. Unlike the
+    // task/routine cases nothing EXECUTES a goal's owner (it is read for display, the
+    // recovery card and portability), so this is a cross-tenant reference disclosure
+    // rather than cross-tenant execution: a goal in org A would render org B's agent
+    // name and emoji in the goal tree. One line to close, and it retires the
+    // "dangling reference" follow-up the GC-0 goals fix flagged for this field.
+    {
+      const err = await assertAgentInOrg(b.ownerAgentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     const goal = {
       id: randomUUID(), orgId, parentGoalId: b.parentGoalId ?? null, title: b.title,
       description: b.description ?? null, metric: b.metric ?? null,
@@ -124,9 +195,21 @@ export async function taskRoutes(app: FastifyInstance) {
     await db.insert(schema.goals).values(goal)
     reply.code(201); return { goal }
   })
-  app.patch('/api/goals/:goalId', async (req) => {
+  app.patch('/api/goals/:goalId', async (req, reply) => {
     const { goalId } = req.params as any
-    await db.update(schema.goals).set(req.body as any).where(eq(schema.goals.id, goalId))
+    // GC-0 (audit) — the SAME cross-org write hole the projects route had, and for the
+    // same structural reason. `resolveRequestOrg` (middleware/rbac.ts) derives this
+    // route's org FROM THE GOAL ROW, and reads it BEFORE this handler mutates that row.
+    // At check time the caller really is a member of the goal's org, so the gate passes;
+    // `set(req.body as any)` then wrote `orgId` and moved the goal into another tenant.
+    // A gate that authorises against the pre-image cannot defend a field that REWRITES
+    // the pre-image — only an allow-list can. Proven exploitable at 200 pre-fix.
+    const parsed = GoalPatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid goal' })
+    const patch = parsed.data
+    if (Object.keys(patch).length > 0) {
+      await db.update(schema.goals).set(patch).where(eq(schema.goals.id, goalId))
+    }
     return { goal: await db.query.goals.findFirst({ where: eq(schema.goals.id, goalId) }) }
   })
   app.delete('/api/goals/:goalId', async (req, reply) => {
@@ -570,6 +653,23 @@ export async function taskRoutes(app: FastifyInstance) {
   app.post('/api/orgs/:orgId/tasks', async (req, reply) => {
     const { orgId } = req.params as any
     const body = req.body as any
+    // GC-0b (audit) — the CREATE-side half of the class. `orgId` correctly comes from
+    // the PATH, and that is exactly what made this invisible: with the tenant column
+    // safe, the body-supplied `agentId` looked harmless. It is not. `agentId` is what
+    // the executor runs the task AS — `POST /api/tasks/:taskId/execute` resolves the
+    // agent BY ID ALONE (services/agent-executor.ts) and then uses `agent.orgId` for
+    // the LLM keys, budget, knowledge base and connectors. So a member of org A could
+    // create a task in org A naming ORG B's agent, fire it, and have org B's agent run
+    // attacker-authored input under org B's credentials, billed to org B, with the
+    // output landing in a row org A can read.
+    //
+    // The membership gate cannot catch it: it authorises `:orgId` from the PATH, and
+    // nothing ever looks at `body.agentId`. Same fix as the PATCH sibling below —
+    // the agent must live in the org the task is being created in.
+    {
+      const err = await assertAgentInOrg(body.agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     const task = { id: randomUUID(), orgId, agentId: body.agentId, projectId: body.projectId ?? null, title: body.title, input: body.input ?? null, output: null, status: 'pending', priority: body.priority ?? 'medium', kanbanColumn: body.kanbanColumn ?? 'todo', workMode: normalizeWorkMode(body.workMode), llmModel: null, tokensUsed: null, costUsd: null, durationMs: null, assignedTo: body.assignedTo ?? null, dueAt: body.dueAt ? new Date(body.dueAt) : null, blockedBy: body.blockedBy ? JSON.stringify(body.blockedBy) : null, createdAt: new Date(), completedAt: null }
     await db.insert(schema.tasks).values(task)
     reply.code(201); return { task }
@@ -748,9 +848,32 @@ export async function taskRoutes(app: FastifyInstance) {
     reply.code(204)
   })
 
-  app.patch('/api/tasks/:taskId', async (req) => {
+  app.patch('/api/tasks/:taskId', async (req, reply) => {
     const { taskId } = req.params as any
-    await db.update(schema.tasks).set(req.body as any).where(eq(schema.tasks.id, taskId))
+    // GC-0b — the third instance of the class. Same structural cause as projects and
+    // goals: `resolveRequestOrg` derives this route's org FROM THE TASK ROW (the
+    // `:taskId` branch in middleware/rbac.ts) and reads it BEFORE this handler mutates
+    // that row, so `set(req.body as any)` let a member of org A write `orgId` and move
+    // the task — with its input, output and whole comment thread — into org B.
+    const task = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+    if (!task) return reply.code(404).send({ error: 'Task not found' })
+    const parsed = TaskPatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid task' })
+    const patch = parsed.data
+    // `agentId` IS writable — reassigning a ticket to another agent is real product
+    // behaviour, not a loophole — but ONLY WITHIN THE TASK'S OWN ORG. Left unchecked
+    // it is the sharper half of this route's hole: `agentId` is what the executor runs
+    // the task AS, so re-pointing it at another org's agent hands that agent this
+    // task's `input` and makes it execute work for a tenant it does not belong to.
+    // Validated against the TASK's org (`task.orgId`), never against an org named in
+    // the body — the body cannot move the task, so the pre-image org is the truth here.
+    {
+      const err = await assertAgentInOrg(patch.agentId, task.orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.update(schema.tasks).set(patch).where(eq(schema.tasks.id, taskId))
+    }
     return { ok: true }
   })
   app.patch('/api/tasks/:taskId/move', async (req) => {

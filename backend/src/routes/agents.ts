@@ -35,6 +35,30 @@ export const AGENT_TEMPLATES = {
 
 // ─── AGENTS ──────────────────────────────────────────────────────────────────
 
+// GC-0b — the COMPLETE set of `agents` columns the LEGACY member-gated
+// `PATCH /api/agents/:agentId` may write. See the long rationale at that route for
+// why this is an allow-list and what is deliberately excluded (tenant/identity
+// columns, the `apiTokenHash` credential, and the entire owner-gated config /
+// permissions / trust / model-profile vocabulary).
+//
+// Not `.strict()`, matching `ProjectPatchSchema` and `GoalPatchSchema`: unknown keys
+// are STRIPPED rather than rejected, so a client that round-trips a whole agent object
+// still succeeds — it just cannot move the row, escalate its trust, or set its token.
+const AgentPatchSchema = z.object({
+  personality: z.string().max(4000).nullable().optional(),
+  cv: z.string().max(20_000).nullable().optional(),
+  termsOfReference: z.string().max(20_000).nullable().optional(),
+  persona: z.string().max(4000).nullable().optional(),
+  expertise: z.string().max(4000).nullable().optional(),
+  advisorPersona: z.string().max(200).nullable().optional(),
+  agentType: z.enum(['standard', 'advisor']).optional(),
+  // Accepted as an array or a pre-serialised JSON string (the legacy client sends
+  // both shapes); validated same-org and re-serialised by the handler.
+  advisorIds: z.union([z.array(z.string()), z.string()]).nullable().optional(),
+  departmentId: z.string().nullable().optional(),
+  status: z.string().max(50).optional(),
+})
+
 export async function agentRoutes(app: FastifyInstance) {
   const AgentSchema = z.object({
     name: z.string().min(1).max(100), role: z.string().min(1).max(200),
@@ -65,17 +89,73 @@ export async function agentRoutes(app: FastifyInstance) {
   })
   app.patch('/api/agents/:agentId', async (req, reply) => {
     const { agentId } = req.params as any
-    const body = req.body as any
-    // `permissions` (capability caps) is an OWNER-gated, validated control with its
-    // own route (`PUT /api/orgs/:orgId/agents/:agentId/permissions`). This legacy
-    // member-gated route spreads its body straight into `db.update().set()`, so it
-    // must NOT be a side door around that gate: drop the key regardless of body.
-    if (body && typeof body === 'object' && 'permissions' in body) delete body.permissions
+    // GC-0b — this route was a DENY-LIST (it deleted exactly one key, `permissions`)
+    // and a deny-list is how it got here: every column NOT named stayed writable.
+    // Two live escalations followed from that.
+    //
+    //   1. CROSS-ORG MOVE. `orgId` is a column, so a member of org A could re-home an
+    //      agent into org B. The gate cannot catch it: `resolveRequestOrg` derives this
+    //      route's org FROM THE AGENT ROW and reads it BEFORE this handler mutates that
+    //      row, so it authorises the pre-image of a write that rewrites the pre-image.
+    //
+    //   2. TRUST ESCALATION INTO THE CONNECTOR GATE. `trustMode` is owner-gated on
+    //      `PUT /api/orgs/:orgId/agents/:agentId/trust`, but a plain MEMBER could set
+    //      `{"trustMode":"autonomous"}` here. Trust level is what CONN-7 consults to
+    //      decide whether a connector write needs human approval, so this was a
+    //      member-reachable bypass of the connector execution gate — not a config nit.
+    //
+    // THE RULE: this legacy route may write ONLY fields that are (a) not tenant or
+    // identity columns, (b) not credentials, and (c) NOT OWNER-GATED ON A SIBLING
+    // ROUTE. (c) is what keeps the two surfaces from disagreeing: if a field needs an
+    // owner on the dedicated PUT, a member must not reach it through the back door.
+    // Concretely that excludes the whole owner-gated vocabulary —
+    //   • name/title/role/jobDescription/avatarEmoji/reportsTo/runtime/llmProvider/
+    //     llmModel/primaryModel  → `PUT …/agents/:agentId/config` (CONFIG_FIELDS,
+    //     services/agent-config.ts — which also cycle-checks `reportsTo`)
+    //   • permissions                        → `PUT …/agents/:agentId/permissions`
+    //   • trustMode / trustBoundary          → `PUT …/agents/:agentId/trust`
+    //   • cheapModel/cheapModelEnabled/reasoningEffort → `PUT …/model-profile`
+    // and these, which are nobody's config field:
+    //   • orgId / id / createdAt   — tenant + identity + immutable provenance
+    //   • apiTokenHash             — THE AGENT CREDENTIAL. A writable token hash lets a
+    //                                member mint themselves a working agent token.
+    //   • externalEndpoint         — a push callback URL, i.e. an egress target
+    //   • avatarUrl                — has a capped, type-checked upload route; a raw
+    //                                data URI here would bypass both
+    //   • lastHeartbeatAt/heartbeatStatus/nextWakeAt — runtime-owned liveness
+    //
+    // BEHAVIOUR NOTE: the frozen legacy Expo app (`app/app/agents/edit.tsx`) posted
+    // name/role/llmModel/avatarEmoji through here. Those are owner-gated config, so
+    // that screen was a member editing owner-only fields — the escalation itself, not
+    // a feature to preserve. `web/` and `apps/mobile/` already route config through the
+    // owner-gated PUT and are unaffected.
+    //
+    // ⚠️ `departmentId` and `advisorIds` are org-scoped references. `advisorIds` IS
+    // validated same-org below (pre-existing, kept). `departmentId` is not — the same
+    // dangling-reference gap the goals fix flagged; it can dangle, it cannot move the
+    // agent's tenancy, which is what the gate depends on. Follow-up, not widened here.
+    const parsed = AgentPatchSchema.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid agent' })
+    const body: any = parsed.data
     // Validate advisorIds if provided (single query instead of N+1)
     if (body.advisorIds) {
       const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
       if (!agent) return reply.code(404).send({ error: 'Agent not found' })
-      const ids = typeof body.advisorIds === 'string' ? JSON.parse(body.advisorIds) : body.advisorIds
+      // GC-0b (audit nit) — `JSON.parse` here was uncaught, so malformed JSON in the
+      // string form threw and 500'd. That shape is not hypothetical: `AgentPatchSchema`
+      // above explicitly blesses `advisorIds` as `array | string`, so a string that is
+      // not valid JSON is a shape the contract INVITES and must answer with a 400.
+      // Non-array JSON (`"5"`, `"{}"`) is refused for the same reason — `ids.length`
+      // would otherwise be `undefined` and the same-org check below would silently
+      // not run.
+      let ids: unknown
+      if (typeof body.advisorIds === 'string') {
+        try { ids = JSON.parse(body.advisorIds) }
+        catch { return reply.code(400).send({ error: 'advisorIds must be a JSON array' }) }
+      } else ids = body.advisorIds
+      if (!Array.isArray(ids) || ids.some(i => typeof i !== 'string')) {
+        return reply.code(400).send({ error: 'advisorIds must be a JSON array' })
+      }
       if (ids.length > 0) {
         const found = await db.select({ id: schema.agents.id }).from(schema.agents)
           .where(and(inArray(schema.agents.id, ids), eq(schema.agents.orgId, agent.orgId)))
@@ -88,7 +168,12 @@ export async function agentRoutes(app: FastifyInstance) {
       body.advisorIds = JSON.stringify(ids)
     }
     const _before = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
-    await db.update(schema.agents).set(body).where(eq(schema.agents.id, agentId))
+    // A body consisting ENTIRELY of now-refused fields parses to `{}`, and drizzle
+    // throws "No values to set" on an empty update. That is a 500 for what is really
+    // a no-op, so skip the write — the same guard the sibling allow-listed routes use.
+    if (Object.keys(body).length > 0) {
+      await db.update(schema.agents).set(body).where(eq(schema.agents.id, agentId))
+    }
     const _after = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     // MCA-GOV2 S4.1: snapshot the change for audit + rollback.
     if (_before) await db.insert(schema.configRevisions).values({ id: randomUUID(), orgId: _before.orgId, entity: 'agent', entityId: agentId, before: JSON.stringify(_before), after: JSON.stringify(_after), actor: (req as any).userId ?? 'human', createdAt: new Date() })

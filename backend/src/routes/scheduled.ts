@@ -4,6 +4,7 @@ import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { calcNextRun, fireRoutine } from '../services/scheduler'
 import { makeWebhookToken, normalizeTriggerType, cronSentinel } from '../services/routines'
+import { assertAgentInOrg } from '../services/tenant-guard'
 
 const COMMON_CRONS = [
   { label: 'Every hour',     cron: '0 * * * *' },
@@ -33,6 +34,20 @@ export async function scheduledRoutes(app: FastifyInstance) {
     const { agentId, title, input } = b
     const triggerType = normalizeTriggerType(b.triggerType)
     if (!agentId || !title) return reply.code(400).send({ error: 'agentId, title required' })
+    // GC-0b (audit) — the same CREATE-side hole as `POST /api/orgs/:orgId/tasks`, and
+    // strictly worse here for two reasons. `fireRoutine` (services/scheduler.ts) inserts
+    // a task with `orgId: routine.orgId` (the attacker's org) and `agentId:
+    // routine.agentId` (the victim's agent) and then calls `executeAgentTask` — so a
+    // cron routine re-executes another tenant's agent on a schedule, indefinitely. And
+    // for any non-`cron` triggerType this route MINTS A WEBHOOK TOKEN and returns the
+    // trigger URL to the caller; `POST /api/routines/:token/trigger` is registered
+    // OUTSIDE the authenticated scope, so that URL fires the victim's agent with no
+    // session at all, and keeps working after the attacker leaves their own org.
+    // The agent must belong to the org the routine is created in.
+    {
+      const err = await assertAgentInOrg(agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     if (triggerType === 'cron' && !b.cronExpression) return reply.code(400).send({ error: 'cronExpression required for cron routines' })
 
     const cronExpression = triggerType === 'cron' ? b.cronExpression : cronSentinel(triggerType)

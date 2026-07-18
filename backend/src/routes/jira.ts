@@ -4,6 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { encrypt, decrypt } from '../services/secrets'
+import { assertAgentInOrg } from '../services/tenant-guard'
 
 // ─── Jira Integration ─────────────────────────────────────────────────────────
 // Project key: O7MC (per ADR + ITERATION_PLAN)
@@ -133,9 +134,18 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/issues', async (req, reply) => {
     const { orgId } = req.params as any
+    const { summary, description, issueType = 'Task', priority = 'Medium', projectKey, assigneeEmail, agentId } = req.body as any
+    // GC-0b (audit) — INSTANCE #9. `agentId` is optional here, but when present the
+    // handler inserts an EXECUTABLE task row against it (below), so it is the same
+    // cross-tenant execution primitive as #7/#8. Runs BEFORE both the connection lookup
+    // and the remote Jira call: a refused request must not leave an orphan issue in
+    // Jira, and must not be skippable by the org simply not having Jira configured.
+    {
+      const err = await assertAgentInOrg(agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
     const cfg = await getJiraCfg(orgId)
     if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
-    const { summary, description, issueType = 'Task', priority = 'Medium', projectKey, assigneeEmail, agentId } = req.body as any
     const pk = projectKey ?? cfg.defaultProjectKey
     const body: any = {
       fields: {
@@ -228,10 +238,23 @@ export async function jiraRoutes(app: FastifyInstance) {
 
   app.post('/api/orgs/:orgId/jira/sync', async (req, reply) => {
     const { orgId } = req.params as any
-    const cfg = await getJiraCfg(orgId)
-    if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const { agentId, projectKey } = req.body as any
     if (!agentId) return reply.code(400).send({ error: 'agentId required' })
+    // GC-0b (audit) — INSTANCE #8, the same CREATE-side hole as `POST /api/orgs/:orgId/tasks`.
+    // The loop below inserts EXECUTABLE task rows with `orgId` from the path and this
+    // body-supplied `agentId`, so an unvalidated id imports a whole Jira backlog onto
+    // another tenant's agent. Found by the widened class guard, not by hand.
+    //
+    // ORDERING IS LOAD-BEARING: this runs BEFORE the Jira-connection lookup. Behind it,
+    // the check would be skipped for every org WITHOUT Jira and exercised only by orgs
+    // WITH it — i.e. it would silently not run in exactly the tests that are cheapest
+    // to write, and always run in production. Our own ordering test caught that.
+    {
+      const err = await assertAgentInOrg(agentId, orgId)
+      if (err) return reply.code(400).send({ error: err })
+    }
+    const cfg = await getJiraCfg(orgId)
+    if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
     const pk = projectKey ?? cfg.defaultProjectKey
     const jql = `project = ${pk} AND status != Done ORDER BY updated DESC`
     const url = `${jiraBase(cfg.domain)}/search?jql=${encodeURIComponent(jql)}&maxResults=50&fields=summary,status,priority,description`

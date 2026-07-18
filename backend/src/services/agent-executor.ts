@@ -54,6 +54,45 @@ export async function executeAgentTask(opts: {
   const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
   if (!agent) throw new Error('Agent not found')
 
+  // ─── GC-0b (audit) — THE TENANT INVARIANT, ENFORCED AT THE CHOKE POINT ──────
+  //
+  // A task must be executed by an agent in the TASK'S OWN ORG.
+  //
+  // This function resolves the agent BY ID ALONE and then treats `agent.orgId` as
+  // ambient authority: the budget below, the LLM credentials, the knowledge base and
+  // the connectors are all keyed off it. So if a task row in org A can name an agent
+  // in org B, org B's agent runs attacker-authored input under org B's credentials,
+  // billed to org B, with the output landing in a row org A can read.
+  //
+  // The per-route same-org checks (`POST /api/orgs/:orgId/tasks`, `…/scheduled`, and
+  // the task PATCH) are the ergonomic layer — they 400 at CREATE, so the bad row never
+  // exists and the operator gets a real error message. This is the AUTHORITATIVE layer.
+  // It belongs here rather than only at the routes because the invariant is a property
+  // of EXECUTION, not of any one entry point: there are eight call sites into this
+  // function and six paths that create an executable row, and instance #7 of this class
+  // shipped precisely because a new route was added without anyone re-deriving the
+  // check. One test at the single point every execution passes through is a total
+  // guarantee; N per-route checks are a convention that has already failed twice.
+  //
+  // Both facts are already in hand — the agent above, the task for the budget below —
+  // so this costs one query that was being made anyway.
+  //
+  // Fail CLOSED and mark the row: a mismatch is never legitimate (the org-transfer and
+  // clone flows in routes/multi-org.ts move the agent AND rewrite the task rows, they
+  // never straddle), so there is no valid caller to preserve.
+  const taskRow = await db.query.tasks.findFirst({ where: eq(schema.tasks.id, taskId) })
+  if (taskRow && taskRow.orgId !== agent.orgId) {
+    await db.update(schema.tasks).set({
+      status: 'failed', inboxState: 'needs_attention',
+      output: 'Refused: the assigned agent belongs to a different organisation.',
+    } as any).where(eq(schema.tasks.id, taskId))
+    const r: ExecuteResult = {
+      output: 'Refused: the assigned agent belongs to a different organisation.',
+      tokensUsed: 0, costUsd: 0, durationMs: 0, provider: 'governance',
+    }
+    onDone?.(r); return r
+  }
+
   // MCA-PC B2: governance gate — paused/terminated agents do not execute.
   if (!canAgentRun(agent.status)) {
     await db.update(schema.tasks).set({ status: agent.status === 'terminated' ? 'failed' : 'pending' }).where(eq(schema.tasks.id, taskId))
