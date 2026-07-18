@@ -91,22 +91,56 @@ graph is a trap, not access. `role="application"` + `aria-activedescendant`; arr
 can land off-screen is not focus. Each node carries an `aria-label` naming its label, concept, degree and
 folder. The **non-canvas fallback is the Reader tab**, one click away, and the error/empty states point at it.
 
-### Colour, and a real contrast defect
+### Colour — what this palette honestly is
 
-The palette is **Okabe–Ito**, the canonical colourblind-safe qualitative ramp, and it is always paired with the
-folder **name** in the filter chips — colour is never the sole signal.
+The ramp is derived from **Okabe–Ito**, and it is always paired with the folder
+**name** in the filter chips.
 
-It used to be **hardcoded hex in the component**, and that hid a genuine bug: on the light card (`#ffffff`) the
-canonical yellow `#F0E442` sits at roughly **1.1:1** and the sky `#56B4E9` at about **2:1** — those folders were
-effectively **invisible in light theme**. The ramp now lives in the token system as `--graph-1…10` (plus
-`--graph-tag`, `--graph-node-stroke`, `--graph-edge`), which lets the two themes diverge where they must: light
-**darkens the pale end** while preserving the hue **order** (what carries the colourblind separation), dark
-lifts `#0072B2` off near-black. Every node also carries a defined stroke, so a pale fill cannot melt into the
-surface in either theme.
+It used to be **hardcoded hex in the component**, and that hid a genuine bug: on the light card
+(`#ffffff`) the canonical yellow `#F0E442` sits at roughly **1.1:1** and the sky `#56B4E9` at **2.3:1** —
+both below the 3:1 floor for a graphical object, so those folders were **effectively invisible in light
+theme**. The ramp now lives in the token system as `--graph-1…10` (plus `--graph-tag`,
+`--graph-node-stroke`, `--graph-edge`), and the pale end is darkened for light.
 
-> Verified by rendering the **real** pipeline — backend `parseGraphifyGraph` + `capGraph` → the shipped force
-> configuration → the real token values — against the live TARCO vault and the 8k stress graph, screenshotted in
-> both themes.
+**An earlier version of this document claimed the light tuning "preserves hue ORDER, which carries the
+colourblind separation". That was wrong, and the audit was right to reject it.** Okabe–Ito's blue and sky
+differ mainly in **lightness**, not hue — so darkening the sky for contrast collapsed the pair
+(ΔE00 22.31 → 7.65). Corrected: `--graph-5` is now `#4a8cf0`, a brighter, bluer tone at 3.33:1 on the card,
+which puts the pair at **ΔE00 15.4** and off the risky list.
+
+The deeper correction matters more. A search over the whole sRGB cube — **all ten slots free**, only a 3:1
+contrast floor, scoring the worst pair across normal vision plus simulated deuteranopia, protanopia and
+tritanopia — tops out at a worst pair of **ΔE00 ≈ 12**, and reaches it with near-blacks and navies that do
+not read as a palette at all. With eight slots it reaches ≈ 12.8. **Ten mutually distinguishable
+categorical colours under three dichromacies is not achievable**, and Okabe–Ito itself is specified as
+*eight* colours; slots 9–10 are our extension, which is where the greens crowd.
+
+So the honest statement of what the palette does:
+
+> Colour is a **cluster hint** — adjacent same-hue nodes read as a group. It is **not an identifier**.
+> The identifier is the folder **name**, carried beside every swatch in the filter chips. That is why hue
+> is never the sole signal, and it is why the chips are the legend rather than a separate key.
+
+Worst measured pairs that remain (min ΔE00 across all four vision models): light `g2`/`g6` **3.06** and
+`g2`/`g7` **5.48**; dark `g1`/`g5` **3.95** and `g3`/`g10` **5.38**. These are present in the **canonical**
+Okabe–Ito values too — orange, vermillion and yellow are genuinely close for deuteranopes — so they are a
+property of asking ten categorical colours to survive three dichromacies, not of the theme tuning. Do not
+"fix" one by assuming hue is what tells folders apart.
+
+> Verified by rendering the **real** pipeline — backend `parseGraphifyGraph` + `capGraph` → the shipped
+> force configuration → the real token values — against the live TARCO vault and the 8k stress graph,
+> screenshotted in both themes.
+
+### Telling "thinking" from "crashed"
+
+The cool is synchronous, so a spinner set in the same render never paints: React would render, block in the
+memo, and paint once at the end. `useDeferredValue` is the seam — React paints a frame with the **previous**
+drawn set (dimmed, with a busy chip and `aria-live`), and only then re-renders into the expensive memo.
+Everything derived from the drawn set reads the deferred value, so the stale frame stays internally
+coherent rather than mixing an old layout with a new selection.
+
+Note that `filtered` deliberately does **not** depend on `query`: typing never re-cools. Search only dims
+and highlights what is already laid out, so it stays instant at any vault size.
 
 ## 5. The phone
 
@@ -128,6 +162,12 @@ What crossed: **whole-vault search** (a capability the folder tree structurally 
   and expand on demand, rather than shedding leaves.
 - **A `?since=` / incremental graph.** Today `?rebuild=1` re-reads everything; a large native vault pays 120
   GitHub calls to do it.
+- **A pre-existing cross-tenant path in the vault connector** (found by the MEM-1 audit, deliberately NOT
+  fixed here): `resolveVaultToken()` returns a process-wide `VAULT_GH_TOKEN` for **any** org, and
+  `parseVaultConfig(null)` defaults to the real company vault — so were that env var ever set, every org
+  would read one vault. Unreachable today (the variable is unset in every environment, and the per-org
+  encrypted `GITHUB_VAULT_TOKEN` is the live path), but it is a real latent multi-tenancy hole and wants
+  its own backend story.
 
 ## 7. Verify
 

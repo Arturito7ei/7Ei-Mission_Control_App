@@ -173,6 +173,10 @@ test('[MEM-1] the BACKEND builder output indexes here — shapes still agree', a
     && typeof n.degree === 'number' && typeof n.group === 'string'
     && ['note', 'tag', 'heading'].includes(n.kind)))
   assert.ok(edges.every(e => ['link', 'tag', 'contains', 'references'].includes(e.relation)))
+  // …and `degree` must actually be POPULATED, not merely present. `typeof
+  // n.degree === 'number'` above is satisfied by the `degree: 0` initializer,
+  // so on its own it asserts nothing about the builder having run.
+  assert.ok(nodes.some(n => n.degree > 0), 'builder must fill degree, not leave the initializer')
 
   const ix = buildIndex(nodes, edges)
   const status = nodes.find(n => n.label === 'Status')!
@@ -186,4 +190,24 @@ test('[MEM-1] the BACKEND builder output indexes here — shapes still agree', a
   const cix = buildIndex(capped.nodes as NoteNode[], capped.edges as NoteEdge[])
   assert.ok(capped.nodes.length === 2)
   assert.ok([...cix.out.keys()].every(id => cix.byId.has(id)))
+
+  // THE ASSERTION THAT HAS TO BITE: the cap must preserve VAULT-WIDE degree,
+  // not recompute it from the edges that survived. The phone renders that
+  // number verbatim (`connectivityLabel` → "12 links · 3 back"), so if the
+  // server ever started recomputing, the phone would quietly under-report how
+  // connected a note is and nothing else would notice.
+  //
+  // Checking `degree === <literal>` would only pin today's fixture. Instead we
+  // assert the INVARIANT: the surviving hub still claims more connections than
+  // it has surviving edges — which is true only if the degree is the full
+  // vault's, and is exactly false if it was recomputed post-cap.
+  const hubBefore = [...built.nodes].sort((a, b) => b.degree - a.degree)[0] as NoteNode
+  const hubAfter = capped.nodes.find(n => n.id === hubBefore.id) as NoteNode | undefined
+  assert.ok(hubAfter, 'the highest-degree node must survive a degree-priority cap')
+  assert.equal(hubAfter!.degree, hubBefore.degree, 'cap must not rewrite degree')
+  const survivingEdges = capped.edges.filter(e => e.source === hubAfter!.id || e.target === hubAfter!.id).length
+  assert.ok(
+    hubAfter!.degree > survivingEdges,
+    `degree (${hubAfter!.degree}) must exceed surviving edges (${survivingEdges}) — equal means it was recomputed from the capped edge set`,
+  )
 })

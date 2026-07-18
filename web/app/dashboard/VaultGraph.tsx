@@ -1,11 +1,16 @@
 'use client'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   forceSimulation, forceManyBody, forceLink, forceCenter, forceCollide, forceX, forceY,
 } from 'd3-force'
 import { api } from '@/lib/api'
 import { tk, text, space } from './tokens'
 import { Button, TextInput, Skeleton } from './ui'
+import {
+  W, H, radiusOf, labelBudget, isDragGesture, shouldLabelMatches,
+  labelSet, visibleSubset, zoomAt, fitTransform, adjacency, keyboardOrder, nextFocusIndex, domId,
+  type GNode, type GEdge,
+} from '@/lib/vaultGraphView'
 
 // Epic M3 / MEM-1 — interactive force-directed map of the Obsidian vault.
 // Renders from the backend /memory/graph (Graphify graph.json when present, the
@@ -25,8 +30,6 @@ import { Button, TextInput, Skeleton } from './ui'
 
 type Getter = () => Promise<string | null>
 
-type GNode = { id: string; label: string; kind: 'note' | 'tag' | 'heading'; path?: string; group: string; degree: number; tags?: string[]; community?: number; communityName?: string }
-type GEdge = { source: string; target: string; relation: string; weight: number }
 type GraphResp = {
   source: 'graphify' | 'native'
   nodes: GNode[]; edges: GEdge[]
@@ -35,74 +38,20 @@ type GraphResp = {
   hasGraphify: boolean; graphPath?: string; rebuildCommand: string; cached?: boolean
 }
 
-// Folder → hue. Ten tokenised slots (Okabe–Ito, tuned per theme in tokens.ts).
-// Every hue is paired with its folder NAME in the filter chips above the canvas,
-// so colour is never the sole signal — the chips are the legend, made clickable.
+// Folder → hue. Ten tokenised slots derived from Okabe–Ito, tuned per theme in
+// tokens.ts (which carries the measured numbers).
+//
+// Colour here is a CLUSTER HINT, not an identifier: ten categorical colours
+// cannot all stay distinguishable under three dichromacies — that is measured,
+// not assumed. The IDENTIFIER is the folder NAME beside every swatch in the
+// filter chips, which is why hue is never the sole signal and why the chips are
+// the legend rather than a separate key.
 const CVD = Array.from({ length: 10 }, (_, i) => `var(--graph-${i + 1})`)
 const TAG_COLOR = 'var(--graph-tag)'
-
-const W = 960, H = 620
-
-/**
- * How many nodes we DRAW. The backend already bounds what it SENDS (1500), but
- * every drawn node is an SVG group plus a body in an O(n log n)-per-tick force
- * simulation, and the simulation runs synchronously on the main thread — so the
- * render budget is tighter than the transport budget.
- *
- * MEASURED (this exact force config, cooling a DENSE 8k-node Graphify graph —
- * 17.9k edges, denser than any real vault; the shipped TARCO vault at 153 drawn
- * nodes cools in 67ms):
- *
- *     nodes   edges   cool
- *       150     560    65ms     imperceptible
- *       300   1,565   235ms     fine
- *       600   3,101   597ms  ←  the cap: a visible hitch, still responsive
- *     1,000   4,532  1,070ms    crosses a second — the tab stops feeling alive
- *     2,500   9,946  3,350ms    janks hard
- *     4,000  13,603  5,879ms    unusable
- *
- * The cool is SYNCHRONOUS and re-runs on every filter change, so this is a
- * budget paid repeatedly, not once at load. 600 is where the hitch is still
- * worth the map. Above it we shed the LOWEST-degree nodes (the leaves you'd
- * find faster in the Reader's tree anyway) and say so in the toolbar, rather
- * than quietly showing a partial vault as if it were the whole one. A vault
- * that genuinely needs more than this wants a Graphify pass that CLUSTERS
- * before the browser ever sees it — not a bigger number here.
- */
-const RENDER_CAP = 600
 
 type P = GNode & { x: number; y: number; vx?: number; vy?: number; fx?: number | null; fy?: number | null }
 type L = { source: P; target: P; relation: string }
 
-function radiusOf(n: { degree: number; kind: string }): number {
-  if (n.kind === 'tag') return 3.5
-  return 4 + Math.min(11, Math.sqrt(n.degree) * 2.2)
-}
-
-/** A DOM id for a node, for `aria-activedescendant` (node ids contain `/`). */
-const domId = (id: string) => `vg-${id.replace(/[^a-z0-9]/gi, '_')}`
-
-/**
- * How many labels the canvas may draw at a given zoom — a BUDGET, not a degree
- * threshold, and that distinction is load-bearing.
- *
- * A threshold ("label everything with degree ≥ 4") reads well on a sparse vault
- * and collapses on a dense one: the 8k-node stress graph has hundreds of nodes
- * past any fixed floor, so every one of them draws its name and the map becomes
- * unreadable text soup — exactly the hairball the labels were meant to prevent.
- * The screen has a roughly fixed amount of room for text, so the budget is
- * fixed too, and the highest-degree nodes spend it. Sparse vaults are unaffected
- * (they never had that many candidates); dense ones stay legible.
- *
- * Zoomed in, the same nodes occupy more space, so more names fit. The hovered /
- * focused / searched node is always labelled regardless of budget.
- */
-function labelBudget(k: number): number {
-  if (k < 0.7) return 12
-  if (k < 1.4) return 40
-  if (k < 2.5) return 110
-  return 400
-}
 
 /** Cool a d3-force simulation to a static layout (no live timer). */
 function computeLayout(nodes: GNode[], edges: GEdge[]): { pnodes: P[]; links: L[] } {
@@ -176,30 +125,36 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
     [data],
   )
 
-  // Visible subset — default hides Graphify heading nodes so the map stays
-  // legible, then applies the folder filter, then the draw cap.
-  const filtered = useMemo(() => {
-    if (!data) return { nodes: [] as GNode[], edges: [] as GEdge[], dropped: 0 }
-    const byKind = data.nodes.filter(n =>
-      (n.kind === 'note') || (n.kind === 'tag' && showTags) || (n.kind === 'heading' && showHeadings))
-    // A tag node has no folder, so it rides along with whatever notes remain.
-    const byGroup = byKind.filter(n => n.kind === 'tag' || !hiddenGroups.has(n.group))
-    // Shed the least-connected first; keep the order stable for a stable layout.
-    let nodes = byGroup, dropped = 0
-    if (byGroup.length > RENDER_CAP) {
-      const keep = new Set(
-        [...byGroup].sort((a, b) => (b.degree - a.degree) || a.id.localeCompare(b.id))
-          .slice(0, RENDER_CAP).map(n => n.id),
-      )
-      nodes = byGroup.filter(n => keep.has(n.id))
-      dropped = byGroup.length - nodes.length
-    }
-    const keepIds = new Set(nodes.map(n => n.id))
-    const edges = data.edges.filter(e => keepIds.has(e.source) && keepIds.has(e.target))
-    return { nodes, edges, dropped }
-  }, [data, showHeadings, showTags, hiddenGroups])
+  // The drawn subset — kind filter (headings off by default, so the map stays
+  // legible), folder filter, then the render cap.
+  // The logic lives in lib/vaultGraphView.ts so it can be tested without a DOM.
+  const filtered = useMemo(
+    () => visibleSubset(data, { showTags, showHeadings, hiddenGroups }),
+    [data, showHeadings, showTags, hiddenGroups],
+  )
 
-  const layout = useMemo(() => computeLayout(filtered.nodes, filtered.edges), [filtered])
+  /**
+   * THE BUSY SEAM. `computeLayout` cools the simulation SYNCHRONOUSLY — ~570ms
+   * at the cap — and it re-runs on every filter toggle, not just on load. A
+   * spinner set in the same render can never help: React would render, block in
+   * the memo, and paint once, at the end. The user sees a frozen tab and cannot
+   * tell "thinking" from "crashed".
+   *
+   * `useDeferredValue` is the seam. React renders once with the PREVIOUS drawn
+   * set (so the old map stays on screen, dimmed, with a busy chip), paints that
+   * frame, and only then re-renders with the new value — which is where the
+   * expensive memo actually runs. Everything derived from the drawn set reads
+   * `drawn`, not `filtered`, so the stale frame stays internally coherent
+   * (adjacency, labels and keyboard order all describe the map being shown,
+   * never a mix of the old layout and the new selection).
+   *
+   * Note `filtered` deliberately does NOT depend on `query`: typing must never
+   * re-cool the simulation. Search only dims and highlights what is already
+   * laid out, so it stays instant no matter how large the vault is.
+   */
+  const drawn = useDeferredValue(filtered)
+  const cooling = drawn !== filtered
+  const layout = useMemo(() => computeLayout(drawn.nodes, drawn.edges), [drawn])
 
   // Folder → colour, stable + legend-backed. Indexed off the FULL folder list so
   // a folder keeps its hue when others are filtered out.
@@ -211,32 +166,22 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   const colorOf = (n: GNode) => n.kind === 'tag' ? TAG_COLOR : (groups.get(n.group) ?? CVD[0])
 
   // Adjacency for hover/focus highlight.
-  const adj = useMemo(() => {
-    const m = new Map<string, Set<string>>()
-    for (const e of filtered.edges) {
-      if (!m.has(e.source)) m.set(e.source, new Set()); m.get(e.source)!.add(e.target)
-      if (!m.has(e.target)) m.set(e.target, new Set()); m.get(e.target)!.add(e.source)
-    }
-    return m
-  }, [filtered])
+  const adj = useMemo(() => adjacency(drawn.edges), [drawn])
 
   const q = query.trim().toLowerCase()
   const matches = useCallback((n: GNode) => q !== '' && (n.label.toLowerCase().includes(q) || !!n.communityName?.toLowerCase().includes(q)), [q])
-  const matchCount = useMemo(() => q === '' ? 0 : filtered.nodes.filter(matches).length, [q, filtered, matches])
+  const matchCount = useMemo(() => q === '' ? 0 : drawn.nodes.filter(matches).length, [q, drawn, matches])
   /**
    * A search hit is always labelled — UNLESS the search is so broad that
    * labelling every hit re-creates the text soup the label budget exists to
    * prevent. Typing a single common letter matches most of the vault; those
    * matches still get the accent stroke, they just don't all shout their name.
    */
-  const matchesFit = matchCount > 0 && matchCount <= 40
+  const matchesFit = shouldLabelMatches(matchCount, labelCap)
 
   // Keyboard order: hubs first. Arrowing through the graph should walk the most
   // connected notes before the leaves — that's the order the map is FOR.
-  const kbOrder = useMemo(
-    () => [...filtered.nodes].sort((a, b) => (b.degree - a.degree) || a.label.localeCompare(b.label)),
-    [filtered],
-  )
+  const kbOrder = useMemo(() => keyboardOrder(drawn.nodes), [drawn])
 
   const applyTransform = useCallback(() => {
     const v = view.current
@@ -251,28 +196,10 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
    * mean "back to the whole graph" rather than "back to an arbitrary scale".
    */
   const fitView = useCallback(() => {
-    const ps = layout.pnodes
-    if (!ps.length) { view.current = { k: 1, x: 0, y: 0 }; applyTransform(); return }
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    for (const p of ps) {
-      const r = radiusOf(p)
-      if (p.x - r < minX) minX = p.x - r
-      if (p.x + r > maxX) maxX = p.x + r
-      if (p.y - r < minY) minY = p.y - r
-      if (p.y + r > maxY) maxY = p.y + r
-    }
-    const pad = 28
-    const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY)
-    // Never zoom PAST 1:1 — a three-note vault blown up to fill 960×620 looks
-    // broken, not close. Only ever scale down to fit.
-    const k = Math.max(0.2, Math.min(1, Math.min((W - pad * 2) / w, (H - pad * 2) / h)))
-    view.current = {
-      k,
-      x: (W - (minX + maxX) * k) / 2,
-      y: (H - (minY + maxY) * k) / 2,
-    }
+    const v = fitTransform(layout.pnodes, W, H)
+    view.current = v
     applyTransform()
-    setLabelCap(labelBudget(k))
+    setLabelCap(labelBudget(v.k))
   }, [layout, applyTransform])
 
   // Re-frame whenever the drawn set changes (load, filter, tag/heading toggle).
@@ -285,11 +212,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   }, [])
 
   // Which nodes get to draw their name: the most-connected, up to the budget.
-  const labelled = useMemo(() => new Set(
-    filtered.nodes.filter(n => n.kind !== 'tag')
-      .sort((a, b) => (b.degree - a.degree) || a.label.localeCompare(b.label))
-      .slice(0, labelCap).map(n => n.id),
-  ), [filtered, labelCap])
+  const labelled = useMemo(() => labelSet(drawn.nodes, labelCap), [drawn, labelCap])
 
   // Pan/zoom via direct DOM transform (no React re-render while dragging).
   //
@@ -301,10 +224,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
     e.preventDefault()
     const rect = svgRef.current!.getBoundingClientRect()
     const mx = (e.clientX - rect.left) * (W / rect.width), my = (e.clientY - rect.top) * (H / rect.height)
-    const v = view.current
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
-    const k = Math.max(0.2, Math.min(6, v.k * factor))
-    v.x = mx - (mx - v.x) * (k / v.k); v.y = my - (my - v.y) * (k / v.k); v.k = k
+    view.current = zoomAt(view.current, mx, my, e.deltaY)
     applyTransform(); syncZoomFloor()
   }
   const toGraph = (clientX: number, clientY: number) => {
@@ -326,7 +246,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
       applyTransform()
     } else if (d.id) {
       // 4px of slop: a click always jitters a pixel or two, a drag doesn't.
-      if (Math.abs(e.clientX - d.sx) > 4 || Math.abs(e.clientY - d.sy) > 4) draggedFar.current = true
+      if (isDragGesture(e.clientX - d.sx, e.clientY - d.sy)) draggedFar.current = true
       const p = toGraph(e.clientX, e.clientY)
       const node = layout.pnodes.find(n => n.id === d.id)
       if (!node) return
@@ -378,9 +298,9 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   }, [layout, applyTransform])
 
   const openNode = useCallback((id: string) => {
-    const n = filtered.nodes.find(x => x.id === id)
+    const n = drawn.nodes.find(x => x.id === id)
     if (n?.path) onOpenNote(n.path)
-  }, [filtered, onOpenNote])
+  }, [drawn, onOpenNote])
 
   /**
    * The canvas is ONE tab stop with roving focus (aria-activedescendant), not
@@ -391,7 +311,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
     if (!kbOrder.length) return
     const i = focusId ? kbOrder.findIndex(n => n.id === focusId) : -1
     const go = (next: number) => {
-      const id = kbOrder[(next + kbOrder.length) % kbOrder.length].id
+      const id = kbOrder[nextFocusIndex(next, 0, kbOrder.length)].id
       setFocusId(id); centerOn(id)
       e.preventDefault()
     }
@@ -420,7 +340,7 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
   )
 
   const totalNodes = data?.stats.totalNodes ?? data?.nodes.length ?? 0
-  const nothingToDraw = !!data && filtered.nodes.length === 0
+  const nothingToDraw = !!data && drawn.nodes.length === 0 && !cooling
 
   return (
     <div>
@@ -483,13 +403,21 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
             </div>
           ) : (
           <svg
-            ref={attachSvg} viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, touchAction: 'none', cursor: drag.current.panning ? 'grabbing' : 'grab' }}
+            ref={attachSvg} viewBox={`0 0 ${W} ${H}`} style={{
+              width: '100%', height: H, touchAction: 'none',
+              cursor: cooling ? 'progress' : drag.current.panning ? 'grabbing' : 'grab',
+              // Dim the STALE map while the next one cools, and stop it taking
+              // input it would answer with the old layout's coordinates.
+              opacity: cooling ? 0.4 : 1,
+              pointerEvents: cooling ? 'none' : undefined,
+              transition: 'opacity .12s linear',
+            }}
             onPointerDown={onPointerDownBg} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag} onPointerCancel={endDrag}
             // One tab stop, roving focus. `application` is the role that carries
             // aria-activedescendant for a canvas-shaped widget.
             tabIndex={0} role="application" onKeyDown={onKeyDown}
             onBlur={() => setFocusId(null)}
-            aria-label={`Vault graph: ${filtered.nodes.length} nodes, ${filtered.edges.length} links. Arrow keys move between notes (most connected first), Enter opens the focused note, Escape clears focus.`}
+            aria-label={`Vault graph: ${drawn.nodes.length} nodes, ${drawn.edges.length} links. Arrow keys move between notes (most connected first), Enter opens the focused note, Escape clears focus.`}
             aria-activedescendant={focusId ? domId(focusId) : undefined}
           >
             <g ref={gRef}>
@@ -528,10 +456,20 @@ export default function VaultGraph({ orgId, getToken, onOpenNote }: { orgId: str
           </svg>
           )}
 
+          {/* The one affordance that separates "it's thinking" from "it crashed".
+              `aria-live="polite"` so a screen reader is told too — the canvas
+              going quiet for half a second is otherwise silent to it. */}
+          {cooling && (
+            <div style={s.busy} role="status" aria-live="polite">
+              <span style={s.spinner} aria-hidden="true" />
+              Laying out {filtered.nodes.length} note{filtered.nodes.length === 1 ? '' : 's'}…
+            </div>
+          )}
+
           {/* Cap notice — a partial map must say it is partial. */}
-          {filtered.dropped > 0 && (
+          {drawn.dropped > 0 && (
             <div style={s.capNote} role="status">
-              Showing the {filtered.nodes.length} most-connected of {filtered.nodes.length + filtered.dropped} · {filtered.dropped} leaf notes hidden to keep the map interactive
+              Showing the {drawn.nodes.length} most-connected of {drawn.nodes.length + drawn.dropped} · {drawn.dropped} leaf notes hidden to keep the map interactive
             </div>
           )}
         </div>
@@ -561,6 +499,10 @@ const s: Record<string, React.CSSProperties> = {
   chip: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: text.xs.fontSize, color: tk.textDim, background: tk.surface, border: '1px solid', borderRadius: tk.r.pill, padding: `3px ${space.md}px`, cursor: 'pointer' },
   swatch: { width: 9, height: 9, borderRadius: 2, display: 'inline-block', flex: '0 0 auto' },
   empty: { height: H, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: tk.textDim, fontSize: text.md.fontSize, padding: space.xl },
+  // Centred, so it reads as the canvas's own state rather than a toolbar note.
+  busy: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: space.sm, fontSize: text.sm.fontSize, color: tk.textDim, pointerEvents: 'none' },
+  // Reuses the existing `mcOrbSpin` keyframe from globals.css — no new animation.
+  spinner: { width: 13, height: 13, borderRadius: '50%', border: `2px solid var(--line-strong)`, borderTopColor: tk.accent, display: 'inline-block', animation: 'mcOrbSpin .7s linear infinite' },
   capNote: { position: 'absolute', right: space.md, top: space.md, fontSize: text.xs.fontSize, color: tk.textDim, background: 'var(--glass)', border: '1px solid var(--glass-line)', borderRadius: tk.r.sm, padding: `${space.xs}px ${space.sm}px`, backdropFilter: 'blur(6px)', maxWidth: '46%' },
   footer: { marginTop: space.sm, fontSize: text.sm.fontSize, color: tk.muted },
   link: { color: tk.blue, cursor: 'pointer' },

@@ -65,19 +65,40 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     // washed out. Solid black reads against the light core; dark keeps the
     // luminous treatment (see the dark twin below).
     '--reactor-logo-fill': '#000000',
-    // MEM-1 — Memory graph categorical ramp (folder → hue). Okabe–Ito, the
-    // canonical colorblind-safe qualitative palette (deuter/prot/tritanopia
-    // distinguishable), and always paired with the graph's text legend so hue is
-    // never the sole signal. It lives HERE rather than in the component so the
-    // two themes can diverge where they must: on the white card the canonical
-    // yellow (#F0E442) and sky (#56B4E9) sit at ~1.1:1 and ~2:1 against the
-    // surface and effectively vanish, so both are darkened for light while the
-    // hue ORDER — what carries the colorblind separation — is preserved.
+    // MEM-1 — Memory graph categorical ramp (folder → hue), derived from
+    // Okabe–Ito. It lives HERE rather than in the component so the two themes
+    // can diverge where they must: on the white card the canonical yellow
+    // (#F0E442, 1.1:1) and sky (#56B4E9, 2.3:1) fall below the 3:1 floor for a
+    // graphical object and effectively vanish, so the pale end is darkened.
+    //
+    // WHAT THIS PALETTE HONESTLY IS — measured, not asserted. Ten mutually
+    // distinguishable categorical colours under normal vision AND all three
+    // dichromacies is NOT ACHIEVABLE: an unconstrained search over the whole
+    // sRGB cube (10 free slots, only a 3:1 contrast floor) tops out at a worst
+    // pair of ΔE00 ≈ 12, and gets there with near-blacks and navies that look
+    // nothing like a palette. Okabe–Ito itself is specified as EIGHT colours;
+    // slots 9–10 are our extension, and they are where the greens crowd.
+    //
+    // So colour here is a CLUSTER HINT — adjacent same-hue nodes read as a
+    // group — and NOT an identifier. The identifier is the folder NAME, carried
+    // beside every swatch in the filter chips, which is why hue is never the
+    // sole signal. Do not "fix" a colliding pair by assuming the hue is what
+    // tells folders apart; it isn't, and it can't be at ten slots.
+    //
+    // Worst measured pairs on this card (min ΔE00 across normal + deuter/prot/
+    // tritanopia): g2 vs g6 3.06 and g2 vs g7 5.48 — both CANONICAL Okabe–Ito
+    // collisions (orange/vermillion/yellow are genuinely close for deuteranopes),
+    // inherited, not introduced here.
     '--graph-1': '#0072B2',                  // blue
     '--graph-2': '#B87A00',                  // orange, darkened for white
     '--graph-3': '#00785A',                  // bluish green, darkened for white
     '--graph-4': '#A85A87',                  // reddish purple, darkened
-    '--graph-5': '#2E86C1',                  // sky, darkened (was #56B4E9 ≈2:1)
+    // Sky. NOT a darkened #56B4E9: darkening it (#2E86C1) collapsed it into
+    // --graph-1 (ΔE00 7.65 normal, 5.34 tritanopia — the two blues differ
+    // mainly in LIGHTNESS, which is exactly what darkening removes). Lifted to
+    // a brighter, bluer tone instead: 3.33:1 on the card and ΔE00 15.4 from
+    // --graph-1, which takes the pair off the risky list entirely.
+    '--graph-5': '#4a8cf0',
     '--graph-6': '#C24E00',                  // vermillion
     '--graph-7': '#8A7200',                  // yellow, darkened (was #F0E442 ≈1.1:1)
     '--graph-8': '#6b6b6b',                  // grey
@@ -142,6 +163,12 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     // Okabe–Ito values are already correct (the palette was struck for light
     // marks on a dark field). Only the deepest blue is lifted a touch, since
     // #0072B2 on #0f0f0f is ~3.4:1 and it is the most-used hue (folder #1).
+    //
+    // The same honesty applies here as on light (see the note above): these are
+    // cluster hints, not identifiers. Measured worst pairs on this card are
+    // g1 vs g5 3.95 and g3 vs g10 5.38 (both under tritanopia) — present in the
+    // CANONICAL values too, so they are a property of asking ten categorical
+    // colours to survive three dichromacies, not of the dark tuning.
     '--graph-1': '#3D9AE0',                  // blue, lifted off near-black
     '--graph-2': '#E69F00',                  // orange
     '--graph-3': '#009E73',                  // bluish green
