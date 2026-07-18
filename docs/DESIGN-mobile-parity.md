@@ -96,7 +96,7 @@
 | Tab | Screen | Endpoints | Web peer |
 |---|---|---|---|
 | **Command** | `CommandCenterScreen.tsx` — text chat + "via" chip + **document attach (MOB-PAR-1, §6.2)** | `POST …/arturita/converse`, `POST …/arturita/attachments/extract` | `assistant` (text + attach — **no voice**) |
-| **Inbox** | `InboxScreen.tsx` + `StepUpModal.tsx` — approve/reject/request-changes with on-device step-up (MOB-4) | `GET …/approvals?status=pending`, `POST /api/approvals/:id/decide`, `POST …/arturita/session` | `inbox` |
+| **Inbox** | `InboxScreen.tsx` + `StepUpModal.tsx` — approve/reject/request-changes with on-device step-up (MOB-4). **APPR-1:** the desk now has the peer flow (`StepUpDialog.tsx`); before it, the phone was the ONLY surface that could actually approve a dangerous action | `GET …/approvals?status=pending`, `POST /api/approvals/:id/decide`, `POST …/arturita/session` | `inbox` |
 | **Agents** | `AgentsScreen.tsx` — roster, **read-only, no detail** | `GET …/agents` | `agents` (grid only) |
 | **Status** | `HealthScreen.tsx` — connection/health | `GET /api/health` | — (no web peer) |
 | — | `ConnectScreen.tsx` — org picker / sign-in | `GET /api/orgs` | — |
@@ -807,6 +807,60 @@ route.
 bundles. **SDK 54 untouched, react/react-dom pins intact**, **boot-safe** (RN-core only — the
 monitor uses `View`/`Text`/`Card`/`Chip`/`Button`/`Banner`/`Loading`, no native module).
 Strictly additive to `apps/mobile/**`; the single backend route is additive and owner-gated.
+
+### 6.12 APPR-1 — the parity inverts: the DESK gets the phone's step-up (as built)
+
+The one story in this document where the phone was **ahead** and the web was the one
+mirroring. Worth recording, because it breaks the assumption the rest of the doc runs on
+(desk builds it, phone mirrors it) and because the failure it fixes is a *UI-honesty* bug,
+not a missing feature.
+
+- **What was wrong on the desk.** `CockpitPanel.decide()` was the only caller of
+  `POST /api/approvals/:id/decide`, and it sent **no `x-arturita-session` header** (zero
+  occurrences anywhere in `web/`), dropped the approval card **before** awaiting the
+  request, and swallowed the outcome in a bare `catch {}`. The backend correctly 403s an
+  approve of a dangerous type without step-up — so the desk showed the card disappearing
+  while the server had refused it. **The operator was told a wallet transaction / file
+  deletion / connector action was approved when it was not.** It hit every dangerous type
+  equally and predates connectors; CONN-9 merely made it an everyday occurrence by wiring
+  `connector_action` approvals into the normal agent run loop.
+- **The phone was already correct**, and became the specification. MOB-4 had shipped the
+  whole contract — local human gate first, then a **fresh per-approval** session from
+  `POST …/arturita/session`, then the token in `x-arturita-session` on a single decide call.
+  `StepUpDialog.tsx` is that flow re-expressed for the desk, deliberately reusing the same
+  endpoints, the same freshness discipline (mint per approval, never cache or reuse), and
+  the same "show the backend's MACHINE-RENDERED summary, never model prose" rule.
+- **The one thing that could not be mirrored: the gate itself.** The phone's local gate is
+  biometric (Face ID / Touch ID / passcode) with a typed-`APPROVE` fallback. A browser has
+  no biometric peer, so the desk uses the **fallback as its primary** — typing `APPROVE`.
+  What mattered was preserving the *property*, not the mechanism: a human deliberately
+  re-authorizes **this specific action** before any session is minted. The tempting
+  shortcut — silently minting a step-up session when the operator clicks Approve — would
+  have satisfied the server and **defeated the entire gate**, so it was explicitly rejected.
+- **Failure is now visible on both surfaces.** The desk clears the card **only** on a 2xx;
+  a failure keeps the card and states what happened next to it. The phone already did this.
+  A 403 must never look like success on either.
+- **The hand-copied list, pinned three ways.** `DANGEROUS_APPROVAL_TYPES` lived in the
+  backend and was hand-copied into `apps/mobile/src/constants.ts` — with **`connector_action`
+  missing**, so the phone reached step-up only via the incidental
+  `payload.requiresStepUp` fallback: right by luck, one entry behind a security-relevant
+  source of truth. The web had **no machine-readable copy at all** (which is precisely why
+  it never gated) — only a stale prose list in a `GovernancePanel.tsx` hint.
+  Now: the entry is added, the fallback is **kept as defence in depth** but no longer relied
+  on, `web/lib/dangerousApprovals.ts` is the desk's copy, and `dangerousApprovals.test.ts`
+  pins **mobile == backend**, **web == backend**, and **mobile == web** — by **equality**,
+  so drift in either direction fails. The backend is **text-read**, not imported: it pulls
+  `cc-denylist` + `connector-authz`, and Mobile CI installs only `apps/mobile`, so a
+  transitive drizzle import would silently drop the whole test file in CI while passing
+  locally (the trap recorded in §6.3). For the same reason `web/lib/dangerousApprovals.ts`
+  is kept deliberately **import-free** — the phone's test imports it directly.
+
+**Verified:** mobile **293/293** (+4) · typecheck clean · `expo export` bundles · web
+**258/258** (+10) · `npm run build` passes · backend **1603/1603** + evals **11/11**,
+untouched. Strictly client-side and additive; **no backend file changed** — the gate that
+produced the honest 403 is exactly the gate that was right all along.
+
+---
 
 ---
 
