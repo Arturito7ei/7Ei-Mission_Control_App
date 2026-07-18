@@ -177,17 +177,27 @@ test('[PERMS-AUTHZ] an owner cannot target an agent in ANOTHER org → 404, unch
 
 test('[PERMS-AUTHZ] the legacy PATCH /api/agents/:id cannot write permissions', async () => {
   // Seed a known cap set via the owner route, then try to overwrite it through the
-  // unvalidated legacy PATCH. The `permissions` key must be dropped; other fields
-  // still apply, proving the route works but the side door is closed.
+  // legacy PATCH. The `permissions` key must not land; an allow-listed field still
+  // applies, proving the route works but the side door is closed.
+  //
+  // GC-0b TIGHTENED THIS. The probe used to pair `permissions` with `role` and assert
+  // `role` landed. `role` is a CONFIG_FIELD — owner-gated on
+  // `PUT …/agents/:agentId/config` — so a member writing it through this PATCH was
+  // itself an escalation, and the two surfaces disagreed. The legacy route is now an
+  // ALLOW-LIST that excludes the whole owner-gated vocabulary, so the "other fields
+  // still apply" leg uses `personality` (genuinely member-writable) and `role` is
+  // asserted UNWRITABLE instead. Same intent, stricter contract.
   await app.inject({
     method: 'PUT', url: `/api/orgs/${ORG}/agents/${AGENT}/permissions`,
     payload: { permissions: ['memory:write'] },
   })
+  const roleBefore = (await agentRow(AGENT))!.role
   const res = await app.inject({
     method: 'PATCH', url: `/api/agents/${AGENT}`,
-    payload: { permissions: ['*'], role: 'Senior Analyst' },
+    payload: { permissions: ['*'], role: 'Senior Analyst', personality: 'Concise' },
   })
   assert.equal(res.statusCode, 200, res.body)
   assert.equal(await perms(AGENT), JSON.stringify(['memory:write']), 'permissions must be untouched by the legacy route')
-  assert.equal((await agentRow(AGENT))!.role, 'Senior Analyst', 'other fields still apply')
+  assert.equal((await agentRow(AGENT))!.personality, 'Concise', 'an allow-listed field must still apply')
+  assert.equal((await agentRow(AGENT))!.role, roleBefore, '`role` is owner-gated config and must NOT be member-writable here')
 })
