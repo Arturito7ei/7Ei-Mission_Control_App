@@ -719,9 +719,21 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
             title="Choose which agent you are talking to"
             style={s.recipientSelect}
           >
-            <option value={ARTURITA_CHOICE}>Arturita — Chief of Staff (default)</option>
+            {/* AUDIT (cosmetic risk, de-risked without a browser): the SELECT is
+                transparent/borderless so it disappears into the pill, but a native
+                OPTION LIST does not inherit that — it is drawn by the browser. This app
+                sets `data-theme` and never declares `color-scheme`, so on the dark theme
+                a Chromium/Firefox popup defaults to LIGHT chrome while the options
+                inherit the near-white `--text`: white on white, unreadable. Naming the
+                option colours explicitly fixes it in both themes (they are theme
+                variables, so they follow the toggle). macOS draws this popup with system
+                chrome and ignores the styling entirely — which is readable anyway, so
+                the fix is a no-op there rather than a regression. Still unverified in a
+                real browser; this removes the failure mode rather than confirming the
+                pixels. */}
+            <option value={ARTURITA_CHOICE} style={sxOption}>Arturita — Chief of Staff (default)</option>
             {roster.map(a => (
-              <option key={a.id} value={a.id}>{a.name}{a.role ? ` — ${a.role}` : ''}</option>
+              <option key={a.id} value={a.id} style={sxOption}>{a.name}{a.role ? ` — ${a.role}` : ''}</option>
             ))}
           </select>
           {recipient !== ARTURITA_CHOICE && (
@@ -803,14 +815,25 @@ function ArturitaBubble({ msg, shown }: { msg: Message; shown: string }) {
   return (
     <div style={{ alignSelf: 'flex-start', maxWidth: '86%', background: tk.surface, border: `1px solid ${tk.line}`, borderRadius: tk.r.lg, padding: `${space.md}px ${space.lg}px`, display: 'flex', flexDirection: 'column', gap: space.xs }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
-        {/* GC-1 — WHO replied. A thread can switch agents mid-way, so attribution is
+        {/* GC-1 — WHO WROTE THIS. A thread can switch agents mid-way, so attribution is
             per-bubble, read off the message rather than off current picker state.
-            Falls back to Arturita's 🌸 for every pre-GC-1 message. */}
-        {msg.agent
-          ? <AgentAvatar agent={{ name: msg.agent.name, avatarEmoji: msg.agent.avatarEmoji ?? '🤖', avatarUrl: msg.agent.avatarUrl ?? null }} size={20} radius={tk.r.sm} />
+            Keyed on `fromAgent` (set only for mode:'agent'), NOT on the presence of
+            `agent`: on a delegate turn `agent` is Arturita — she wrote the ack — and on
+            the default path this keeps the bubble byte-identical to pre-GC-1, a bare 🌸
+            with no name. Who the work went TO is a separate chip below. */}
+        {msg.fromAgent && msg.agent
+          ? <>
+              <AgentAvatar agent={{ name: msg.agent.name, avatarEmoji: msg.agent.avatarEmoji ?? '🤖', avatarUrl: msg.agent.avatarUrl ?? null }} size={20} radius={tk.r.sm} />
+              <span style={{ fontSize: text.sm.fontSize, fontWeight: 700, color: tk.text }}>{msg.agent.name}</span>
+            </>
           : <span style={{ fontSize: 15 }}>🌸</span>}
-        {msg.agent && <span style={{ fontSize: text.sm.fontSize, fontWeight: 700, color: tk.text }}>{msg.agent.name}</span>}
         <span style={{ ...tagStyle, background: badgeStyle.bg, color: badgeStyle.fg }}>{badge.icon} {badge.label}</span>
+        {/* The ASSIGNEE — deliberately a chip beside the badge, never the speaker. */}
+        {msg.assignedTo && (
+          <span style={{ ...tagStyle, background: 'var(--accent-dim)', color: 'var(--purple-1)' }} title="who the work was handed to">
+            → assigned to {msg.assignedTo.name}
+          </span>
+        )}
         {msg.via && <span style={{ ...tagStyle, background: 'var(--s2)', color: tk.muted }} title="which model produced this reply">{msg.via.startsWith('local') ? '🔒 ' : '☁ '}{msg.via}</span>}
         {msg.degraded && <span style={{ ...tagStyle, background: 'var(--warn-bg)', color: tk.amber }}>⚠ Degraded</span>}
       </div>
@@ -843,6 +866,11 @@ function ArturitaThinking() {
     </div>
   )
 }
+
+/** GC-1 audit — explicit colours for the recipient picker's native option list, which
+ *  does NOT inherit the transparent select's styling. Theme variables, so it follows the
+ *  light/dark toggle. See the comment at the call site. */
+const sxOption: React.CSSProperties = { background: 'var(--s1)', color: 'var(--text)' }
 
 const tagStyle: React.CSSProperties = { fontSize: text.xs.fontSize, lineHeight: text.xs.lineHeight, fontWeight: 700, borderRadius: tk.r.pill, padding: '1px 8px', whiteSpace: 'nowrap' }
 const sxHint: React.CSSProperties = { fontSize: text.xs.fontSize, color: tk.muted, margin: 0 }

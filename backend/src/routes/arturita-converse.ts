@@ -199,13 +199,23 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     const addressedToSpecialist = target.id !== agent.id
     // Who the transcript should attribute the reply to. Sent on EVERY response shape so
     // both clients render one rule ("show who replied") rather than special-casing.
-    const identity = {
-      id: target.id,
-      name: target.name,
-      avatarEmoji: (target as any).avatarEmoji ?? null,
-      avatarUrl: (target as any).avatarUrl ?? null,
-      role: (target as any).role ?? null,
-    }
+    const identityOf = (row: typeof agent) => ({
+      id: row.id,
+      name: row.name,
+      avatarEmoji: (row as any).avatarEmoji ?? null,
+      avatarUrl: (row as any).avatarUrl ?? null,
+      role: (row as any).role ?? null,
+    })
+    const identity = identityOf(target)
+    // GC-1 audit (LOW-1) — `agent` on a response means THE AUTHOR OF THIS REPLY, and
+    // on the delegate branch that is ARTURITA, not the agent the work was handed to.
+    // The two are the same object unless the picker was used, which is exactly why the
+    // bug was invisible: with a specialist picked, Arturita's own canned acknowledgement
+    // ("I've put it on the board for Bruno to run") rendered under Bruno's avatar and
+    // name, as if Bruno had said it. Not attacker-controllable, but the transcript named
+    // the wrong speaker — and the operator decides what to say next based on who he
+    // believes he is talking to. WHO WROTE IT and WHO IT WENT TO are now separate fields.
+    const arturitaIdentity = identityOf(agent)
 
     // ── Delegate: route into the existing task/agent flow (ask vs execute) ──────
     if (decision.mode === 'delegate') {
@@ -246,9 +256,10 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         mode: 'delegate',
         routing: { trigger: decision.trigger, reason: decision.reason, workMode: route.workMode, destructive: decision.destructive, approvalType: decision.approvalType ?? null, isFollowUp: route.isFollowUp },
         taskId,
-        // The ACK is Arturita's — she is the one confirming the hand-off — but the
-        // transcript must show who the work went TO.
-        agent: identity,
+        // The ACK is Arturita's — she is the one confirming the hand-off — so SHE is
+        // the author. Who the work went TO rides separately (`assignedTo`), and the
+        // clients render it as an "→ assigned to X" chip rather than as the speaker.
+        agent: arturitaIdentity,
         assignedTo: { id: target.id, name: target.name },
         reply: { text: ack, provider: 'arturita' },
       }

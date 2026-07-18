@@ -149,6 +149,46 @@ The agent's turn was empty, so there were no connector directives, so the gate w
 reached — and "no unapproved action occurred" was trivially true. Pinned now by asserting
 the reply has content before any gate assertion runs.
 
+## Audit follow-ups (PR #335, PASS-WITH-NITS)
+
+**LOW-1 — attribution.** `agent` on a response means **who wrote this reply**. The delegate
+branch was returning the *target*, so Arturita's own canned acknowledgement ("I've put it
+on the board for Bruno to run") rendered under Bruno's avatar and bold name, as if Bruno
+had said it. Not attacker-controllable and not a fencing bug (`fromAgent` was correctly
+null), but the transcript named the wrong speaker — and the owner decides what to say next
+from who he believes is talking.
+
+Author and assignee are now separate fields. The delegate bubble is authored by Arturita
+(🌸) and the target renders as a `→ assigned to <Agent>` chip on both surfaces. Both
+clients key the author name on `fromAgent` (set only for `mode: 'agent'`) rather than on
+the presence of `agent` — which also keeps the default bubble byte-identical to pre-GC-1,
+a bare 🌸 with no name.
+
+**LOW-2 — a vacuous capability test, and what it revealed.** The test asserted only "no
+approved action exists" with `permissions: []`; since an agent with no capability is never
+offered the tool, nothing ran and the assertion was trivially true.
+
+Strengthening it surfaced something better than a fixed test: **capability is enforced at
+two independent points** — `deriveConnectorTools` (the agent is never told the connector
+exists) and `executeConnectorAction` (the authoritative gate, "before ANYTHING else
+executes"). Removing either alone does not change the observable, because the other still
+refuses. The test now proves each layer with the other intact, and both are
+mutation-proven (M11a/M11b). The fixture was also made self-contained rather than leaning
+on a previous test's inserted connector row.
+
+**Cosmetic — the native option list.** The picker's `<select>` is transparent/borderless so
+it disappears into the pill, but a native **option list** is drawn by the browser and
+inherits none of that. This app sets `data-theme` and **never declares `color-scheme`**, so
+on the dark theme a Chromium/Firefox popup defaults to light chrome while the options
+inherit the near-white `--text` — white on white. The options now name their colours
+explicitly using theme variables, so they follow the toggle. macOS draws the popup with
+system chrome and ignores the styling, which is readable anyway, so this is a no-op there
+rather than a regression. **Still unverified in a real browser** — it removes the failure
+mode rather than confirming the pixels. There is no custom dropdown component in the
+dashboard to reuse, and the same latent risk applies to every other raw `<select>` in
+`web/app/dashboard/` (GovernancePanel, page.tsx, ui.tsx); an app-wide `color-scheme`
+declaration would fix the class, and is deliberately left out of this story.
+
 ## Deferred (scope)
 
 - **GC-2** — thread persistence. Chat history remains client-side `useState`.

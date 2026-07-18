@@ -14,6 +14,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   ARTURITA_CHOICE as WEB_SENTINEL,
@@ -87,4 +88,30 @@ test('[GC-1] an unknown or absent id resolves to Arturita, never to a blank', ()
   assert.equal(resolveRecipient(ARTURITA_CHOICE, []).name, 'Arturita')
   // The fallback must be renderable — the bar always shows a face and a name.
   assert.ok(resolveRecipient('nope', []).avatarEmoji, 'the fallback identity has no avatar')
+})
+
+// ── AUDIT LOW-1 — the delegate ack is Arturita's, the assignee is separate ────
+//
+// PARITY: the desk pins the same property in assistant.picker.test.ts. Mirrored here
+// because the phone renders its own bubble, so the desk's fix does not carry over.
+
+test('[GC-1 audit] a delegate ack is NOT marked agent-authored', () => {
+  // `historyMarker` is the phone's expression of "who wrote this". A delegate ack is
+  // Arturita's, so it must not be marked — which is also what keeps the bold agent
+  // name off that bubble (the attribution block is keyed on the same flag).
+  assert.equal(historyMarker({ role: 'assistant', mode: 'delegate', agentName: 'Bruno the Builder' }), null,
+    'a delegate ack was marked as written by the ASSIGNEE — the transcript names the wrong speaker')
+  // …while a real agent turn still is.
+  assert.equal(historyMarker({ role: 'assistant', mode: 'agent', agentName: 'Bruno the Builder' }), 'Bruno the Builder')
+})
+
+test('[GC-1 audit] the screen keys attribution on fromAgent and renders the assignee apart', () => {
+  // No renderer under `node --test`, so the wiring is pinned against the source — the
+  // technique activityScreen.test.ts already uses. Without this a future edit could
+  // re-key the author off `m.agent` and silently restore the bug on the phone only.
+  const src = readFileSync(new URL('./screens/CommandCenterScreen.tsx', import.meta.url).pathname, 'utf-8')
+  assert.match(src, /\{m\.fromAgent && m\.agent \?/,
+    'the bubble author is not keyed on fromAgent — a delegate ack would render under the assignee')
+  assert.match(src, /m\.assignedTo \?/, 'the assignee is not rendered')
+  assert.match(src, /assigned to \$\{m\.assignedTo\.name\}/, 'the assignee chip does not name the assignee')
 })

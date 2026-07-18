@@ -140,6 +140,9 @@ type Msg = {
   fromAgent?: string | null
   /** GC-1 — an action from this turn is parked at the CONN-7 approval gate. */
   pendingApprovalNote?: string | null
+  /** GC-1 audit (LOW-1) — on a DELEGATE turn, who the work was handed to. Distinct
+   *  from `agent`, which is who WROTE the reply (Arturita, on that branch). */
+  assignedTo?: { id: string; name: string } | null
 }
 
 export default function CommandCenterScreen() {
@@ -528,6 +531,7 @@ export default function CommandCenterScreen() {
       setMessages((cur) => [...cur, {
         role: 'assistant', content: reply, via,
         agent: r.agent ?? null,
+        assignedTo: r.assignedTo ?? null,
         // ONLY a real agent turn is marked untrusted — never Arturita's.
         fromAgent: r.mode === 'agent' && r.agent?.name ? r.agent.name : null,
         pendingApprovalNote: r.pendingApprovalNote ?? null,
@@ -752,12 +756,20 @@ export default function CommandCenterScreen() {
                         <Chip label={m.via.label} tone={m.via.tone} glyph={m.via.glyph} />
                       </View>
                     ) : null}
-                    {/* GC-1 — WHO replied. Per-bubble, so a thread that switched
-                        agents still attributes each turn correctly. */}
-                    {m.agent ? (
+                    {/* GC-1 — WHO WROTE THIS. Per-bubble, so a thread that switched
+                        agents still attributes each turn correctly. Keyed on
+                        `fromAgent`, not on the presence of `agent`: on a delegate turn
+                        the author is Arturita, and the assignee is a chip below. */}
+                    {m.fromAgent && m.agent ? (
                       <View style={s.attribution}>
                         <AgentAvatar agent={m.agent} size={18} round={9} />
                         <Text style={s.attributionName}>{m.agent.name}</Text>
+                      </View>
+                    ) : null}
+                    {/* The ASSIGNEE — a chip, never the speaker. */}
+                    {m.assignedTo ? (
+                      <View style={{ marginBottom: space.xs, alignSelf: 'flex-start' }}>
+                        <Chip label={`assigned to ${m.assignedTo.name}`} tone="delegate" glyph="→" />
                       </View>
                     ) : null}
                     <Text style={s.bubbleText}>{m.content}</Text>

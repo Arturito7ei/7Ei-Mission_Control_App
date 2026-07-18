@@ -11,6 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   toConverseRequest, toArturitaMessage, toWireAgentId, routingBadge,
   ARTURITA_CHOICE, type Message,
@@ -140,4 +141,54 @@ test('[GC-1] an agent turn is badged distinctly from a direct answer', () => {
   assert.notDeepEqual(agent, direct,
     'an EXECUTOR run (which can fire connectors) is badged as a plain direct answer')
   assert.match(agent.label, /agent/i)
+})
+
+// ── AUDIT LOW-1 — the delegate ack is Arturita's, the assignee is separate ────
+
+test('[GC-1 audit] a DELEGATE reply is authored by Arturita, not by the assignee', () => {
+  // The bug: the route returned the TARGET as `agent`, the panel copies `agent` to
+  // `msg.agent`, and the bubble renders that as the AUTHOR — so Arturita's own canned
+  // ack ("I've put it on the board for Bruno to run") appeared under Bruno's avatar and
+  // bold name, as if Bruno had said it.
+  const m = toArturitaMessage({
+    id: 'd',
+    resp: {
+      mode: 'delegate',
+      reply: { text: "Got it — I've put it on the board for Bruno the Builder to run.", provider: 'arturita' },
+      agent: { id: 'arturita-1', name: 'Arturita', avatarEmoji: '🌸' },
+      assignedTo: { id: 'bruno-1', name: 'Bruno the Builder' },
+      taskId: 't1',
+    },
+  })
+  assert.equal(m.agent?.name, 'Arturita',
+    'THE DELEGATE ACK IS ATTRIBUTED TO THE ASSIGNEE — the transcript names the wrong speaker')
+  assert.equal(m.assignedTo?.name, 'Bruno the Builder', 'the assignee is not carried for its own chip')
+  assert.notEqual(m.agent?.id, m.assignedTo?.id, 'author and assignee collapsed into one field')
+
+  // `fromAgent` is what drives the bold author name in the bubble. Arturita wrote this,
+  // so it must stay null — which also keeps the bubble byte-identical to pre-GC-1.
+  assert.equal(m.fromAgent, null,
+    'a delegate ack was marked agent-authored — it would render under the agent\'s name AND be fenced')
+})
+
+test('[GC-1 audit] an AGENT reply is still authored by the agent that ran it', () => {
+  const m = toArturitaMessage({
+    id: 'a',
+    resp: { mode: 'agent', reply: { text: 'done' }, agent: { id: 'bruno-1', name: 'Bruno the Builder' } },
+  })
+  assert.equal(m.agent?.name, 'Bruno the Builder',
+    'fixing the delegate attribution blanked out the REAL one')
+  assert.equal(m.fromAgent, 'Bruno the Builder')
+  assert.equal(m.assignedTo ?? null, null, 'an agent turn has no assignee — nothing was handed off')
+})
+
+test('[GC-1 audit] the panel keys the author name on fromAgent, and renders the assignee apart', () => {
+  // No renderer under `node --test`, so the wiring is pinned against the source — the
+  // technique activityScreen.test.ts already uses on the phone. Without this, a future
+  // edit could re-key the author off `msg.agent` and silently restore the bug.
+  const src = readFileSync(new URL('./AssistantPanel.tsx', import.meta.url).pathname, 'utf-8')
+  assert.match(src, /\{msg\.fromAgent && msg\.agent/,
+    'the bubble author is not keyed on fromAgent — a delegate ack would render under the assignee')
+  assert.match(src, /msg\.assignedTo && \(/, 'the assignee is not rendered')
+  assert.match(src, /assigned to \{msg\.assignedTo\.name\}/, 'the assignee chip does not name the assignee')
 })

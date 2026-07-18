@@ -256,6 +256,10 @@ export interface Message {
   /** GC-1 — "an action is waiting for your approval". Rendered inline so a gated
    *  connector call does not read as the agent having gone silent. */
   pendingApprovalNote?: string | null
+  /** GC-1 audit (LOW-1) — on a DELEGATE turn, who the work was handed to. Distinct
+   *  from `agent`, which is who WROTE the reply (Arturita, on that branch). Rendered
+   *  as an "→ assigned to X" chip, never as the speaker. */
+  assignedTo?: { id: string; name: string } | null
 }
 
 // Shape of the /converse response (subset the panel consumes).
@@ -380,6 +384,7 @@ export function toArturitaMessage(input: { id: string; resp: ConverseResponse })
     agent,
     fromAgent,
     pendingApprovalNote: resp.pendingApprovalNote ?? null,
+    assignedTo: resp.assignedTo ?? null,
     streaming: true,
   }
 }
