@@ -1146,8 +1146,11 @@ works today *only* because `approvalNeedsStepUp` (`constants.ts:42`) also honour
 (`connector-authz.ts:431-453`). So the guarantee rests on a payload flag rather than on the
 type classification the list exists to provide: any `connector_action` row whose payload
 lacks that flag would show mobile's one-tap Approve, skip the danger banner, and dead-end on
-a server 403. **Follow-up: add `'connector_action'` to `apps/mobile/src/constants.ts` and
-pin the copy with a tripwire test**, per the standing hand-copy rule in CLAUDE.md.
+a server 403. **RESOLVED by APPR-1 (F2):** `'connector_action'` added, and the copy is now pinned by
+`apps/mobile/src/dangerousApprovals.test.ts` — **equality** against the backend array (text-read; the module can't be
+imported under Mobile CI's dep-free constraint) and against the web's copy. The `payload.requiresStepUp` clause is
+**kept as defence in depth** — it still catches a genuine wrapper (a `low_trust_review` around a dangerous action) —
+but the guarantee no longer rests on it.
 
 **Gap B — web cannot approve ANY dangerous approval (pre-existing defect, now more
 visible).** Web reads approvals from a *different* endpoint (`GET /api/orgs/:orgId/inbox`,
@@ -1160,9 +1163,13 @@ behaviour: on the desk, Approve makes the card disappear as if it worked, while 
 is silently NOT approved (403 discarded); on the phone, the same approval genuinely
 approves.** This inverts the usual assumption that the desk is the more capable surface. It
 predates CONN-9 and affects `wallet_tx` / `email_send` / `machine_exec` equally — but CONN-9
-is what makes it routine. **Follow-up (separate story, web-side): a step-up mint + header on
-the web decide path, and stop swallowing the error / stop optimistically clearing the card.**
-The silent-success UX is the more dangerous half.
+is what makes it routine. **RESOLVED by APPR-1 (F1)**, and the silent-success half — correctly identified here as the more dangerous one — was
+treated as the primary bug. `web/app/dashboard/cockpit/StepUpDialog.tsx` mirrors the phone's MOB-4 contract: an
+explicit human gate (typed `APPROVE` — the browser has no biometric peer) **before** minting a fresh per-approval
+session, then `x-arturita-session` on the decide call. The card is cleared **only** on a 2xx, and a failure keeps the
+card and states what happened on it, so a 403 can no longer read as success. A source-level tripwire
+(`web/app/dashboard/approvalDecide.test.ts`) pins the ordering itself against regression. See
+`DESIGN-mobile-parity.md` §6.12.
 
 **Deferred (not epic-blocking):** multi-round tool use (today's contract is one round then a
 terminal synthesis); letting an orchestrator both call a connector and delegate in the same

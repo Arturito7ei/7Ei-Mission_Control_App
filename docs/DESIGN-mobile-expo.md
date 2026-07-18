@@ -489,7 +489,7 @@ Both are isolated behind `try/catch` in `src/stepup.ts` (fail-closed: any error 
 
 ### 15.5 Flagged / deferred
 
-- **Web has no client-side step-up yet** (§15.1 note). Non-blocking; a small follow-up can reuse this exact contract in `CockpitPanel`/`InboxSection`.
+- ~~**Web has no client-side step-up yet**~~ — **CLOSED by APPR-1.** The desk now reuses this exact contract in `CockpitPanel`/`InboxSection` via `cockpit/StepUpDialog.tsx`: same `POST …/arturita/session` mint (fresh per approval, never cached), same `x-arturita-session` header on the single decide call, same machine-rendered summary. The one substitution is the local gate — a browser has no biometric peer, so the desk uses this story's **typed-`APPROVE` fallback as its primary** gate. It was worse than "no step-up" while it lasted: the web also cleared the approval card before awaiting the request and swallowed the 403, so a refused approve **rendered as success**. See `DESIGN-mobile-parity.md` §6.12.
 - **`source` enum is `{desk, telegram}`** — neither perfectly labels "phone". We mint as `desk` (first-party Clerk client, same as the web desk); it's a cosmetic label on the sessions list with **no** security effect. A future `mobile` enum value is a nicety, **not** a required backend change (per the constraint, we did not touch the backend).
 - **Full green-path 200** is the operator step above (needs a live Clerk owner token).
 - This story is **stage→audit** (it approves dangerous actions remotely): an independent auditor runs next; the builder did **not** self-audit or merge.

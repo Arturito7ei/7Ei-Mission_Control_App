@@ -24,6 +24,8 @@ import TaskBoard from './cockpit/TaskBoard'
 import AddAgentWizard from './cockpit/AddAgentWizard'
 import HireDialog from './cockpit/HireDialog'
 import InviteAgentDialog from './cockpit/InviteAgentDialog'
+import StepUpDialog from './cockpit/StepUpDialog'
+import { approvalNeedsStepUp } from '@/lib/dangerousApprovals'
 
 // P0b — the same composition root can render either the full operator stack
 // (Operations) or a single promoted area. `only` filters which sections render
@@ -50,6 +52,11 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   const [wizard, setWizard] = useState(false)
   const [hire, setHire] = useState(false)
   const [invite, setInvite] = useState(false)
+  // APPR-1 — the approval awaiting step-up confirmation, plus per-approval
+  // in-flight + error state so a failed decision stays visible on its own card.
+  const [stepUp, setStepUp] = useState<Approval | null>(null)
+  const [deciding, setDeciding] = useState<Set<string>>(new Set())
+  const [decideErr, setDecideErr] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     try {
@@ -76,9 +83,35 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     setInbox(x => x.filter(i => i.taskId !== taskId))
     try { await api(`/api/orgs/${orgId}/inbox/dismiss`, { token: await getToken(), method: 'POST', body: JSON.stringify({ taskId }) }) } catch {}
   }
+  // APPR-1 — deciding an approval is NOT optimistic any more.
+  //
+  // It used to drop the card first and swallow every failure (`catch {}`), which
+  // made the desk LIE: the backend 403s an approve of a dangerous type without a
+  // step-up header (which the web never sent), yet the card vanished and the
+  // operator believed the action was approved. Now:
+  //   • a dangerous APPROVE routes to the step-up dialog (typed confirmation →
+  //     fresh session → `x-arturita-session` header) and only IT clears the card;
+  //   • everything else awaits the response and clears ONLY on success;
+  //   • a failure keeps the card and surfaces the error next to it.
+  // Reject / request-changes are never step-up-gated, so the common path is
+  // unchanged apart from now being honest about failure.
   const decide = async (id: string, decision: ApprovalDecision, note?: string) => {
-    setApprovals(x => x.filter(a => a.id !== id))
-    try { await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision, note }) }) } catch {}
+    const approval = approvals.find(a => a.id === id)
+    if (decision === 'approved' && approval && approvalNeedsStepUp(approval)) {
+      setStepUp(approval) // the dialog owns the mint + decide + card removal
+      return
+    }
+    setDeciding(s => new Set(s).add(id))
+    setDecideErr(e => { const { [id]: _drop, ...rest } = e; return rest })
+    try {
+      await api(`/api/approvals/${id}/decide`, { token: await getToken(), method: 'POST', body: JSON.stringify({ decision, note }) })
+      setApprovals(x => x.filter(a => a.id !== id)) // ONLY on success
+    } catch (e: any) {
+      // Keep the card, and say what actually happened — a 403 must never read as success.
+      setDecideErr(prev => ({ ...prev, [id]: e?.message ?? 'Decision failed — nothing was recorded.' }))
+    } finally {
+      setDeciding(s => { const n = new Set(s); n.delete(id); return n })
+    }
   }
   // V2: retry a failed inbox row in place — re-execute, drop it, reload once done.
   const retry = async (taskId: string) => {
@@ -164,7 +197,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   // the focused single-area views (P0b). Each section self-titles (SectionLabel),
   // so a focused area needs no extra heading beyond the toolbar.
   const sections: { key: CockpitSectionKey; node: React.ReactNode }[] = [
-    { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} /> },
+    { key: 'inbox', node: <InboxSection inbox={inbox} approvals={approvals} onDismiss={dismiss} onDecide={decide} onRetry={retry} deciding={deciding} decideErr={decideErr} /> },
     { key: 'voice', node: <VoiceSection orgId={orgId} getToken={getToken} approvals={approvals} onDecide={decide} /> },
     { key: 'agents', node: <AgentFleet agents={data ? data.agents : null} onControl={agentControl} onAsk={askAgent} onOpenAgent={onOpenAgent} /> },
     { key: 'activity', node: <TimelineSection timeline={timeline} /> },
@@ -219,6 +252,17 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
       {wizard && <AddAgentWizard orgId={orgId} getToken={getToken} onClose={() => setWizard(false)} onDone={() => { setWizard(false); load() }} />}
       {hire && <HireDialog orgId={orgId} getToken={getToken} onClose={() => setHire(false)} onDone={() => { setHire(false); load() }} />}
       {invite && <InviteAgentDialog orgId={orgId} getToken={getToken} onClose={() => { setInvite(false); load() }} />}
+      {/* APPR-1 — dangerous approve: typed confirmation → fresh step-up session →
+          `x-arturita-session` on decide. The card is removed ONLY on a 2xx. */}
+      {stepUp && (
+        <StepUpDialog
+          approval={stepUp}
+          orgId={orgId}
+          getToken={getToken}
+          onCancel={() => setStepUp(null)}
+          onApproved={id => { setStepUp(null); setApprovals(x => x.filter(a => a.id !== id)); setDecideErr(e => { const { [id]: _drop, ...rest } = e; return rest }) }}
+        />
+      )}
     </div>
   )
 }
