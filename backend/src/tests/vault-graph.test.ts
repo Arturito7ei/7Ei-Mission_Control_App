@@ -327,7 +327,8 @@ test('[FIX-1] an EMPTY graphify graph.json does NOT satisfy the loop — caller 
   const picked = await selectGraphifyGraph(
     CANDS, reader({ 'vault/graphify-out/graph.json': JSON.stringify({ nodes: [], links: [] }) }), 'vault',
   )
-  assert.equal(picked, null, 'an empty parse was accepted — the native fallback is skipped again')
+  assert.equal(picked.graph, null, 'an empty parse was accepted — the native fallback is skipped again')
+  assert.match(String(picked.error), /0 nodes/, 'the reason must survive — "no graph" and "broken graph" are different')
 })
 
 test('[FIX-1] an empty FIRST candidate does not stop a good SECOND one', async () => {
@@ -337,10 +338,10 @@ test('[FIX-1] an empty FIRST candidate does not stop a good SECOND one', async (
       nodes: [{ id: 'a', label: 'A', source_file: 'vault/a.md', source_location: 'L1' }], links: [],
     }),
   }), 'vault')
-  assert.ok(picked, 'a usable second candidate was skipped')
-  assert.equal(picked!.path, 'graphify-out/graph.json')
-  assert.equal(picked!.graph.nodes.length, 1)
-  assert.equal(picked!.graph.source, 'graphify')
+  assert.ok(picked.graph, 'a usable second candidate was skipped')
+  assert.equal(picked.path, 'graphify-out/graph.json')
+  assert.equal(picked.graph!.nodes.length, 1)
+  assert.equal(picked.graph!.source, 'graphify')
 })
 
 test('[FIX-1] a NON-empty graphify graph is still preferred, and reports its path', async () => {
@@ -354,18 +355,21 @@ test('[FIX-1] a NON-empty graphify graph is still preferred, and reports its pat
       links: [{ source: 'a', target: 'b' }],
     }),
   }), 'vault')
-  assert.ok(picked)
-  assert.equal(picked!.path, 'vault/graphify-out/graph.json')
-  assert.equal(picked!.graph.nodes.length, 2)
+  assert.ok(picked.graph)
+  assert.equal(picked.path, 'vault/graphify-out/graph.json')
+  assert.equal(picked.graph!.nodes.length, 2)
 })
 
 test('[FIX-1] unreadable and non-JSON candidates fall through rather than throwing', async () => {
   const missing = await selectGraphifyGraph(CANDS, reader({}), 'vault')
-  assert.equal(missing, null)
+  assert.equal(missing.graph, null)
+  assert.equal(missing.error, undefined, 'NO graph.json must not manufacture an error')
   const garbage = await selectGraphifyGraph(
     CANDS, reader({ 'vault/graphify-out/graph.json': 'not json at all {{{' }), 'vault',
   )
-  assert.equal(garbage, null)
+  assert.equal(garbage.graph, null)
+  assert.match(String(garbage.error), /not valid JSON/,
+    'a CORRUPT graph.json is indistinguishable from an absent one — the bug one layer down')
 })
 
 test('[FIX-1] the fallback yields a REAL native graph, not another empty one', async () => {
@@ -374,7 +378,7 @@ test('[FIX-1] the fallback yields a REAL native graph, not another empty one', a
   const picked = await selectGraphifyGraph(
     CANDS, reader({ 'vault/graphify-out/graph.json': '{}' }), 'vault',
   )
-  assert.equal(picked, null)
+  assert.equal(picked.graph, null)
   const native = buildNativeGraph([
     { path: 'vault/00-Index/Home.md', markdown: 'see [[ADR]]' },
     { path: 'vault/02-Architecture/ADR.md', markdown: 'back to [[Home]]' },
@@ -382,4 +386,81 @@ test('[FIX-1] the fallback yields a REAL native graph, not another empty one', a
   assert.equal(native.source, 'native')
   assert.equal(native.stats.notes, 2, 'the native fallback produced nothing — the fix is cosmetic')
   assert.ok(native.stats.links > 0, 'wikilinks were not resolved by the fallback')
+})
+
+// ─── FIX-1 audit M-2 · the retry must not become "no scoping at all" ──────────
+//
+// The retry fires when scoping annihilated a non-empty payload. When EVERY node is
+// foreign that condition also trips, and a scope of '' makes inVault accept any prefix —
+// so a graph.json full of `/Users/...` paths went from correctly-0 nodes to fully
+// rendered, with bogus cluster names. isSafeVaultPath independently refuses to READ any
+// of them, so this was never disclosure; a parser that renders a node it would refuse to
+// open is still lying, which is the thing this change exists to stop.
+
+test('[FIX-1] an ALL-FOREIGN payload stays empty — the retry is not a scoping bypass', () => {
+  const g = parseGraphifyGraph({
+    nodes: [
+      { id: 'u', label: 'creds', source_file: '/Users/artutito/.aws/credentials.md', source_location: 'L1' },
+      { id: 'h', label: 'home', source_file: '~/.ssh/notes.md', source_location: 'L1' },
+      { id: 'w', label: 'wf', source_file: '/etc/hosts.md', source_location: 'L1' },
+    ],
+    links: [],
+  }, 'vault')
+  assert.equal(g.nodes.length, 0, 'absolute/home paths were rendered as vault notes')
+  assert.equal(g.stats.notes, 0)
+})
+
+test('[FIX-1] the retry still works for genuine root-relative paths beside foreign ones', () => {
+  // The hardening must not have killed the fix: reject only what CANNOT be
+  // root-relative, and keep everything that can.
+  const g = parseGraphifyGraph({
+    nodes: [
+      { id: 'ok', label: 'Home', source_file: '00-Index/Home.md', source_location: 'L1' },
+      { id: 'abs', label: 'creds', source_file: '/Users/artutito/.aws/credentials.md', source_location: 'L1' },
+    ],
+    links: [],
+  }, 'vault')
+  assert.deepEqual(g.nodes.map(n => n.id), ['ok'],
+    'the retry must keep root-relative notes and still drop absolute ones')
+})
+
+test('[FIX-1] a MIXED payload never reaches the retry at all', () => {
+  // One in-root node suppresses the retry, so ordinary out-of-vault filtering applies
+  // exactly as it did before FIX-1.
+  const g = parseGraphifyGraph({
+    nodes: [
+      { id: 'in', label: 'In', source_file: 'vault/a.md', source_location: 'L1' },
+      { id: 'far', label: 'Far', source_file: 'other-repo/b.md', source_location: 'L1' },
+      { id: 'abs', label: 'Abs', source_file: '/Users/x/c.md', source_location: 'L1' },
+    ],
+    links: [],
+  }, 'vault')
+  assert.deepEqual(g.nodes.map(n => n.id), ['in'])
+})
+
+test('[FIX-1] a note legitimately named `a..b.md` is NOT treated as traversal', () => {
+  // `includes('..')` over-rejected a real filename; only a `..` SEGMENT is traversal.
+  const ok = parseGraphifyGraph({
+    nodes: [{ id: 'dd', label: 'a..b', source_file: 'vault/notes/a..b.md', source_location: 'L1' }],
+    links: [],
+  }, 'vault')
+  assert.equal(ok.nodes.length, 1, 'a legitimate double-dot filename was rejected')
+
+  const escape = parseGraphifyGraph({
+    nodes: [{ id: 'esc', label: 'esc', source_file: 'vault/../../etc/passwd.md', source_location: 'L1' }],
+    links: [],
+  }, 'vault')
+  assert.equal(escape.nodes.length, 0, 'a real `..` segment escaped the vault')
+})
+
+test('[FIX-1] the absolute-path rejection is RETRY-ONLY — pass 1 still accepts /vault/…', () => {
+  // `inVault` strips a leading slash, so an absolute path that IS inside the root has
+  // always been accepted on the normal pass. Hoisting the retry's rejection to both
+  // passes would silently drop those. The rejection exists to stop '' scope from
+  // accepting anything — it is not a general rule about leading slashes.
+  const g = parseGraphifyGraph({
+    nodes: [{ id: 'a', label: 'A', source_file: '/vault/00-Index/Home.md', source_location: 'L1' }],
+    links: [],
+  }, 'vault')
+  assert.equal(g.nodes.length, 1, 'an absolute path INSIDE the vault root was dropped')
 })

@@ -497,15 +497,18 @@ export async function taskRoutes(app: FastifyInstance) {
     const root = String(cfg.root ?? '').replace(/^\/+|\/+$/g, '')
     const graphifyCandidates = [`${root}/graphify-out/graph.json`, 'graphify-out/graph.json'].filter(Boolean)
     // FIX-1 — the candidate loop lives in vault-graph.ts so its "an EMPTY parse is
-    // not an answer" rule is reachable by a test. It returns null when nothing
-    // useful was found, and the native fallback below then runs as it should.
+    // not an answer" rule is reachable by a test. `graph` is null when nothing useful
+    // was found, and the native fallback below then runs as it should. `error` says
+    // WHY, when there was a candidate we could not use — a corrupt graph.json must not
+    // look identical to no graph.json at all.
     const graphify = await selectGraphifyGraph(
       graphifyCandidates,
       async cand => { const gr = await vaultRead(token, cfg, cand); return gr.ok ? gr.markdown ?? null : null },
       cfg.root,
     )
-    let graph: VaultGraph | null = graphify?.graph ?? null
-    const graphPath: string | undefined = graphify?.path
+    let graph: VaultGraph | null = graphify.graph
+    const graphPath: string | undefined = graphify.path
+    const graphifyError: string | undefined = graphify.error
 
     // 2) Native fallback — parse markdown ourselves.
     if (!graph) {
@@ -521,9 +524,9 @@ export async function taskRoutes(app: FastifyInstance) {
     }
 
     const rebuildCommand = `graphify update ${cfg.root} --no-cluster && git -C <vault> add ${cfg.root}/graphify-out/graph.json && git -C <vault> commit -m "chore: refresh vault graph"`
-    const payload: VaultGraph & { repo: string; root: string; branch: string; hasGraphify: boolean; graphPath?: string; rebuildCommand: string } = {
+    const payload: VaultGraph & { repo: string; root: string; branch: string; hasGraphify: boolean; graphPath?: string; graphifyError?: string; rebuildCommand: string } = {
       ...graph, repo: cfg.repo, root: cfg.root, branch: cfg.branch,
-      hasGraphify: graph.source === 'graphify', graphPath, rebuildCommand,
+      hasGraphify: graph.source === 'graphify', graphPath, graphifyError, rebuildCommand,
     }
     graphCache.set(cacheKey, { at: Date.now(), graph: payload })
     return capGraph(payload, maxNodes)

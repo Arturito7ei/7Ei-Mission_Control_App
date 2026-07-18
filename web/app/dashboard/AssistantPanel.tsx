@@ -706,36 +706,46 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
         <div style={s.recipientBar}>
           <span style={{ color: tk.muted, fontWeight: 700, fontSize: text.xs.fontSize, letterSpacing: 0.4 }}>TO</span>
           <AgentAvatar agent={{ name: activeRecipient.name, avatarEmoji: activeRecipient.avatarEmoji ?? '🤖', avatarUrl: activeRecipient.avatarUrl ?? null }} size={22} radius={tk.r.sm} />
-          <select
-            value={recipient}
-            onChange={e => {
-              setRecipient(e.target.value)
-              // A new recipient is a new thread: `existingThreadId` names a task on the
-              // PREVIOUS agent's queue, and carrying it over would file follow-up work
-              // against an agent the operator is no longer addressing.
-              threadRef.current = null
-            }}
-            aria-label="Choose which agent you are talking to"
-            title="Choose which agent you are talking to"
-            style={s.recipientSelect}
-          >
-            {/* AUDIT (cosmetic risk, de-risked without a browser): the SELECT is
-                transparent/borderless so it disappears into the pill, but a native
-                OPTION LIST does not inherit that — it is drawn by the browser. This app
-                sets `data-theme` and never declares `color-scheme`, so on the dark theme
-                a Chromium/Firefox popup defaults to LIGHT chrome while the options
-                inherit the near-white `--text`: white on white, unreadable. Naming the
-                option colours explicitly fixes it in both themes (they are theme
-                variables, so they follow the toggle). macOS draws this popup with system
-                chrome and ignores the styling entirely — which is readable anyway, so
-                the fix is a no-op there rather than a regression. Still unverified in a
-                real browser; this removes the failure mode rather than confirming the
-                pixels. */}
-            <option value={ARTURITA_CHOICE} style={sxOption}>Arturita — Chief of Staff (default)</option>
-            {roster.map(a => (
-              <option key={a.id} value={a.id} style={sxOption}>{a.name}{a.role ? ` — ${a.role}` : ''}</option>
-            ))}
-          </select>
+          {/* FIX-1 AUDIT M-1 — the select sets `appearance: none` (to drop the UA's own
+              intrinsic metrics, which were half of the baseline clipping), and that also
+              removes the native dropdown caret. Nothing drew a replacement, so the
+              control lost every visual cue that it IS a dropdown. This wrapper draws one.
+              `pointer-events: none` so the caret never eats a click meant for the select,
+              and `aria-hidden` because the select already announces itself. */}
+          <span style={s.recipientWrap}>
+            <select
+              value={recipient}
+              onChange={e => {
+                setRecipient(e.target.value)
+                // A new recipient is a new thread: `existingThreadId` names a task on the
+                // PREVIOUS agent's queue, and carrying it over would file follow-up work
+                // against an agent the operator is no longer addressing.
+                threadRef.current = null
+              }}
+              aria-label="Choose which agent you are talking to"
+              title="Choose which agent you are talking to"
+              style={s.recipientSelect}
+            >
+              {/* AUDIT (cosmetic risk, de-risked without a browser): the SELECT is
+                  transparent/borderless so it disappears into the pill, but a native
+                  OPTION LIST does not inherit that — it is drawn by the browser. On the
+                  dark theme a Chromium/Firefox popup would default to LIGHT chrome while
+                  the options inherited the near-white `--text`: white on white,
+                  unreadable. TWO things now prevent that, and the belt-and-braces is
+                  deliberate: FIX-1 added the app-wide `color-scheme: dark|light` keyed on
+                  [data-theme] (app/globals.css), which is the root fix and tells the
+                  browser which palette to draw ALL native chrome in; these explicit
+                  option colours remain as the local backstop for any surface that renders
+                  outside that declaration. macOS draws this popup with system chrome and
+                  ignores option styling entirely — readable anyway, so a no-op there.
+                  Still unverified in a real browser. */}
+              <option value={ARTURITA_CHOICE} style={sxOption}>Arturita — Chief of Staff (default)</option>
+              {roster.map(a => (
+                <option key={a.id} value={a.id} style={sxOption}>{a.name}{a.role ? ` — ${a.role}` : ''}</option>
+              ))}
+            </select>
+            <span aria-hidden style={s.recipientCaret}>▾</span>
+          </span>
           {recipient !== ARTURITA_CHOICE && (
             <span style={{ ...tagStyle, background: 'var(--accent-dim)', color: 'var(--purple-1)' }} title="This turn runs as that agent — its own memory, tools and connectors">
               ⚡ agent
@@ -897,10 +907,23 @@ const s: Record<string, React.CSSProperties> = {
   // long name. `appearance: none` drops the UA's intrinsic metrics so ours are
   // the only ones in play; `maxWidth: 100%` keeps a long name from pushing the
   // pill wider than its container instead of ellipsising inside it.
-  recipientSelect: {
+  // FIX-1 AUDIT M-1 — positioning context for the caret the `appearance: none` above
+  // removed. Carries the flex sizing the select used to own, so the bar lays out
+  // exactly as before.
+  recipientWrap: {
     flex: 1, minWidth: 180, maxWidth: '100%',
+    position: 'relative', display: 'flex', alignItems: 'center',
+  },
+  recipientCaret: {
+    position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)',
+    pointerEvents: 'none', color: tk.muted, fontSize: text.xs.fontSize, lineHeight: 1,
+  },
+  recipientSelect: {
+    flex: 1, minWidth: 0, maxWidth: '100%',
     minHeight: density.ctrl, boxSizing: 'border-box',
-    padding: `${space.xs}px 0`,
+    // Right padding reserves the caret's lane, so a long agent name ellipsises
+    // BEFORE it reaches the glyph rather than running underneath it.
+    padding: `${space.xs}px ${space.lg}px ${space.xs}px 0`,
     appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
     background: 'transparent', border: 'none', outline: 'none',
     color: tk.text, fontSize: text.md.fontSize, lineHeight: text.md.lineHeight,

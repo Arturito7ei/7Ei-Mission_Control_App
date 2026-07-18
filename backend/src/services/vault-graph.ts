@@ -230,24 +230,42 @@ export function resolveWikilink(raw: string, byBase: Map<string, string>, byId: 
  * is exactly what shipped to production. So: if scoping ANNIHILATED a payload
  * that did have nodes, re-scope treating the paths as vault-root-relative.
  *
- * The retry is deliberately conditioned on `kept === 0 && rawNodes.length > 0`,
- * which is the only situation where it can change an answer:
- *   - a correctly-rooted graph keeps ≥1 node, so the retry never fires and the
- *     out-of-vault filtering it exists for is untouched;
+ * The retry is conditioned on `kept === 0 && rawNodes.length > 0`:
+ *   - a MIXED payload keeps ≥1 in-root node, so the retry never fires and the
+ *     out-of-vault filtering is untouched;
  *   - a genuinely empty payload has no raw nodes, so it stays empty rather than
  *     being dressed up as a graph.
- * The `..` traversal guard in `inVault` applies to both passes — this widens the
- * accepted PREFIX, never the escape.
+ *
+ * ⚠️ BE PRECISE ABOUT WHAT THE RETRY COSTS (FIX-1 audit M-2). The scoping is NOT
+ * simply "untouched". It is untouched for mixed payloads and DELIBERATELY relaxed
+ * for all-foreign ones: when every node is out-of-vault the retry does fire, and a
+ * scope of `''` makes `inVault` accept any prefix. Left unguarded that turned a
+ * previously-empty graph into one full of bogus clusters (`Users`, `.github`) — a
+ * correctness and trust bug on a parser whose whole job is to stop lying about the
+ * graph. So the retry pass additionally rejects paths that CANNOT be
+ * vault-root-relative by construction: absolute (`/Users/…`) and home-relative
+ * (`~/.aws/credentials`). A genuine root-relative note path is neither. The `..`
+ * traversal guard in `inVault` applies to both passes.
+ *
+ * Net: the retry widens the accepted PREFIX for relative paths only, and never the
+ * escape. `isSafeVaultPath` independently refuses to READ any of these, so this was
+ * never a disclosure path — but a parser that renders a node it would refuse to open
+ * is still lying, which is the thing this change exists to stop.
  */
 export function parseGraphifyGraph(json: any, root: string): VaultGraph {
   const rawNodes: any[] = Array.isArray(json?.nodes) ? json.nodes : []
   const rawLinks: any[] = Array.isArray(json?.links) ? json.links : (Array.isArray(json?.edges) ? json.edges : [])
   const r = String(root ?? '').replace(/^\/+|\/+$/g, '')
 
-  const collect = (scope: string): Map<string, GraphNode> => {
+  const collect = (scope: string, rootRelativeOnly = false): Map<string, GraphNode> => {
     const keep = new Map<string, GraphNode>()
     for (const n of rawNodes) {
       const sf: string = String(n?.source_file ?? '')
+      // FIX-1 audit M-2 — on the RETRY pass the scope is `''`, which `inVault`
+      // treats as "accept any prefix". Checked on the RAW value, before inVault
+      // strips leading slashes: an absolute or home-relative path can never be a
+      // vault-root-relative note path, so it is foreign, not differently-rooted.
+      if (rootRelativeOnly && (sf.startsWith('/') || sf.startsWith('~'))) continue
       if (!inVault(sf, scope)) continue
       if (/(^|\/)\.obsidian\//.test(sf)) continue
       const isFile = String(n?.source_location ?? 'L1').replace(/^L/i, '') === '1'
@@ -272,7 +290,7 @@ export function parseGraphifyGraph(json: any, root: string): VaultGraph {
   }
 
   let keep = collect(r)
-  if (keep.size === 0 && rawNodes.length > 0 && r) keep = collect('')
+  if (keep.size === 0 && rawNodes.length > 0 && r) keep = collect('', true)
 
   const edges: GraphEdge[] = []
   let links = 0
@@ -304,27 +322,46 @@ export function parseGraphifyGraph(json: any, root: string): VaultGraph {
  *
  *  Lifted out of the route so this decision is reachable by a test at all: `read` is the
  *  only I/O, so a fake reader exercises the whole loop, including the case that shipped.
- *  Returns null when no candidate yields a non-empty graph. */
+ *
+ *  FIX-1 audit nit — a CORRUPT graph.json is reported, not swallowed. The catch here was
+ *  fully silent, which made a truncated write, a git-lfs pointer or an HTML error body
+ *  indistinguishable from NO graph.json at all: both fell through to the native parse and
+ *  both reported `hasGraphify: false`, so the operator saw "we don't have a graph" when
+ *  the truth was "your graph is broken and here is where". On a change whose entire
+ *  thesis is "stop lying about the graph", that is the same bug one layer down.
+ *  `error` is a short reason for the FIRST unusable candidate; the fallback still runs
+ *  either way, so this adds an explanation and changes no control flow. */
 export async function selectGraphifyGraph(
   candidates: readonly string[],
   read: (path: string) => Promise<string | null>,
   root: string,
-): Promise<{ graph: VaultGraph; path: string } | null> {
+): Promise<{ graph: VaultGraph; path: string; error?: string } | { graph: null; path?: undefined; error?: string }> {
+  let error: string | undefined
   for (const cand of candidates) {
     const raw = await read(cand)
     if (!raw) continue
     try {
       const graph = parseGraphifyGraph(JSON.parse(raw), root)
-      if (graph.nodes.length === 0) continue
+      if (graph.nodes.length === 0) {
+        // Parsed fine but says nothing — the shipped bug. Distinct from corrupt.
+        error ??= `${cand}: parsed to 0 nodes (wrong root, or an empty graph)`
+        continue
+      }
       return { graph, path: cand }
-    } catch { /* not JSON — keep looking */ }
+    } catch (e: any) {
+      const reason = String(e?.message ?? e).slice(0, 200)
+      error ??= `${cand}: not valid JSON (${reason})`
+      console.warn(`[vault-graph] unusable graphify candidate ${cand}: ${reason}`)
+    }
   }
-  return null
+  return { graph: null, error }
 }
 
 function inVault(sourceFile: string, root: string): boolean {
   const p = String(sourceFile ?? '').replace(/^\/+/, '')
-  if (p.includes('..')) return false
+  // A SEGMENT check, not a substring one: `a..b.md` is a legitimate note name and
+  // `includes('..')` rejected it. Only a `..` path segment is traversal.
+  if (p.split('/').includes('..')) return false
   return !root || p === root || p.startsWith(root + '/')
 }
 
