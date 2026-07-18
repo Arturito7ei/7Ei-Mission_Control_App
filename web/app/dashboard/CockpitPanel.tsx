@@ -291,7 +291,18 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
           orgId={orgId}
           getToken={getToken}
           onCancel={() => setStepUp(null)}
-          onApproved={id => { setStepUp(null); setApprovals(x => x.filter(a => a.id !== id)); setDecideErr(e => { const { [id]: _drop, ...rest } = e; return rest }) }}
+          onApproved={id => {
+            setStepUp(null)
+            setApprovals(x => x.filter(a => a.id !== id))
+            setDecideErr(e => { const { [id]: _drop, ...rest } = e; return rest })
+            // AUDIT-ACT1 H-3 — the step-up path must refresh the tail TOO. Without this
+            // the desk drops the card and the row never appears under "Recently decided",
+            // so approving the single most dangerous class of action gives the operator
+            // the LEAST confirmation — the same "it just vanished" phenomenology APPR-1
+            // existed to kill. The phone already did this (ApprovalsPane onApproved);
+            // the desk did not. Mirrored by activityFeed.test.ts.
+            loadDecisions()
+          }}
         />
       )}
     </div>

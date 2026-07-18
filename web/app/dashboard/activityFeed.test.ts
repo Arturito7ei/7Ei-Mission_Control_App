@@ -139,3 +139,41 @@ test('[ACT-1] the step-up affordance survives on the queue (APPR-1 must not regr
   assert.ok(INBOX.includes('✓ Approve…'), 'the ellipsis that warns a confirmation is coming was removed')
   assert.ok(INBOX.includes('needs step-up confirmation'), 'the step-up hint line is gone')
 })
+
+// ─── AUDIT-ACT1 H-3 — the step-up path must refresh the decided tail too ───────────
+//
+// The phone had this test (apps/mobile/src/activityScreen.test.ts, "the step-up path
+// refreshes the tail too — both paths, or the tail lies"); the desk had no peer, and the
+// desk's `onApproved` did not call `loadDecisions()`. The result was that approving a
+// DANGEROUS action — the one path where the operator most wants confirmation — dropped
+// the card and never showed it under "Recently decided". A parity inversion: the
+// invariant was identified, tested and satisfied on mobile, and silently dropped on web.
+test('[AUDIT-ACT1] the web step-up path re-reads the decided tail (both paths, or the tail lies)', () => {
+  const src = readFileSync(new URL('./CockpitPanel.tsx', import.meta.url), 'utf8')
+  const i = src.indexOf('onApproved=')
+  assert.ok(i > 0, 'could not locate the StepUpDialog onApproved handler — re-anchor this test')
+  // the handler body, to the end of the JSX prop
+  const body = src.slice(i, src.indexOf('/>', i))
+  assert.ok(
+    /loadDecisions\(\)/.test(body),
+    'the step-up onApproved handler does not call loadDecisions() — a dangerous approval ' +
+    'would clear from the queue and never appear in "Recently decided"',
+  )
+  // …and it must RE-READ, never append the approval locally.
+  assert.ok(
+    !/setDecisions\(/.test(body),
+    'the step-up handler appends to the decided tail locally — it must re-read from the server',
+  )
+})
+
+// AUDIT-ACT1 M-2 — the Inbox's relative ages must keep advancing.
+test('[AUDIT-ACT1] the Inbox re-samples "now" — a frozen clock fails toward FRESH', () => {
+  const src = readFileSync(new URL('./cockpit/InboxSection.tsx', import.meta.url), 'utf8')
+  assert.ok(
+    /setNow\(/.test(src),
+    'InboxSection never updates `now` — ages freeze at mount, so a 3h-old approval keeps ' +
+    'reading "10m ago" on a long-lived dashboard tab',
+  )
+  assert.ok(/setInterval\(/.test(src), 'no timer re-samples `now`')
+  assert.ok(/clearInterval\(/.test(src), 'the `now` timer is never cleared — leaks on unmount')
+})

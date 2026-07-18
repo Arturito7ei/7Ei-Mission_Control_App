@@ -55,20 +55,20 @@ export const OWNER_ONLY_KINDS: readonly ActivityKind[] = ['connector_execution',
 export const FEED_DEFAULT_LIMIT = 40
 export const FEED_MAX_LIMIT = 100
 
-/** Extra rows fetched per source, on top of `limit + 1`, to absorb TIES.
+/** Retained for compatibility; no longer load-bearing. See `cursorBoundFor`.
  *
- *  Why it is needed: each source is queried with `at <= cursor.at` (SQL cannot express
- *  the (timestamp, feed-id) tuple comparison the merge orders by, because the feed id is
- *  source-PREFIXED and the prefix only exists in JS). Rows sharing the cursor's exact
- *  millisecond are therefore fetched and then dropped by `isAfterCursor` — and because
- *  each source is ordered by `(at desc, id desc)`, the dropped rows are always a
- *  contiguous PREFIX of what that source returned. So the slack directly bounds the
- *  failure: a page is exact unless MORE than this many rows in ONE source share the
- *  cursor's millisecond. Without it, a burst of same-millisecond writes could consume a
- *  source's whole fetch budget and permanently skip the row after them.
+ *  HISTORY (AUDIT-ACT1 H-1). This used to be extra per-source fetch slack that absorbed
+ *  rows sharing the cursor's millisecond, because the (timestamp, feed-id) tuple
+ *  comparison was believed to be inexpressible in SQL. It was a heuristic, not a
+ *  guarantee: once a SINGLE source held `limit + FEED_TIE_SLACK` rows in one millisecond
+ *  — trivially reachable, since a batched `db.insert(...).values([...])` stamps every row
+ *  with the same `new Date()` — that millisecond consumed the whole fetch budget, the
+ *  cursor could never advance past it, and EVERY older event in the org became
+ *  permanently unreachable through the feed. Not a few skipped rows: the entire tail.
  *
- *  Bounded by construction — this only widens each source's read to `limit + 21`. */
-export const FEED_TIE_SLACK = 20
+ *  The tuple comparison IS expressible per-source (see `cursorBoundFor`), so the exact
+ *  predicate replaced the slack and the over-fetch is back to `limit + 1`. */
+export const FEED_TIE_SLACK = 0
 
 /** How much of an (already-sanitized-at-write) error survives into a row. Same budget
  *  as the connector monitor, for the same reason: a long provider message must not
@@ -337,6 +337,13 @@ export function formatActivityCursor(e: ActivityEvent): string {
   return e.at + '.' + e.id
 }
 
+/** The largest epoch-ms a JS `Date` can represent. A cursor beyond it produces an
+ *  Invalid Date, which drizzle serializes as `NaN` and SQLite rejects — a 500 that
+ *  echoed the whole SQL statement and its bind params back to the caller
+ *  (AUDIT-ACT1 M-1). Clamped rather than rejected: an out-of-range cursor means
+ *  "from the very newest", which is the harmless reading. */
+export const MAX_CURSOR_AT = 8_640_000_000_000_000
+
 export function parseActivityCursor(raw: unknown): ActivityCursor | null {
   if (typeof raw !== 'string' || raw.length === 0) return null
   const dot = raw.indexOf('.')
@@ -344,7 +351,50 @@ export function parseActivityCursor(raw: unknown): ActivityCursor | null {
   const at = Number(raw.slice(0, dot))
   const id = raw.slice(dot + 1)
   if (!Number.isFinite(at) || at < 0 || id.length === 0) return null
-  return { at, id }
+  return { at: Math.min(at, MAX_CURSOR_AT), id }
+}
+
+/** Every source's feed-id prefix. Ids are `<prefix><rowId>`; NO prefix is a prefix of
+ *  another, which is what makes `cursorBoundFor` exact. */
+export const SOURCE_PREFIX: Record<ActivityKind, string> = {
+  approval_filed: 'apf:',
+  approval_decided: 'apd:',
+  connector_execution: 'cx:',
+  agent_run: 'run:',
+  task: 'task:',
+  audit_event: 'aud:',
+}
+
+/** The EXACT, SQL-expressible cursor predicate for ONE source (AUDIT-ACT1 H-1).
+ *
+ *  The merge orders by `(at desc, feedId desc)`. That tuple was thought to be
+ *  inexpressible in SQL because the feed id is source-PREFIXED and the prefix exists
+ *  only in JS — so the route used `at <= cursor.at` plus fetch slack, and a single
+ *  millisecond holding more rows than that budget made every older event permanently
+ *  unreachable. It IS expressible, per source:
+ *
+ *   - The cursor points INTO this source (`cursor.id` starts with our prefix): strip the
+ *     prefix and compare the raw row id directly —
+ *     `at < cursorAt OR (at = cursorAt AND id < rawId)`. Exact.
+ *   - The cursor points into a DIFFERENT source: every id here is `prefix + X`, and the
+ *     cursor's id starts with some other prefix. Because no prefix is a prefix of
+ *     another, `prefix + X` vs `cursor.id` is decided entirely within the prefix region
+ *     — the same answer for EVERY X. So the whole tie is either included (`at <=`) or
+ *     excluded (`at <`), decided once by comparing `prefix` against `cursor.id`.
+ *
+ *  No slack, no over-fetch beyond `limit + 1`, and no burst size can strand a row. */
+export type CursorBound =
+  | { mode: 'none' }
+  | { mode: 'lt'; at: number }
+  | { mode: 'lte'; at: number }
+  | { mode: 'tuple'; at: number; rowId: string }
+
+export function cursorBoundFor(kind: ActivityKind, c: ActivityCursor | null | undefined): CursorBound {
+  if (!c) return { mode: 'none' }
+  const prefix = SOURCE_PREFIX[kind]
+  if (c.id.startsWith(prefix)) return { mode: 'tuple', at: c.at, rowId: c.id.slice(prefix.length) }
+  // `prefix + anything < c.id` ⟺ `prefix < c.id` (see above).
+  return prefix < c.id ? { mode: 'lte', at: c.at } : { mode: 'lt', at: c.at }
 }
 
 /** True when `e` sorts STRICTLY AFTER the cursor position — i.e. belongs on a later

@@ -20,12 +20,14 @@ import { readFileSync } from 'node:fs'
 
 import {
   ACTIVITY_KINDS, ACTIVITY_OUTCOMES, OWNER_ONLY_KINDS, KIND_LABEL, OUTCOME_LABEL,
-  isActivityKind, activityAgo,
+  isActivityKind, activityAgo, activityQuery,
 } from './activityKinds.ts'
 import {
   ACTIVITY_KINDS as WEB_KINDS,
   ACTIVITY_OUTCOMES as WEB_OUTCOMES,
   OWNER_ONLY_KINDS as WEB_OWNER_ONLY,
+  activityQuery as WEB_QUERY,
+  activityAgo as WEB_AGO,
 } from '../../../web/lib/activityKinds.ts'
 
 const BACKEND_SRC = new URL('../../../backend/src/services/activity.ts', import.meta.url)
@@ -119,4 +121,54 @@ test('[ACT-1] activityAgo reads as an age, and never as a negative or NaN', () =
   assert.equal(activityAgo(now - 50 * 3600_000, now), '2d ago')
   // A clock-skewed row from the future must not render "-3m ago".
   assert.equal(activityAgo(now + 60_000, now), 'just now')
+})
+
+// ─── AUDIT-ACT1 H-2 — the BEHAVIOUR parity the vocabulary tripwire did not cover ────
+//
+// `ACTIVITY_KINDS` and friends were pinned three ways; `activityQuery` and `activityAgo`
+// are hand-copied the same way and were pinned NOT AT ALL. The only guard was three
+// source-text greps for the literal `activityQuery(`, which prove each surface calls a
+// function of that NAME — never that the two functions ask the server the same question.
+// An audit drifted the phone's copy on two axes at once (limit clamp 100 -> 5000,
+// `agentId=` -> `agent=`) and all 327 mobile tests still passed: the phone would send a
+// filter the backend silently ignores, which is precisely the "two surfaces that look
+// identical but silently ask different questions" bug this module's docstring claims to
+// prevent. These compare OUTPUT, so any drift in clamping, defaults, param names or
+// ordering fails here.
+
+test('[AUDIT-ACT1] activityQuery: phone and web build the SAME query string', () => {
+  const cases: Parameters<typeof activityQuery>[0][] = [
+    {},
+    { limit: 40 },
+    { limit: 0 },
+    { limit: 999 },
+    { limit: -1 },
+    { kind: 'task' },
+    { kind: 'connector_execution' },
+    { agentId: 'agent-1' },
+    { cursor: '1700000000000.task:abc' },
+    { limit: 25, kind: 'approval_filed', agentId: 'agent-2', cursor: '1.apf:x' },
+  ]
+  for (const input of cases) {
+    assert.equal(
+      activityQuery(input), WEB_QUERY(input as any),
+      'activityQuery DRIFTED for ' + JSON.stringify(input) +
+      ' — the phone and the desk would ask the server different questions',
+    )
+  }
+  // Not vacuous: the builder must actually emit something for a non-trivial input.
+  assert.ok(activityQuery({ limit: 25, kind: 'task' }).length > 0, 'activityQuery returned nothing')
+})
+
+test('[AUDIT-ACT1] activityAgo: phone and web render the SAME age', () => {
+  const now = 1_700_000_000_000
+  const deltas = [0, 1_000, 59_000, 60_000, 61_000, 3_599_000, 3_600_000, 7_200_000,
+                  86_399_000, 86_400_000, 172_800_000, 864_000_000, -5_000]
+  for (const d of deltas) {
+    assert.equal(
+      activityAgo(now - d, now), WEB_AGO(now - d, now),
+      'activityAgo DRIFTED at delta ' + d + 'ms',
+    )
+  }
+  assert.ok(activityAgo(now - 60_000, now).length > 0, 'activityAgo returned nothing')
 })

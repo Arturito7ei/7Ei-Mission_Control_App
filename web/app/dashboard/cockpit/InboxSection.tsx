@@ -4,7 +4,7 @@
 // the revision loop), and failed rows carry the inline error + a Retry that
 // re-executes the task in place. Colorblind-safe: every action is iconed, red
 // is never the lone CTA (✓ approve accent, ↩ request-changes accent, ✕ reject).
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { tk, text, space } from '../tokens'
 import { Button, Card, Pill, SectionLabel, TextInput } from '../ui'
 import { EXT_PURPLE, KIND_C, KIND_LABEL, sx, type Approval, type ApprovalDecision, type CAgent, type InboxItem } from './shared'
@@ -43,9 +43,19 @@ export default function InboxSection({ inbox, approvals, onDismiss, onDecide, on
   const [revising, setRevising] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [retrying, setRetrying] = useState<Set<string>>(new Set())
-  // Ages are relative, so they need a "now". Sampled once per mount rather than per
-  // render, so a row doesn't renumber itself while the operator is reading it.
-  const [now] = useState(() => Date.now())
+  // Ages are relative, so they need a "now". Sampled on a timer rather than per render,
+  // so a row doesn't renumber itself mid-read — but it MUST keep advancing.
+  //
+  // AUDIT-ACT1 M-2: this was `useState(() => Date.now())` with no setter, frozen for the
+  // life of the mount. The dashboard is a long-lived tab, so a three-hour-old approval
+  // still read "10m ago" — and it failed toward FRESH, which is the dangerous direction
+  // for a field whose whole purpose is telling a fresh ask from a stale one. Ages are
+  // minute-granular, so a 30s tick is the coarsest interval that is always correct.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
 
   const decisions = recentDecisions ?? []
   const pendingCount = inbox.length + approvals.length

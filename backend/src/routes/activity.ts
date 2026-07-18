@@ -25,11 +25,11 @@
 
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
-import { eq, and, desc, lte, isNotNull, inArray } from 'drizzle-orm'
+import { eq, and, or, desc, lt, lte, isNotNull, inArray } from 'drizzle-orm'
 import { enforceOrgRole } from '../middleware/rbac'
 import {
   ACTIVITY_KINDS, ACTIVITY_OUTCOMES, OWNER_ONLY_KINDS,
-  FEED_TIE_SLACK,
+  cursorBoundFor,
   clampLimit, parseActivityCursor, parseKindFilter, visibleKinds, mergeActivityPage,
   projectApprovalFiled, projectApprovalDecided, projectConnectorEvent,
   projectRunEvent, projectTaskEvent, projectAuditEvent,
@@ -62,12 +62,24 @@ export async function activityRoutes(app: FastifyInstance) {
     const agentFilter = typeof q.agentId === 'string' && q.agentId.length > 0 ? q.agentId : null
     const want = (k: ActivityKind) => kinds.includes(k)
 
-    // Over-fetch per source: one page beyond `limit` to determine the global top-`limit`
-    // of the k-way merge AND whether a further page exists, PLUS the tie slack so that
-    // same-millisecond rows dropped by the cursor filter cannot eat the budget.
-    // See FEED_TIE_SLACK for why the drop is always a contiguous prefix.
-    const n = limit + 1 + FEED_TIE_SLACK
-    const at = cursor?.at ?? null
+    // Over-fetch per source by exactly one page: enough to determine the global
+    // top-`limit` of the k-way merge AND whether a further page exists. No tie slack is
+    // needed because `cursorBound` below is EXACT — see cursorBoundFor (AUDIT-ACT1 H-1).
+    const n = limit + 1
+
+    /** The cursor predicate for one source, as a drizzle condition over that source's
+     *  timestamp + id columns. Exact: it reproduces `isAfterCursor` in SQL, so no row
+     *  is ever fetched-then-dropped and no burst of same-millisecond writes can consume
+     *  a source's fetch budget. */
+    const cursorWhere = (kind: ActivityKind, tsCol: any, idCol: any) => {
+      const b = cursorBoundFor(kind, cursor)
+      switch (b.mode) {
+        case 'none': return []
+        case 'lt': return [lt(tsCol, new Date(b.at))]
+        case 'lte': return [lte(tsCol, new Date(b.at))]
+        case 'tuple': return [or(lt(tsCol, new Date(b.at)), and(eq(tsCol, new Date(b.at)), lt(idCol, b.rowId)))]
+      }
+    }
 
     const agentRows = await db
       .select({ id: schema.agents.id, name: schema.agents.name })
@@ -86,7 +98,7 @@ export async function activityRoutes(app: FastifyInstance) {
         }).from(schema.approvalRequests)
           .where(and(
             eq(schema.approvalRequests.orgId, orgId),
-            ...(at !== null ? [lte(schema.approvalRequests.createdAt, new Date(at))] : []),
+            ...cursorWhere('approval_filed', schema.approvalRequests.createdAt, schema.approvalRequests.id),
             ...(agentFilter ? [eq(schema.approvalRequests.requestedByAgentId, agentFilter)] : []),
           ))
           .orderBy(desc(schema.approvalRequests.createdAt), desc(schema.approvalRequests.id)).limit(n)
@@ -103,7 +115,7 @@ export async function activityRoutes(app: FastifyInstance) {
           .where(and(
             eq(schema.approvalRequests.orgId, orgId),
             isNotNull(schema.approvalRequests.decidedAt),
-            ...(at !== null ? [lte(schema.approvalRequests.decidedAt, new Date(at))] : []),
+            ...cursorWhere('approval_decided', schema.approvalRequests.decidedAt, schema.approvalRequests.id),
             ...(agentFilter ? [eq(schema.approvalRequests.requestedByAgentId, agentFilter)] : []),
           ))
           .orderBy(desc(schema.approvalRequests.decidedAt), desc(schema.approvalRequests.id)).limit(n)
@@ -120,7 +132,7 @@ export async function activityRoutes(app: FastifyInstance) {
         }).from(schema.connectorExecutions)
           .where(and(
             eq(schema.connectorExecutions.orgId, orgId),
-            ...(at !== null ? [lte(schema.connectorExecutions.createdAt, new Date(at))] : []),
+            ...cursorWhere('connector_execution', schema.connectorExecutions.createdAt, schema.connectorExecutions.id),
             ...(agentFilter ? [eq(schema.connectorExecutions.agentId, agentFilter)] : []),
           ))
           .orderBy(desc(schema.connectorExecutions.createdAt), desc(schema.connectorExecutions.id)).limit(n)
@@ -135,7 +147,7 @@ export async function activityRoutes(app: FastifyInstance) {
         }).from(schema.agentRuns)
           .where(and(
             eq(schema.agentRuns.orgId, orgId),
-            ...(at !== null ? [lte(schema.agentRuns.startedAt, new Date(at))] : []),
+            ...cursorWhere('agent_run', schema.agentRuns.startedAt, schema.agentRuns.id),
             ...(agentFilter ? [eq(schema.agentRuns.agentId, agentFilter)] : []),
           ))
           .orderBy(desc(schema.agentRuns.startedAt), desc(schema.agentRuns.id)).limit(n)
@@ -157,7 +169,7 @@ export async function activityRoutes(app: FastifyInstance) {
         }).from(schema.tasks)
           .where(and(
             eq(schema.tasks.orgId, orgId),
-            ...(at !== null ? [lte(schema.tasks.createdAt, new Date(at))] : []),
+            ...cursorWhere('task', schema.tasks.createdAt, schema.tasks.id),
             ...(agentFilter ? [eq(schema.tasks.agentId, agentFilter)] : []),
           ))
           .orderBy(desc(schema.tasks.createdAt), desc(schema.tasks.id)).limit(n)
@@ -174,7 +186,7 @@ export async function activityRoutes(app: FastifyInstance) {
         }).from(schema.auditLogs)
           .where(and(
             eq(schema.auditLogs.orgId, orgId),
-            ...(at !== null ? [lte(schema.auditLogs.createdAt, new Date(at))] : []),
+            ...cursorWhere('audit_event', schema.auditLogs.createdAt, schema.auditLogs.id),
           ))
           .orderBy(desc(schema.auditLogs.createdAt), desc(schema.auditLogs.id)).limit(n)
       : []
