@@ -20,6 +20,7 @@ import { buildAvatarDataUri } from '../services/agent-avatar'
 import { summariseAgentBudget } from '../services/agent-budget'
 import { buildStaffCards } from '../services/staff-grid'
 import { spendForScope } from '../services/budget'
+import { projectConnectorExecution } from '../services/connector-execution'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
 export async function agentInOrg(orgId: string, agentId: string) {
@@ -86,6 +87,35 @@ export async function agentDetailRoutes(app: FastifyInstance) {
       .where(and(eq(schema.agentRuns.orgId, orgId), eq(schema.agentRuns.agentId, agentId)))
       .orderBy(desc(schema.agentRuns.startedAt)).limit(n)
     return { runs }
+  })
+
+  // ─── CONN-8b-4 — the connector-execution LEDGER (owner-only monitor) ─────────
+  // Read-only view of this agent's `connector_executions` — WHAT connector actions
+  // it attempted, with what classification, whether the run was gated by an approval,
+  // its status, and a short sanitized error. MONITOR-ONLY: there is no trigger here;
+  // an owner-initiated run belongs behind executeConnectorAction (CONN-7's single gate)
+  // and is scoped to a follow-up, so this route CANNOT execute anything.
+  //
+  // OWNER-gated via `requireOrgRole('owner')`, and R-4-safe: the path carries `:orgId`,
+  // so the RBAC preHandler actually enforces (it silently no-ops only on a TAILLESS
+  // path — see the file header). We additionally scope every query by (orgId, agentId)
+  // and 404 an agent that isn't in this org, so a valid owner of org A can't read org B.
+  //
+  // SECURITY: the response is an ALLOW-LIST projection (`projectConnectorExecution`) —
+  // never a credential, token, raw params, or the params-digest preimage. The ledger
+  // stores none of those; the projection names each safe field explicitly and truncates
+  // the (sanitized-at-write) error. Latest 50, newest-first.
+  app.get('/api/orgs/:orgId/agents/:agentId/connector-executions', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+
+    const { limit } = req.query as { limit?: string }
+    const n = Math.min(Math.max(Number(limit) || 50, 1), 50)
+    const rows = await db.select().from(schema.connectorExecutions)
+      .where(and(eq(schema.connectorExecutions.orgId, orgId), eq(schema.connectorExecutions.agentId, agentId)))
+      .orderBy(desc(schema.connectorExecutions.createdAt)).limit(n)
+    return { executions: rows.map(projectConnectorExecution) }
   })
 
   // ─── AG3 — Instructions: the managed markdown bundle ────────────────────────

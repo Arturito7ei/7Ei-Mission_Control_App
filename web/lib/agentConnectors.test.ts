@@ -13,7 +13,8 @@ import {
   validateWhatsappConfig, whatsappConfigToForm,
   validateGoogleChatConfig, googleChatConfigToForm,
   TRUST_LEVELS, isTrusted,
-  type McpFormInput,
+  EXECUTION_STATUSES, EXECUTION_CLASSIFICATIONS, classificationLabel, executionStatusBadge,
+  type McpFormInput, type ConnectorExecutionItem,
 } from './agentConnectors.ts'
 
 // ─── Grouping: the operator's four categories, in order, with their connectors ─
@@ -220,4 +221,40 @@ test('[CONN-7] trust levels are the two-value enum; isTrusted is fail-safe', () 
   assert.equal(isTrusted({ trustLevel: undefined }), false)
   assert.equal(isTrusted(null), false)
   assert.equal(isTrusted({ trustLevel: 'yolo' as any }), false)
+})
+
+// ─── CONN-8b-4 — the connector-execution monitor vocab ────────────────────────
+//
+// Mirrors the backend `CONNECTOR_EXECUTION_STATUSES` (the ledger enum). The strong
+// cross-platform + backend tripwire lives in apps/mobile/src/agentConnectors.test.ts
+// (it runs in Mobile CI, which web tests don't); this pins the web copy directly to
+// the backend source so a desk-only edit is caught even though web tests aren't gated.
+
+test('[CONN-8b-4] the execution status vocab equals the backend CONNECTOR_EXECUTION_STATUSES', () => {
+  const src = readFileSync(new URL('../../backend/src/services/connector-execution.ts', import.meta.url), 'utf8')
+  const m = /CONNECTOR_EXECUTION_STATUSES\s*=\s*\[([^\]]*)\]/.exec(src)
+  assert.ok(m, 'could not locate CONNECTOR_EXECUTION_STATUSES in the backend source')
+  const backend = [...m![1].matchAll(/'([^']+)'/g)].map(x => x[1])
+  assert.deepEqual([...EXECUTION_STATUSES], backend, 'web execution-status vocab drifted from the backend ledger')
+  assert.deepEqual([...EXECUTION_STATUSES], ['running', 'succeeded', 'failed'])
+  assert.deepEqual([...EXECUTION_CLASSIFICATIONS], ['read', 'write', 'destructive', 'unknown'])
+})
+
+test('[CONN-8b-4] status badge + classification label are total and fail-safe', () => {
+  assert.equal(executionStatusBadge('succeeded').tone, 'ok')
+  assert.equal(executionStatusBadge('failed').tone, 'fail')
+  assert.equal(executionStatusBadge('running').tone, 'warn')
+  assert.equal(executionStatusBadge('nonsense').tone, 'muted') // never throws
+  assert.equal(classificationLabel('destructive'), 'Destructive')
+  assert.equal(classificationLabel('mystery'), 'mystery')
+})
+
+test('[CONN-8b-4] a projected execution item carries no credential/params/digest field', () => {
+  const item: ConnectorExecutionItem = {
+    id: 'x', connectorId: 'github', action: 'get_repo', classification: 'read',
+    status: 'succeeded', gated: false, error: null, createdAt: 0,
+  }
+  for (const k of ['secret', 'token', 'apiKey', 'approvalId', 'params', 'paramsDigest', 'credential']) {
+    assert.equal(k in item, false, `execution item must not carry ${k}`)
+  }
 })

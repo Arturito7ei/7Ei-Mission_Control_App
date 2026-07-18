@@ -454,3 +454,53 @@ export function googleServicesSummary(sel: GoogleServiceSelection): string | nul
   const on = GOOGLE_SERVICES.filter((s) => sel[s]).map((s) => GOOGLE_SERVICE_LABELS[s])
   return on.length ? on.join(' · ') : null
 }
+
+// ─── Connector-execution monitor (CONN-8b-4) — the owner-only activity ledger ──
+//
+// A hand copy of web/lib/agentConnectors.ts's monitor vocab (Metro can't import web).
+// `EXECUTION_STATUSES` / `EXECUTION_CLASSIFICATIONS` / `ConnectorExecutionItem` are
+// field-identical to the web's, pinned by agentConnectors.test.ts (cross-platform)
+// AND to the backend's `CONNECTOR_EXECUTION_STATUSES` (backend parity). Only the badge
+// helper differs — it returns the phone's Chip tones, not the web's Pill tones.
+
+/** The ledger `status` vocab — EXACTLY the backend's `CONNECTOR_EXECUTION_STATUSES`. */
+export const EXECUTION_STATUSES = ['running', 'succeeded', 'failed'] as const
+export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number]
+
+/** The action classification the ledger records — mirrors CONN-7's `ConnectorActionClass`. */
+export const EXECUTION_CLASSIFICATIONS = ['read', 'write', 'destructive', 'unknown'] as const
+export type ExecutionClass = (typeof EXECUTION_CLASSIFICATIONS)[number]
+
+/** One projected ledger row, field-identical to the backend `PublicConnectorExecution`. */
+export interface ConnectorExecutionItem {
+  id: string
+  connectorId: string
+  action: string
+  classification: string
+  status: string       // one of EXECUTION_STATUSES
+  gated: boolean       // ran by redeeming an approval (never the approval id itself)
+  error: string | null // short, sanitized-at-write summary
+  createdAt: number    // epoch ms
+}
+
+/** Colorblind-safe badge for a ledger status, in the phone's Chip tones. An unknown
+ *  status falls back to a neutral tone (never throws). Pure. */
+export function executionStatusBadge(status: string): { label: string; tone: 'ok' | 'warn' | 'danger' | 'neutral'; glyph: string } {
+  switch (status) {
+    case 'succeeded': return { label: 'Executed', tone: 'ok', glyph: '✓' }
+    case 'failed': return { label: 'Failed', tone: 'danger', glyph: '✕' }
+    case 'running': return { label: 'Running', tone: 'warn', glyph: '⋯' }
+    default: return { label: status || 'Unknown', tone: 'neutral', glyph: '•' }
+  }
+}
+
+/** A short human label for a classification (e.g. "Destructive"). Pure, total. */
+export function classificationLabel(cls: string): string {
+  switch (cls) {
+    case 'read': return 'Read'
+    case 'write': return 'Write'
+    case 'destructive': return 'Destructive'
+    case 'unknown': return 'Unknown'
+    default: return cls || 'Unknown'
+  }
+}

@@ -951,9 +951,62 @@ as `mcp` in `EXECUTORS`.
   resolves private); a server redirect not treated as success; bearer never in
   result/error/ledger. No real network, no real MCP server.
 
-**Remaining for CONN-8b:** the web/mobile UI to trigger + monitor executions (8b-4);
-optional wiring of `executeConnectorAction` into the internal `agent-executor.ts` loop.
-A later, carefully-audited stage for **stdio** MCP execution (currently fail-closed).
+#### CONN-8b-4 — Execution monitor UI (web + mobile) ✅ SHIPPED
+
+The final connectors slice: give the **owner** visibility into what connector actions an
+agent actually attempted. **Scoped to MONITOR-ONLY** — see the decision below.
+
+- **Backend (additive, owner-gated):** `GET /api/orgs/:orgId/agents/:agentId/connector-executions`
+  in `routes/agent-detail.ts`, `requireOrgRole('owner')`. **R-4-safe** — the path carries
+  `:orgId`, so the RBAC preHandler actually enforces (it only no-ops on a *tailless* path);
+  the handler additionally scopes every query by `(orgId, agentId)` and 404s an agent not in
+  the org, so an owner of org A can never read org B. Latest 50, newest-first.
+- **The allow-list projection** (`projectConnectorExecution`, in `services/connector-execution.ts`)
+  is the security core. The response item is EXACTLY: `id`, `connectorId`, `action`,
+  `classification`, `status`, `gated` (boolean), `error` (short), `createdAt` (epoch ms).
+  Proof no secret/preimage leaks: (1) the `connector_executions` ledger **stores no
+  credential, no raw params, and no params-digest in the first place** (by schema — it only
+  holds action/classification/status/sanitized-error/approvalId); (2) the projection names
+  each field explicitly, so a future column can't ride along; (3) `approvalId` collapses to a
+  **boolean `gated`** — the approval id itself never leaves the server; (4) `error` was already
+  redaction-passed at write time (`runExecutor`) and is additionally truncated here. A backend
+  route test asserts the response body contains none of `approvalId/params/paramsDigest/secret/
+  token/orgId/agentId`, even for a row seeded with junk extra keys.
+- **Web** (`web/app/dashboard/agent/ConnectorsTab.tsx`): a read-only **"Recent activity"**
+  section at the top of the Connectors tab — one row per execution: connector icon + action,
+  a classification pill, an **"Approval"** pill when the run was gated, a colour-blind-safe
+  status badge (Executed / Failed / Running), the relative time, and the short sanitized error
+  on a failed row. A **Refresh** button re-pulls. Matches the dashboard token system.
+- **Mobile parity** (`apps/mobile/src/screens/AgentConnectors.tsx`): the same monitor as a
+  native `Card` list under the agent's connectors — identical fields, identical status
+  vocabulary, same sanitized data, adapted to the phone's `Chip` tones. A Refresh button
+  (the section is embedded in the detail `ScrollView`, so it owns a button rather than a
+  `RefreshControl`). Additive, Expo SDK 54, RN-core only, bootable in Expo Go.
+- **Drift tripwire:** the ledger status vocab is a single source of truth
+  (`CONNECTOR_EXECUTION_STATUSES` in the backend service, used by name in every ledger write).
+  `EXECUTION_STATUSES` / `EXECUTION_CLASSIFICATIONS` are hand-copied into web + mobile;
+  `apps/mobile/src/agentConnectors.test.ts` (Mobile-CI-gated) asserts **cross-platform**
+  (phone == desk) AND **backend** (both == the backend array, text-read from source) parity —
+  an EQUALITY check, since a client status the ledger never writes is as wrong as a missing
+  one. `web/lib/agentConnectors.test.ts` mirrors the backend pin for the desk.
+
+**Monitor-vs-trigger decision (MONITOR-ONLY this stage).** The story allowed an optional
+owner-initiated "run this action" trigger, funnelled through `executeConnectorAction` so all
+of CONN-7 (authz / approval / step-up / params-digest / single-use) still applies. We
+**deliberately did not ship a trigger**, per the story's explicit guidance to prefer
+monitor-only when a trigger is non-trivial or bypass-risky. A safe trigger needs a full
+per-connector action picker + a params form + the approval-**redemption** round-trip on BOTH
+clients, and the params-digest binding (approved params ≡ executed params) is security-critical
+— getting it subtly wrong on either client risks a CONN-7 bypass or a "params changed since
+approval" trap. There is **no execution path in this stage** (the LIST route is read-only and
+cannot execute anything). A trigger is a documented follow-up (a future CONN slice); when
+built it MUST route through `executeConnectorAction` and reuse the existing Inbox/Approvals +
+step-up UI, with the config-only/no-OAuth constraint still applying on the phone.
+
+**Remaining for CONN-8b:** _none for the epic._ Optional/future: wiring
+`executeConnectorAction` into the internal `agent-executor.ts` loop; the owner-trigger
+follow-up above; a later, carefully-audited stage for **stdio** MCP execution (currently
+fail-closed). **With CONN-8b-4, the connectors epic (CONN-1…8b-4) is FEATURE-COMPLETE.**
 
 **Sequencing rationale:** backend + security primitives first (CONN-1), then the cheap
 real wins that need no OAuth (CONN-2/3/4), then the expensive OAuth surface isolated
@@ -1045,7 +1098,12 @@ will grow and the accordion wants room.
 | Jira + comms (Telegram/WhatsApp/Google Chat) executors | **SHIPPED** — CONN-8b-1 (`connector-jira.ts`: read `issue.get`/`issue.search`, write `issue.create`/`issue.comment`/`issue.transition`, destructive `issue.delete`, Atlassian-host-restricted baseUrl; `connector-telegram.ts`/`connector-whatsapp.ts`/`connector-google-chat.ts`: `message.send`, hardcoded/validated hosts, token-in-URL + webhook-as-secret leak defence) |
 | Google Workspace executor (real Gmail/Calendar/Drive calls, per-agent OAuth token) | **SHIPPED** — CONN-8b-2 (`connector-google.ts`; `credentialKind:'google_oauth'` → `ensureFreshAgentGoogleToken` over `agent_oauth_tokens`, NOT the env bag; hardcoded `gmail.googleapis.com`/`www.googleapis.com`; `gmail.send` + reads + calendar/drive writes; destructive always-approve; scope-fail-closed; token sentinel; approval params-digest binding) |
 | Custom-MCP invocation bridge | **SHIPPED** — CONN-8b-3 (`connector-mcp.ts`; open-ended `invoke` dispatch, http-transport only / **stdio fail-closed**, opaque tools escalate to approval even under `auto_write` unless on the per-connector `autoApproveTools` allow-list, destructive-named always approval; SSRF egress guard: https-only + no-userinfo + private-range block over IPv4/IPv6 incl. `169.254.169.254` metadata, **DNS-pinning** node:https lookup defeats rebinding, redirects not followed, 10s/1MB caps; bearer never leaks; params-digest binding intact) |
-| Web/mobile UI to trigger + monitor executions | **New** (CONN-8b-4) |
+| Web/mobile UI to MONITOR executions (owner ledger view) | **SHIPPED** — CONN-8b-4 (owner-gated `GET …/agents/:agentId/connector-executions`, R-4-safe; allow-list projection — no secret/params/digest/approval-id, `gated` boolean; web "Recent activity" section + mobile native list, parity-pinned status vocab; **monitor-only** — trigger deferred, no execution path) |
+| Web/mobile UI to TRIGGER executions (owner-initiated run) | **Deferred follow-up** — a safe owner trigger must funnel through `executeConnectorAction` (CONN-7 authz/approval/step-up/params-digest/single-use) + reuse the approvals/step-up UI; non-trivial params-digest binding across both clients, scoped out of 8b-4 |
 
-_End of plan. **CONN-1 (backend) and CONN-2 (web accordion tab) are SHIPPED**; CONN-3
-(mobile mirror) is next, then CONN-4… per the roadmap above._
+_End of plan. **The connectors epic (CONN-1 … CONN-8b-4) is FEATURE-COMPLETE.** All
+stages SHIPPED: backend framework + security primitives (CONN-1, 7, 8a), web+mobile
+accordion (CONN-2/3), real connectors (CONN-4/5/6), the executor fleet (GitHub/Jira/comms/
+Google/MCP — CONN-8a/8b-1/8b-2/8b-3), and the owner execution monitor (CONN-8b-4). Open
+follow-ups are optional, not epic-blocking: the owner-initiated trigger, agent-loop wiring
+of `executeConnectorAction`, and audited stdio-MCP execution._

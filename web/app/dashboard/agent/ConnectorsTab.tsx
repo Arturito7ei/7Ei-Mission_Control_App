@@ -28,10 +28,11 @@ import {
   validateGoogleChatConfig, googleChatConfigToForm,
   GOOGLE_SERVICES, GOOGLE_SERVICE_LABELS, defaultGoogleServices, hasAnyGoogleService,
   googleServicesFromConfig, googleScopesFromConfig, isTrusted,
+  findDisplayConnector, executionStatusBadge, classificationLabel,
   type DisplayConnector, type PublicConnectorState, type TrustLevel,
   type McpFormInput, type GithubFormInput, type JiraFormInput,
   type TelegramFormInput, type WhatsappFormInput, type GoogleChatFormInput,
-  type GoogleService, type GoogleServiceSelection,
+  type GoogleService, type GoogleServiceSelection, type ConnectorExecutionItem,
 } from '@/lib/agentConnectors'
 import { Button, Card, Pill, Select, Skeleton, TextArea, TextInput } from '../ui'
 import { FormLabel } from '../cockpit/shared'
@@ -149,6 +150,9 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
         </div>
       )}
 
+      {/* CONN-8b-4 — the connector-execution activity monitor (read-only). */}
+      <ExecutionsMonitor orgId={orgId} agentId={agentId} getToken={getToken} />
+
       {CONNECTOR_GROUPS.map(group => {
         const isOpen = open[group.key] ?? false
         const configuredCount = group.connectors.filter(c => isConfigured(states[c.id])).length
@@ -182,6 +186,102 @@ export default function ConnectorsTab({ orgId, agentId, getToken }: {
           </section>
         )
       })}
+    </div>
+  )
+}
+
+// ─── Connector-execution activity monitor (CONN-8b-4) — read-only ─────────────
+//
+// The owner-only view of what connector actions this agent actually attempted: the
+// `connector_executions` ledger, allow-list-projected by the backend (never a secret,
+// token, param, or approval id — only action, connector, classification, gated-or-not,
+// status and a short sanitized error). MONITOR-ONLY this stage — there is no "run"
+// button; an owner-initiated action belongs behind executeConnectorAction (CONN-7's
+// single gate) and is a documented follow-up. Refreshes on demand.
+function ExecutionsMonitor({ orgId, agentId, getToken }: {
+  orgId: string
+  agentId: string
+  getToken: Getter
+}) {
+  const [items, setItems] = useState<ConnectorExecutionItem[] | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null)
+    try {
+      const { executions } = await api<{ executions: ConnectorExecutionItem[] }>(
+        `/api/orgs/${orgId}/agents/${agentId}/connector-executions`, { token: await getToken() })
+      setItems(executions)
+    } catch (e: any) {
+      // A 403 here just means "not an owner" — the parent already renders the owner-only
+      // note, so keep this quiet and simply show nothing rather than a scary error.
+      const m = String(e?.message ?? '')
+      if (m.includes('HTTP 403')) setItems([])
+      else setErr(m || 'Could not load recent activity.')
+    }
+    setBusy(false)
+  }, [orgId, agentId, getToken])
+
+  useEffect(() => { load() }, [load])
+
+  return (
+    <section style={{ border: `1px solid ${tk.line}`, borderRadius: tk.r.lg, overflow: 'hidden' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: space.md,
+        background: tk.surfaceHigh, padding: `${space.md}px ${space.lg}px`,
+      }}>
+        <span style={{ fontSize: text.md.fontSize, fontWeight: 700, color: tk.text }}>Recent activity</span>
+        <span style={{ ...ax.empty, fontSize: text.xs.fontSize }}>connector actions this agent attempted</span>
+        <span style={{ marginLeft: 'auto' }}>
+          <Button onClick={load} disabled={busy}>{busy ? 'Refreshing…' : 'Refresh'}</Button>
+        </span>
+      </div>
+
+      <div style={{ padding: `${space.md}px ${space.lg}px` }}>
+        {err && <div style={ax.err}>{err}</div>}
+        {!err && items === null && <Skeleton h={40} />}
+        {!err && items !== null && items.length === 0 && (
+          <p style={{ ...ax.empty, margin: 0 }}>
+            No connector actions yet. When this agent runs a connector action, it appears here — allowed reads and writes,
+            and any that needed approval.
+          </p>
+        )}
+        {!err && items !== null && items.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: space.xs }}>
+            {items.map(ex => <ExecutionRow key={ex.id} ex={ex} />)}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** One ledger row: connector icon + action, classification + gated + status pills, and
+ *  the relative time; a failed row shows its short sanitized error underneath. */
+function ExecutionRow({ ex }: { ex: ConnectorExecutionItem }) {
+  const disp = findDisplayConnector(ex.connectorId)
+  const badge = executionStatusBadge(ex.status)
+  const when = rel(ex.createdAt)
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: space.md, flexWrap: 'wrap',
+      padding: `${space.sm}px 0`, borderTop: `1px solid ${tk.line}`,
+    }}>
+      <span aria-hidden="true" style={{ fontSize: 16 }}>{disp?.icon ?? '🔌'}</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: text.sm.fontSize, fontWeight: 600, color: tk.text }}>{ex.action}</span>
+          <span style={{ ...ax.empty, fontSize: text.xs.fontSize }}>{disp?.name ?? ex.connectorId}</span>
+          <Pill tone="muted">{classificationLabel(ex.classification)}</Pill>
+          {ex.gated && <Pill tone="warn">Approval</Pill>}
+        </div>
+        {ex.status === 'failed' && ex.error && (
+          <div style={{ fontSize: text.xs.fontSize, color: tk.muted, marginTop: 2, wordBreak: 'break-word' }}>{ex.error}</div>
+        )}
+      </div>
+      <Pill tone={badge.tone}>{badge.glyph} {badge.label}</Pill>
+      {when && <span style={{ ...ax.empty, fontSize: text.xs.fontSize, whiteSpace: 'nowrap' }}>{when}</span>}
     </div>
   )
 }

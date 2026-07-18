@@ -53,7 +53,12 @@ import {
   googleServicesSummary,
   TRUST_LEVELS,
   isTrusted,
+  EXECUTION_STATUSES,
+  EXECUTION_CLASSIFICATIONS,
+  classificationLabel,
+  executionStatusBadge,
   type McpFormInput,
+  type ConnectorExecutionItem,
 } from './agentConnectors.ts'
 
 // The desk's module — dep-free, so safe to import in Mobile CI (the parity anchor).
@@ -68,6 +73,9 @@ import {
   validateTelegramConfig as webValidateTelegramConfig,
   validateWhatsappConfig as webValidateWhatsappConfig,
   validateGoogleChatConfig as webValidateGoogleChatConfig,
+  EXECUTION_STATUSES as WEB_EXECUTION_STATUSES,
+  EXECUTION_CLASSIFICATIONS as WEB_EXECUTION_CLASSIFICATIONS,
+  classificationLabel as webClassificationLabel,
 } from '../../../web/lib/agentConnectors.ts'
 
 // ─── Cross-platform parity: the phone == the desk ─────────────────────────────
@@ -214,6 +222,53 @@ test('[CONN-3] AVAILABLE_CONNECTOR_IDS is a subset of the backend AGENT_CONNECTO
   const offeredButUnserved = [...AVAILABLE_CONNECTOR_IDS].filter((id) => !backendIds.includes(id))
   assert.deepEqual(offeredButUnserved, [],
     'phone offers a connector the backend catalog lacks — it would 404; reconcile before merging')
+})
+
+// ─── CONN-8b-4: connector-execution monitor vocab stays in sync ───────────────
+//
+// The web + mobile activity monitors hand-copy the ledger's status vocab (Metro can't
+// import the backend). Two tripwires pin the copies: (1) cross-platform — the phone's
+// vocab equals the desk's; (2) backend — both equal the backend's authoritative
+// `CONNECTOR_EXECUTION_STATUSES` array, text-read from the service source (it pulls
+// drizzle at module scope, so it can't be imported here — same reason as the catalog
+// check). A client showing a status the ledger never writes, or missing one it does,
+// fails here.
+
+test('[CONN-8b-4] the phone’s execution status + classification vocab equals the web’s', () => {
+  assert.deepEqual([...EXECUTION_STATUSES], [...WEB_EXECUTION_STATUSES])
+  assert.deepEqual([...EXECUTION_CLASSIFICATIONS], [...WEB_EXECUTION_CLASSIFICATIONS])
+  // The human labels agree across platforms for every classification (+ a fallback).
+  for (const c of [...EXECUTION_CLASSIFICATIONS, 'weird']) {
+    assert.equal(classificationLabel(c), webClassificationLabel(c), `label drift for ${c}`)
+  }
+})
+
+test('[CONN-8b-4] the status vocab equals the backend CONNECTOR_EXECUTION_STATUSES', () => {
+  const src = readFileSync(new URL('../../../backend/src/services/connector-execution.ts', import.meta.url), 'utf8')
+  const m = /CONNECTOR_EXECUTION_STATUSES\s*=\s*\[([^\]]*)\]/.exec(src)
+  assert.ok(m, 'could not locate CONNECTOR_EXECUTION_STATUSES in the backend source')
+  const backendStatuses = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+  assert.ok(backendStatuses.length > 0, 'backend status vocab parsed empty — the check would be vacuous')
+  // EQUALITY (not subset): a client status the ledger never writes is as wrong as a
+  // missing one — the monitor would render a badge for a state that can't occur.
+  assert.deepEqual([...EXECUTION_STATUSES], backendStatuses,
+    'client execution-status vocab drifted from the backend ledger — reconcile before merging')
+})
+
+test('[CONN-8b-4] a projected execution item carries no credential/params/digest field', () => {
+  // The shape as the screen holds it from the GET. TypeScript already forbids a secret
+  // field on ConnectorExecutionItem; this guards the runtime object.
+  const item: ConnectorExecutionItem = {
+    id: 'x', connectorId: 'github', action: 'get_repo', classification: 'read',
+    status: 'succeeded', gated: false, error: null, createdAt: 0,
+  }
+  const forbidden = ['secret', 'token', 'apiKey', 'approvalId', 'params', 'paramsDigest', 'valueEncrypted', 'credential']
+  for (const k of forbidden) assert.equal(k in item, false, `execution item must not carry ${k}`)
+  // The status badge is total + fail-safe: an out-of-vocab status still returns a badge.
+  assert.equal(executionStatusBadge('succeeded').tone, 'ok')
+  assert.equal(executionStatusBadge('failed').tone, 'danger')
+  assert.equal(executionStatusBadge('running').tone, 'warn')
+  assert.equal(executionStatusBadge('nonsense').tone, 'neutral')
 })
 
 // ─── Masked-only display: the read state carries no credential ────────────────
