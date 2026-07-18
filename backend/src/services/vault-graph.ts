@@ -49,6 +49,10 @@ export interface VaultGraph {
     communities?: number
     /** true when the native builder hit its file-read cap */
     truncated?: boolean
+    /** nodes dropped by `capGraph()` — 0/absent when the whole vault fit */
+    capped?: number
+    /** total nodes BEFORE the cap, so a client can say "showing 600 of 4,200" */
+    totalNodes?: number
   }
   generatedAt?: string
 }
@@ -273,6 +277,48 @@ function inVault(sourceFile: string, root: string): boolean {
 }
 
 // ─── Shared ──────────────────────────────────────────────────────────────────
+
+/**
+ * MEM-1 — bound the payload so one enormous vault can't blow up the response
+ * (or the tab that renders it).
+ *
+ * The native builder is already capped at the FETCH (it costs a GitHub call per
+ * note), but the Graphify fast path is a single `graph.json` read: a vault with
+ * thousands of notes arrives whole, ships whole, and lands in a force
+ * simulation that is O(n log n) per tick. This is the bound for that path.
+ *
+ * WHAT SURVIVES THE CAP: the highest-DEGREE nodes. Degree is the closest cheap
+ * proxy we have for "load-bearing note" — a hub that fifteen notes link to is
+ * the thing an operator is looking for, and the singleton leaf is the thing
+ * they can find faster in the reader's tree anyway. Ties break notes-first
+ * (headings and tag nodes are scaffolding around notes, not the payload) and
+ * then by id, so the same vault always yields the same map — a cap that
+ * reshuffled on every fetch would make the view untrustworthy.
+ *
+ * `degree` is deliberately NOT recomputed after the drop: it stays the node's
+ * TRUE connectivity in the whole vault, so radius keeps meaning "how central is
+ * this note" rather than "how much of it survived the cap". The count that was
+ * dropped is reported (`stats.capped`) so the UI can say so out loud instead of
+ * quietly showing a partial vault as if it were the whole one.
+ */
+export function capGraph(g: VaultGraph, maxNodes: number): VaultGraph {
+  const total = g.nodes.length
+  if (!Number.isFinite(maxNodes) || maxNodes <= 0 || total <= maxNodes) {
+    return { ...g, stats: { ...g.stats, totalNodes: total } }
+  }
+  const rank = (n: GraphNode) => (n.kind === 'note' ? 0 : n.kind === 'heading' ? 1 : 2)
+  const kept = [...g.nodes]
+    .sort((a, b) => (b.degree - a.degree) || (rank(a) - rank(b)) || a.id.localeCompare(b.id))
+    .slice(0, maxNodes)
+  const keep = new Set(kept.map(n => n.id))
+  const edges = g.edges.filter(e => keep.has(e.source) && keep.has(e.target))
+  return {
+    ...g,
+    nodes: kept,
+    edges,
+    stats: { ...g.stats, capped: total - kept.length, totalNodes: total },
+  }
+}
 
 /** Fill `degree` (edge count per node) — drives node radius in the view. */
 export function withDegrees(g: VaultGraph): VaultGraph {

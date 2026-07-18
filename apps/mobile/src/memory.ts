@@ -50,9 +50,16 @@ export const VAULT_DEFAULT: VaultCfgLite = {
   branch: 'main',
 }
 
-/** Why the graph view has no phone peer. Rendered on the screen, not just here. */
+/**
+ * Why the graph's CANVAS has no phone peer — and where its data went instead.
+ *
+ * MOB-6e dropped the graph outright. MEM-1 kept the canvas dropped (the reasons
+ * are unchanged and argued in vaultGraph.ts) but brought the DATA across as the
+ * Links tab, so this no longer says "the vault itself is all here" as if link
+ * structure weren't part of the vault. It is; it's one tab over.
+ */
 export const MEMORY_GRAPH_NOTE =
-  'The knowledge graph stays on the desktop — a force-directed map of the whole vault needs a canvas and a pointer to be worth anything. The vault itself is all here.'
+  'The force-directed map stays on the desktop — it needs a canvas and a pointer to be worth anything. The links themselves are here: switch to Links to search the whole vault and walk what connects to what.'
 
 /** Why a non-markdown file has no reader. */
 export const UNREADABLE_NOTE =

@@ -65,6 +65,29 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     // washed out. Solid black reads against the light core; dark keeps the
     // luminous treatment (see the dark twin below).
     '--reactor-logo-fill': '#000000',
+    // MEM-1 — Memory graph categorical ramp (folder → hue). Okabe–Ito, the
+    // canonical colorblind-safe qualitative palette (deuter/prot/tritanopia
+    // distinguishable), and always paired with the graph's text legend so hue is
+    // never the sole signal. It lives HERE rather than in the component so the
+    // two themes can diverge where they must: on the white card the canonical
+    // yellow (#F0E442) and sky (#56B4E9) sit at ~1.1:1 and ~2:1 against the
+    // surface and effectively vanish, so both are darkened for light while the
+    // hue ORDER — what carries the colorblind separation — is preserved.
+    '--graph-1': '#0072B2',                  // blue
+    '--graph-2': '#B87A00',                  // orange, darkened for white
+    '--graph-3': '#00785A',                  // bluish green, darkened for white
+    '--graph-4': '#A85A87',                  // reddish purple, darkened
+    '--graph-5': '#2E86C1',                  // sky, darkened (was #56B4E9 ≈2:1)
+    '--graph-6': '#C24E00',                  // vermillion
+    '--graph-7': '#8A7200',                  // yellow, darkened (was #F0E442 ≈1.1:1)
+    '--graph-8': '#6b6b6b',                  // grey
+    '--graph-9': '#5B4490',                  // purple
+    '--graph-10': '#0F6B2C',                 // dark green
+    // Tag nodes are deliberately achromatic — a tag is scaffolding, not a folder.
+    '--graph-tag': '#8a8a8a',
+    // Every node gets a defined edge so a pale fill can't melt into the card.
+    '--graph-node-stroke': 'rgba(0,0,0,.28)',
+    '--graph-edge': '#c9c9c7',
   },
   dark: {
     '--s0': '#070707',
@@ -115,6 +138,23 @@ export const themes: Record<ThemeName, Record<string, string>> = {
     // Matches --reactor-core-1 — on the dark field the luminous mark is correct,
     // so this is the pre-token look held as-is. Only light diverges.
     '--reactor-logo-fill': 'rgba(232,242,255,.97)',
+    // MEM-1 — the same ramp on the near-black card, where the CANONICAL
+    // Okabe–Ito values are already correct (the palette was struck for light
+    // marks on a dark field). Only the deepest blue is lifted a touch, since
+    // #0072B2 on #0f0f0f is ~3.4:1 and it is the most-used hue (folder #1).
+    '--graph-1': '#3D9AE0',                  // blue, lifted off near-black
+    '--graph-2': '#E69F00',                  // orange
+    '--graph-3': '#009E73',                  // bluish green
+    '--graph-4': '#CC79A7',                  // reddish purple
+    '--graph-5': '#56B4E9',                  // sky
+    '--graph-6': '#D55E00',                  // vermillion
+    '--graph-7': '#F0E442',                  // yellow
+    '--graph-8': '#999999',                  // grey
+    '--graph-9': '#8E74C8',                  // purple, lifted for dark
+    '--graph-10': '#3FA05C',                 // dark green, lifted for dark
+    '--graph-tag': '#8a8a8a',
+    '--graph-node-stroke': 'rgba(255,255,255,.22)',
+    '--graph-edge': '#2a2a2a',
   },
 }
 

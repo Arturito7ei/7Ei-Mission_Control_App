@@ -15,11 +15,16 @@
 // a pushed sheet, so the back gesture returns you to the tree exactly where you
 // left it. Same endpoints, same entries, same order — a different traversal.
 //
-// WHAT'S DROPPED: the web's ⬡ Graph view (VaultGraph.tsx — a d3-force simulation
-// over `…/memory/graph`, the app's only npm dep beyond Next/React/Clerk). A
-// force-directed map of a whole vault is a canvas-and-pointer artefact; at 390pt
-// it's a hairball. DROPPED, not deferred — parity doc §6.6. The screen says so
-// itself rather than leaving the operator to wonder (MEMORY_GRAPH_NOTE).
+// WHAT'S DROPPED: the web's ⬡ Graph CANVAS (VaultGraph.tsx — a d3-force
+// simulation over `…/memory/graph`). A force-directed map of a whole vault is a
+// canvas-and-pointer artefact; at 390pt it's a hairball. DROPPED, not deferred —
+// parity doc §6.6, re-affirmed by MEM-1 (reasons in src/vaultGraph.ts).
+//
+// WHAT MEM-1 ADDED: the graph's DATA, as the Links tab (MemoryConnections.tsx).
+// The canvas stays dropped; what it was FOR — finding a note anywhere in the
+// vault, and walking what links to what — is list-shaped and now here. So this
+// screen is two views over the same vault, mirroring the web's own
+// 📄 Reader / ⬡ Graph toggle: 🗂 Vault (the tree) and 🔗 Links (the graph).
 //
 // ALSO DROPPED: the vault PICKER ("Change vault…" — a PUT to
 // `…/connectors/obsidian/config`). This screen is read-only, and repointing the
@@ -60,6 +65,7 @@ import {
 } from '../memory'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Card, Empty, Loading } from '../ui'
+import MemoryConnections from './MemoryConnections'
 
 const INDENT = 14 // points per depth level
 
@@ -181,6 +187,9 @@ function Row({ row, onPress }: { row: TreeRow; onPress: (row: TreeRow) => void }
 
 export default function MemoryScreen() {
   const { apiUrl, getToken, orgId } = useAuth()
+  // 🗂 Vault (the tree) ⇄ 🔗 Links (the graph's data). The web's own toggle is
+  // 📄 Reader ⇄ ⬡ Graph over the same two datasets.
+  const [view, setView] = useState<'vault' | 'links'>('vault')
   const [cfg, setCfg] = useState<VaultCfgLite>(VAULT_DEFAULT)
   const [dirs, setDirs] = useState<VaultDirs>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -241,6 +250,32 @@ export default function MemoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiUrl, orgId])
 
+  /**
+   * Open a note in the reader. Shared by the tree (tap a file) and the Links
+   * view (tap "Open note"), so both land in the SAME reader with the same
+   * loading and error handling — one note-opening path, not two that drift.
+   */
+  const openNotePath = useCallback(
+    (path: string) => {
+      setNote({ path, markdown: null })
+      setNoteError(null)
+      setNoteLoading(true)
+      ;(async () => {
+        try {
+          const token = await getToken()
+          if (!token || !orgId) return
+          const r = await Api.memoryFile(apiUrl, token, orgId, path)
+          setNote({ path, markdown: r.markdown ?? '' })
+        } catch (e: any) {
+          setNoteError(e?.message ?? 'Failed to open the note.')
+        } finally {
+          setNoteLoading(false)
+        }
+      })()
+    },
+    [apiUrl, getToken, orgId],
+  )
+
   const onPressRow = useCallback(
     (row: TreeRow) => {
       if (row.entry.type === 'dir') {
@@ -264,26 +299,11 @@ export default function MemoryScreen() {
       }
       // A note. `isNotePath` already gated the tap (the row isn't pressable
       // otherwise), so this only ever asks for a path the backend will serve.
-      const path = row.entry.path
-      setNote({ path, markdown: null })
-      setNoteError(null)
-      setNoteLoading(true)
-      ;(async () => {
-        try {
-          const token = await getToken()
-          if (!token || !orgId) return
-          const r = await Api.memoryFile(apiUrl, token, orgId, path)
-          setNote({ path, markdown: r.markdown ?? '' })
-        } catch (e: any) {
-          setNoteError(e?.message ?? 'Failed to open the note.')
-        } finally {
-          setNoteLoading(false)
-        }
-      })()
+      openNotePath(row.entry.path)
     },
     // `expanded` is read to decide the toggle direction, so it belongs here: a
     // stale closure would flip the wrong way and, worse, mis-decide the fetch.
-    [apiUrl, dirs, expanded, getToken, loadDir, orgId],
+    [dirs, expanded, loadDir, openNotePath],
   )
 
   const rows = useMemo(
@@ -303,8 +323,42 @@ export default function MemoryScreen() {
     )
   }
 
+  // The view switch sits ABOVE both views so it never scrolls away — on a phone
+  // a toggle you have to scroll back up to reach is a toggle you stop using.
+  const Switcher = (
+    <View style={s.seg} accessibilityRole="tablist">
+      {(['vault', 'links'] as const).map((v) => {
+        const on = view === v
+        return (
+          <Pressable
+            key={v}
+            onPress={() => setView(v)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on }}
+            style={[s.segBtn, on && s.segOn]}
+          >
+            <Text style={[s.segText, on && s.segTextOn]}>
+              {v === 'vault' ? '🗂 Vault' : '🔗 Links'}
+            </Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+
+  if (view === 'links') {
+    return (
+      <View style={s.fill}>
+        {Switcher}
+        <MemoryConnections onOpenNote={openNotePath} />
+      </View>
+    )
+  }
+
   return (
-    <FlatList
+    <View style={s.fill}>
+      {Switcher}
+      <FlatList
       data={rows}
       keyExtractor={(row) => row.entry.path}
       renderItem={({ item }) => <Row row={item} onPress={onPressRow} />}
@@ -362,13 +416,29 @@ export default function MemoryScreen() {
           </View>
         ) : null
       }
-    />
+      />
+    </View>
   )
 }
 
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: theme.bg },
   wrap: { padding: space.lg },
+  // 🗂 Vault ⇄ 🔗 Links. The active tab is carried by BOTH a fill and the
+  // text weight/colour, never by hue alone.
+  seg: {
+    flexDirection: 'row',
+    gap: space.xs,
+    marginHorizontal: space.lg,
+    marginTop: space.md,
+    padding: 3,
+    backgroundColor: theme.s1,
+    borderRadius: radius.sm,
+  },
+  segBtn: { flex: 1, minHeight: 40, justifyContent: 'center', alignItems: 'center', borderRadius: radius.sm - 2 },
+  segOn: { backgroundColor: theme.s3 },
+  segText: { color: theme.textDim, fontSize: font.sm },
+  segTextOn: { color: theme.text, fontWeight: '700' },
   vault: { marginBottom: space.md },
   vaultLabel: { color: theme.textFaint, fontSize: font.sm - 2, fontWeight: '700', letterSpacing: 0.6 },
   vaultVal: { color: theme.text, fontSize: font.base, fontWeight: '700', marginTop: 2 },

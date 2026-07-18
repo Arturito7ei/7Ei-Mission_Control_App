@@ -483,7 +483,7 @@ Both chips now route through `status.ts` (`statusIcon`/`statusTone`, and `heartb
 
 **What each screen keeps, and what it drops.**
 
-- **Memory keeps the vault and drops the graph.** The web's ⬡ Graph view (`VaultGraph.tsx`) is a `d3-force` simulation over `…/memory/graph` — the app's only npm dep beyond Next/React/Clerk. A force-directed map of a whole vault is a canvas-and-pointer artefact; at 390pt it's a hairball you can't hit-test. **Dropped, not deferred**, and the screen says so itself (`MEMORY_GRAPH_NOTE`) rather than leaving the operator hunting for a view that isn't coming.
+- **Memory keeps the vault and drops the graph.** The web's ⬡ Graph view (`VaultGraph.tsx`) is a `d3-force` simulation over `…/memory/graph` — the app's only npm dep beyond Next/React/Clerk. A force-directed map of a whole vault is a canvas-and-pointer artefact; at 390pt it's a hairball you can't hit-test. **Dropped, not deferred**, and the screen says so itself (`MEMORY_GRAPH_NOTE`) rather than leaving the operator hunting for a view that isn't coming. **→ Amended by MEM-1 (§6.13): the CANVAS is still dropped; its DATA is not.**
 - **Memory's tree is collapsible, where the web's is a *browser*.** The web's left pane shows **one** directory at a time: clicking a folder **replaces** the list and a breadcrumb walks you back. That's fine for a 280px column beside a reader; on a phone, replacing the whole screen to peek inside a folder costs you the context you opened it for. So expanding **splices children in beneath their folder** and the rest of the vault stays put. Same endpoint, same entries, same order — a different traversal, which is the trade this rule exists to license.
 - **Org keeps the hierarchy and drops the canvas.** `layoutOrgTree`/`fitToView`/`zoomAbout`/`NODE_W` answer *"where on a 2000px canvas does this card sit"* — a question a 390pt column never asks. Indentation says the same thing about depth. So `org.ts` is deliberately **half** of `web/lib/orgLayout.ts`: the half that is about the org, not about the canvas. **Dropped, not deferred** (`ORG_CANVAS_NOTE`).
 - **Both are read-only, and both drop a write the web has.** Memory drops the vault **picker** ("Change vault…", a `PUT …/connectors/obsidian/config`): repointing the org's shared vault is a config change with an org-wide blast radius, and it isn't a phone gesture. Org drops **Import/Export company**: import creates a whole organisation from a JSON file. The vault is still *labelled* — from the tree response, so the label cannot disagree with the tree it's labelling.
@@ -859,6 +859,67 @@ not a missing feature.
 **258/258** (+10) · `npm run build` passes · backend **1603/1603** + evals **11/11**,
 untouched. Strictly client-side and additive; **no backend file changed** — the gate that
 produced the honest 403 is exactly the gate that was right all along.
+
+---
+
+### 6.13 MEM-1 — the memory graph: the canvas stays dropped, its DATA crosses (as built)
+
+**§6.6 dropped the vault graph. MEM-1 does not reverse that — it separates the canvas from the capability.**
+
+| | Web (`VaultGraph.tsx`) | Phone (`MemoryConnections.tsx`) |
+|---|---|---|
+| **Renders** | `d3-force` cooled to a static layout → ~600 SVG nodes, pan/zoom/drag/hover | Two lists: search results, and a node's neighbourhood |
+| **Endpoint** | `GET …/memory/graph` | **the same**, with `?max=600` |
+| **Finding a note** | type in the search box, matches highlight, rest dims | type in the search box, ranked list |
+| **Following a link** | look along a line, drag, hover to light the neighbourhood | tap → "Links to" / "Linked from", tap again to stand there |
+
+**Why the canvas is still dropped — and the honest version of the reason.** §6.6 said "it needs a canvas and a
+pointer". Two of the three real reasons are stronger than that:
+
+1. **Hit-testing.** A few hundred notes pack nodes a handful of points apart; a finger is a 44pt target.
+   Disambiguating one means pinch-zooming until only one sits under the thumb — which is a search, performed
+   badly, with a gesture.
+2. **The JS thread.** Cooling the simulation is a synchronous 140–420 tick loop. On the desk that is a hitch on
+   a thread that is not painting. In React Native it blocks **the** JS thread — the one running the navigator,
+   the list, and the gesture responder. The app stops, not the view.
+3. **It would cost a dep.** `d3-force` is web-only.
+
+**What is NOT a reason: the renderer.** `react-native-svg` **is** already a dependency and lazily loaded, so a
+canvas was always technically reachable in Expo Go. Saying so matters — it keeps this a **judgement about what
+is worth building on a phone**, not a limitation we are hiding behind. If the operator ever genuinely wants the
+map, the escape hatch §5 named (a WebView of the web graph) is still the cheap answer, and still a view nobody
+will pan on a phone.
+
+**What crossed instead, and why it is parity rather than a consolation prize.** The map's value is *finding* and
+*following*. Both are list-shaped:
+
+- **Whole-vault search is a capability the tree structurally cannot have.** `…/memory/tree` returns **one
+  directory per call**, so the tree only knows what the operator has already expanded — it can never search the
+  vault, only the part of it already on screen. The graph payload names every note in one response, so search on
+  the phone is client-side, instant and **complete**. This is the clearest case yet of a mirror that makes the
+  phone better at something than a port would have.
+- **Direction is kept, where the canvas throws it away.** The desk draws an undirected line (an arrowhead is
+  unreadable at that size). A list can afford the distinction, and the *backward* half is the one operators hunt
+  for: "what links back to this" is the note's standing in the vault. Obsidian calls them backlinks; so do we.
+- **Connectivity is stated in words.** The web encodes it as **radius**. A list has no radius, and drawing a bar
+  chart for it would be decoration — so the row just says `12 links · 3 back`, which is what the radius was
+  standing in for.
+
+**The tripwire is a real cross-workspace import.** `vaultGraph.test.ts` imports the **backend's own**
+`buildNativeGraph`/`capGraph`, builds a graph, and feeds it through the phone's index — asserting the shapes
+still agree with no adapter between them. This is legal under the Mobile-CI rule (§6.3) only because
+`backend/src/services/vault-graph.ts` is genuinely **import-free**; a module with dependencies would resolve
+locally and **silently drop the whole file in CI**.
+
+**Also amended: `MEMORY_GRAPH_NOTE`.** It said the graph "stays on the desktop — the vault itself is all here."
+The second clause was true when link structure lived nowhere on the phone and became false the moment Links
+shipped. It now names the Links tab, and a test pins that it does — a screen that explains a missing view must
+stop explaining it once the view arrives.
+
+**Deferred, named:** tappable `[[wikilinks]]` in the phone's reader. The resolver now exists (the graph index
+resolves a title to a node), so this is no longer blocked on data — it is reader-surface work with its own
+ambiguity cases (two notes with one title, a link to a note the cap dropped), and it belongs in its own story
+rather than riding along here.
 
 ---
 

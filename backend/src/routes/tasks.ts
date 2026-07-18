@@ -10,7 +10,7 @@ import { spendForScope, evaluatePolicy } from '../services/budget'
 import { buildExport, remapImport } from '../services/portability'
 import { encrypt, decrypt, maskValue } from '../services/secrets'
 import { isSafeVaultPath, isMarkdownPath, parseVaultConfig, vaultList, vaultRead, vaultWrite, vaultTree } from '../services/vault-connector'
-import { buildNativeGraph, parseGraphifyGraph, type VaultGraph } from '../services/vault-graph'
+import { buildNativeGraph, capGraph, parseGraphifyGraph, type VaultGraph } from '../services/vault-graph'
 
 // In-memory cache for the (expensive) native vault-graph build — keyed per
 // org+config. Small and TTL-bounded; a process restart just rebuilds on demand.
@@ -362,6 +362,14 @@ export async function taskRoutes(app: FastifyInstance) {
   // busts the cache. `?tags=0` drops tag nodes from the native graph.
   const GRAPH_TTL_MS = 10 * 60_000
   const NATIVE_FILE_CAP = 120
+  // MEM-1 — hard ceiling on nodes RETURNED. The native path is already bounded
+  // by NATIVE_FILE_CAP at the fetch; this bounds the Graphify path, which is one
+  // read of a `graph.json` that a big vault makes arbitrarily large. 1500 keeps
+  // the JSON in the low MBs and the client's force sim interactive; the client
+  // caps what it DRAWS lower still (see web/app/dashboard/VaultGraph.tsx).
+  // `?max=` lets a caller ask for less — the phone does, since it renders a list
+  // and has no use for the tail.
+  const GRAPH_NODE_CAP = 1500
   app.get('/api/orgs/:orgId/memory/graph', async (req, reply) => {
     const { orgId } = req.params as any
     const q = (req.query as any) ?? {}
@@ -371,10 +379,17 @@ export async function taskRoutes(app: FastifyInstance) {
 
     const includeTags = String(q.tags ?? '1') !== '0'
     const rebuild = String(q.rebuild ?? '') === '1'
+    // `?max=` — a caller may ask for FEWER nodes than the ceiling (the phone
+    // renders a list, so it has no use for the long tail). Never more: the
+    // ceiling is the payload bound, not a default a client can raise.
+    const askedMax = Number.parseInt(String(q.max ?? ''), 10)
+    const maxNodes = Number.isFinite(askedMax) && askedMax > 0 ? Math.min(askedMax, GRAPH_NODE_CAP) : GRAPH_NODE_CAP
+    // The cache holds the UNCAPPED graph and the cap is applied on the way out,
+    // so two clients asking for different `max` can't poison each other's view.
     const cacheKey = `${orgId}:${cfg.repo}:${cfg.root}:${cfg.branch}:${includeTags ? 't' : 'n'}`
     if (!rebuild) {
       const hit = graphCache.get(cacheKey)
-      if (hit && Date.now() - hit.at < GRAPH_TTL_MS) return { ...hit.graph, cached: true }
+      if (hit && Date.now() - hit.at < GRAPH_TTL_MS) return { ...capGraph(hit.graph, maxNodes), cached: true }
     }
 
     // 1) Graphify graph.json (fast path — one fetch). Candidates: inside the
@@ -408,7 +423,7 @@ export async function taskRoutes(app: FastifyInstance) {
       hasGraphify: graph.source === 'graphify', graphPath, rebuildCommand,
     }
     graphCache.set(cacheKey, { at: Date.now(), graph: payload })
-    return payload
+    return capGraph(payload, maxNodes)
   })
 
   // ─── Company portability (MCA-PC D3) ────────────────────────────────────
