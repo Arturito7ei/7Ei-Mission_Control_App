@@ -7,7 +7,30 @@ _Last updated: 2026-07-18 (**FIX-1 — FOUR DEFECTS FROM A LIVE VISUAL PASS AGAI
 > protection), and the known-open follow-ups. This file is the full narrative log; that one is the
 > cold-start briefing.
 
-### 2026-07-18 at a glance — main is `b164184`, all suites green
+### 2026-07-19 — session status: main is `17f172e`, green, nothing in flight
+
+Test, CI and Deploy all success on `17f172e`; `https://7ei-backend.fly.dev/api/health` 200,
+`db: connected`, v1.3.0. Every requested story is merged.
+
+**Live visual pass — COMPLETE for web.** A read-only Chrome pass against app.7ei.ai after the
+FIX-1 deploy confirmed all four fixes live and correct: memory-brain graph renders (153 notes /
+119 links); Inbox and Activity agree — queued tasks read "Queued"; Activity audit noise collapses
+into expandable "N routine audit events" and rows read `POST arturita › converse` rather than raw
+UUID URLs; agent picker shows full label + caret. **Mobile remains visually unverified** (no
+simulator run).
+
+**Open — operator-side only, none of it in the repo:** branch protection on `main` (still off, so
+no check gates a merge), the red `npm audit` (5 pre-existing dev-tooling vulns — it is why the
+Security Scan is permanently red and carries no signal), operator credentials incl.
+`ALLOWED_ORIGINS` (currently `*`), `OPENAI_API_KEY` on Fly, and the Google OAuth redirect URI.
+Plus a zombie Dispatch "Disconnected / Approve once" card held **remotely** — dismiss it on the
+device or toggle the Dispatch connection; approving can never clear it. Details:
+[`docs/HANDOVER.md`](docs/HANDOVER.md).
+
+**Recommended next build: GC-2 — thread persistence.** Command Center chat history is client-side
+`useState` and dies on refresh; it is the most user-visible gap remaining.
+
+### 2026-07-18 at a glance — shipped at `b164184`, all suites green
 
 Backend 1873/1873 · evals 11/11 · web 329/329 · mobile 357/357 · typechecks + web build + mobile export clean.
 

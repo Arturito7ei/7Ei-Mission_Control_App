@@ -1,12 +1,29 @@
-# Handover — 2026-07-18
+# Handover — 2026-07-18 (status-synced 2026-07-19)
 
 > Read this cold after a reboot to know where things stand. Companions: `STATUS.md` (the full
 > shipped log), `HANDOFF.md` (session kickoff + verification), `GO-LIVE.md` (console actions),
 > `docs/SECURITY-mass-assignment.md` (the security class, in full).
 
-**Where main is:** `b164184` — `fix(FIX-1): four defects a live visual pass caught and the suite could not (#336)`.
+**Session status as of 2026-07-19.** `main` is green at `17f172e` (Test, CI and Deploy all
+success); every requested story is merged and nothing is in flight. Next priorities, in order:
+the **operator hardening trio** — branch protection on `main`, clearing the red `npm audit`, and
+the operator credentials including `ALLOWED_ORIGINS` (all under OPEN OPERATOR ACTIONS below) —
+then **GC-2, thread persistence**, because chat history in the Command Center still dies on
+refresh and it is the most user-visible gap left.
+
+**Where main is:** `17f172e` — `docs: a cold-start handover for after the reboot`, on top of
+`b164184` — `fix(FIX-1): four defects a live visual pass caught and the suite could not (#336)`.
 CI, Test and Deploy are all green on it. `https://7ei-backend.fly.dev/api/health` returns 200,
 `db: connected`, scheduler running, version 1.3.0.
+
+**Visual verification — DONE for web.** A live read-only Chrome pass against app.7ei.ai after the
+FIX-1 deploy confirmed all four fixes are live and correct: the memory-brain graph renders
+(**153 notes / 119 links**, not the old "0 notes"); Inbox and Activity no longer contradict —
+queued tasks read **"Queued"**, and the Inbox's "nothing needs a decision" is consistent with it;
+Activity's audit noise collapses into expandable **"N routine audit events"** rows and audit rows
+read human-readably (`POST arturita › converse`) instead of raw UUID URLs; and the agent picker
+renders with its full label plus a dropdown caret. This gap is **closed for web**.
+**Mobile screens remain visually unverified** — no simulator run has been done. That caveat stands.
 
 **Suites, re-run locally at `b164184` on 2026-07-18:**
 
@@ -173,7 +190,16 @@ fly secrets set ALLOWED_ORIGINS='https://app.7ei.ai' -a 7ei-backend
 check gates any merge** — CI reports, it does not block. Both halves need fixing to change that:
 turn protection on, and stop making `--admin` routine.
 
-**6. `npm audit` is permanently red — 5 vulnerabilities (4 moderate, 1 high).** All pre-existing,
+**6. A zombie Dispatch prompt needs dismissing on the device — not a code issue.** A
+"Disconnected / Approve once" card recurs from the dead MOB-5a sessions. **Fully diagnosed:** it is
+held in the **remote** Dispatch backend (`remoteSessionId cse_…`), not locally. The local side is
+already clean — session records archived, `bridgeSessionIds` cleared, processes dead — and a full
+app reboot did **not** clear it, which is the evidence that the survivor is remote. Approving never
+works: the grant is single-use and needs a live process to consume it (see the zombie-session
+diagnostic at the end of this file). **Resolution is operator-side on the device:** swipe the card
+away, or toggle the Dispatch connection off and back on in the desktop app.
+
+**7. `npm audit` is permanently red — 5 vulnerabilities (4 moderate, 1 high).** All pre-existing,
 in `drizzle-kit` and `form-data` (transitive dev-tooling). This is *why* the Security Scan
 workflow fails on every branch and why nothing gates on it. It is a known-and-accepted state, not
 a new regression — but it means "the security check is red" carries no signal, which is its own
@@ -270,6 +296,12 @@ resolves it. The prompt is a tombstone, not a request.
 ```
 
 then **fully restart the app** — not just close the window.
+
+**Updated 2026-07-19 — that local fix is necessary but not always sufficient.** If the card still
+returns after all of it, the surviving record is **remote**, held in the Dispatch backend against a
+`remoteSessionId cse_…`; the local cleanup has nothing left to remove and the reboot changes
+nothing. At that point stop looking in the repo or the filesystem: dismiss the card on the device,
+or toggle the Dispatch connection off and on. See operator action 6.
 
 One of these two zombies is also what left the `adapters/cursor` work sitting dirty in this shared
 checkout all day. Which points at the other lesson: **several sessions drive this one checkout.**
