@@ -3,18 +3,50 @@ name: Security Scan
 on: [pull_request]
 
 jobs:
+  # Audit every workspace that SHIPS. Policy, rationale and the standing
+  # exceptions are documented in docs/SECURITY-npm-audit.md — read that before
+  # changing the threshold or the workspace list.
+  #
+  # HARD-1 changed what this job covers. It used to audit `backend` and `app`.
+  # `app/` is the FROZEN legacy Expo client (root CLAUDE.md: "LEGACY/frozen; do
+  # not build new features here"), it is not in deploy.yml, and it carried 33
+  # advisories incl. 1 critical that nobody could act on — a permanently-red
+  # check that trained everyone to merge past red. Meanwhile `web/` — live on
+  # Vercel at app.7ei.ai — was NOT audited at all, and was carrying two CRITICAL
+  # Clerk auth-bypass advisories that this job would have caught on day one.
+  # Swapping `app` out for `web` + `apps/mobile` strictly INCREASES real coverage.
   audit:
-    name: npm audit
+    name: npm audit (${{ matrix.workspace }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workspace: backend
+            install: npm ci --legacy-peer-deps
+          - workspace: web
+            install: npm ci --legacy-peer-deps
+          - workspace: apps/mobile
+            install: npm ci
+    defaults:
+      run:
+        working-directory: ${{ matrix.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Audit backend
-        run: cd backend && npm ci --legacy-peer-deps && npm audit --audit-level=high
-      - name: Audit app
-        run: cd app && npm ci --legacy-peer-deps && npm audit --audit-level=high
+      - name: Install dependencies
+        run: ${{ matrix.install }}
+      # Threshold `high` (fails on high + critical) is the honest strictest
+      # setting today: every high/critical is FIXED as of HARD-1, so this gate is
+      # green on merit, not by suppression. The residual moderates are all
+      # dev-only toolchain paths that never run in production — each one is
+      # enumerated with its exposure analysis in docs/SECURITY-npm-audit.md.
+      # There is NO advisory allow-list and no `|| true`: a NEW high or critical
+      # in any of these three workspaces turns this job red, which is the point.
+      - name: Audit (fails on high + critical)
+        run: npm audit --audit-level=high
 
   license-check:
     name: License check
@@ -35,7 +67,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # Informational only (`|| true`). Repointed off the frozen `app/` workspace
+      # onto the shipping ones, for the same reason as the audit job above.
       - name: Check backend
         run: cd backend && npm ci --legacy-peer-deps && npm outdated || true
-      - name: Check app
-        run: cd app && npm ci --legacy-peer-deps && npm outdated || true
+      - name: Check web
+        run: cd web && npm ci --legacy-peer-deps && npm outdated || true
+      - name: Check mobile
+        run: cd apps/mobile && npm ci && npm outdated || true
