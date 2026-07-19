@@ -43,6 +43,14 @@ are shipped and here only for completeness.
 
 ## 1. `SECRETS_ENC_KEY` + `RUN_TOKEN_SECRET` on Fly — do this FIRST
 
+> 🛑 **Read [`docs/RUNBOOK-secrets-golive.md`](docs/RUNBOOK-secrets-golive.md) before running the command below.**
+> This section is correct but incomplete in one dangerous way: if the secret store is **already
+> populated** under the fallback key, setting a new key **orphans** every existing row (there is no
+> re-encryption path — `decrypt()` only ever tries the current key). The runbook has the read-only
+> count query that tells you which case you are in, and the ordered wipe-and-re-enter procedure for
+> when you are in the bad one. It also covers `agent_oauth_tokens` (per-agent Google **refresh**
+> tokens, CONN-5), which the re-entry list below predates and does not mention.
+
 The at-rest secret store (`backend/src/services/secrets.ts`) derives its AES-256-GCM
 key from `SECRETS_ENC_KEY`; the per-run HMAC tokens (`backend/src/routes/agent-api.ts`)
 sign with `RUN_TOKEN_SECRET || SECRETS_ENC_KEY`. **Both fall back to a hard-coded public
