@@ -47,6 +47,7 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 | `js-cookie` | HIGH | transitive | [GHSA-qjx8-664m-686j](https://github.com/advisories/GHSA-qjx8-664m-686j) — per-instance prototype hijack → cookie-attribute injection | ✅ **FIXED** — 3.0.5 → 3.0.7 |
 | `postcss` | moderate | transitive | [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) — XSS via unescaped `</style>` in stringify output | ⚠️ **ACCEPTED** — see exposure note E2 |
 | `next` | moderate | **direct** | depends on vulnerable `postcss` | ⚠️ ACCEPTED (same chain, E2) |
+| `@clerk/nextjs` | moderate | **direct** | depends on vulnerable `next` (distinct from the CRITICAL rows above — same package, different advisory chain) | ⚠️ ACCEPTED (same chain, E2) |
 
 > **The Clerk finding is the headline of this PR.** Both criticals are *authorization bypasses* in the library that enforces route protection and organisation scoping on the live dashboard. This repo leans on exactly those mechanisms — Clerk middleware for route protection, and org-scoped role gates (`requireOrgRole`, the membership gates closed in #264/#265, the mass-assignment class closed in #333). An auth-bypass advisory in that layer is the highest-severity item found in this workstream. It was fixed by a patch-level bump inside the existing semver range, and CI would have surfaced it months earlier had `web/` been in the matrix.
 
@@ -54,28 +55,48 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 
 No changes were required and **the mobile lockfile was not touched**. Pins verified intact after the work: `expo ~54.0.36`, `react 19.1.0`, `react-dom 19.1.0` — the App Store Expo Go SDK-54 ceiling holds (see the standing rule in root `CLAUDE.md`).
 
+> ### ⚠️ Known future risk — mobile has no permitted remedy
+>
+> `apps/mobile` currently carries **26 moderate** advisories. Every one of them offers the same fix: **`expo@57`** (plus `@clerk/clerk-expo@2.19.11`, `expo-auth-session@57`, `expo-notifications@57`). That upgrade is **forbidden** — SDK 54 is the App Store Expo Go ceiling and the standing rule in root `CLAUDE.md` is explicit that it must not be bumped (see also the `expo-go-app-store-sdk-ceiling` finding: "latest on npm" ≠ loadable by Expo Go).
+>
+> **The consequence to plan for:** if *any* of those 26 is ever reclassified from moderate to **high**, the `npm audit (apps/mobile)` job goes red and **there is no permitted fix** — the only remedy npm offers is the one bump we are not allowed to make. Once branch protection lands (the next hardening stage), that state would **block every merge in the repo**, not just mobile ones.
+>
+> This is recorded, not solved. If it happens, the options are, in order of preference: (a) check whether the specific advisory is reachable in a React Native runtime at all — most of these are Metro/CLI/build-time packages that never ship in the Hermes bundle — and if not, add it as the *first* justified exception to the no-allow-list policy, documented here; (b) pin the single offending transitive dep via `overrides` if it can be moved without touching `expo`; (c) as a last resort, scope the mobile audit to `--omit=dev`, which is a real narrowing of coverage and must be argued here before it is done. Do **not** resolve it by bumping Expo, and do **not** resolve it by deleting the job.
+
 ---
 
 ## Exposure notes for the accepted moderates
 
 These are the *written justifications* the policy requires. Neither is reachable in production.
 
-### E1 — `esbuild` dev-server advisories, via `drizzle-kit` (backend, 4 moderate)
+### E1 — `esbuild` dev-server advisories, via `drizzle-kit` **and `tsx`** (backend, 4 moderate)
 
-**Why not fixed:** the only offered remedy is `npm audit fix --force` → `drizzle-kit@0.18.1`, a **major downgrade** from the pinned `^0.31.10`. That would break the migration tooling this project's schema workflow depends on (`src/db/setup.ts` is the migration convention). Forcing it trades a non-exposed dev advisory for a broken build — a strictly worse position.
+**Why not fixed:** the only offered remedy is `npm audit fix --force` → `drizzle-kit@0.18.1`, a **major downgrade** from the pinned `^0.31.10`. That would break the migration tooling this project's schema workflow depends on (`src/db/setup.ts` is the migration convention). Forcing it trades a non-reachable advisory for a broken build — a strictly worse position.
 
-**Actual exposure: none in production.** Both advisories describe attacks on **`esbuild`'s development HTTP server** — one lets any website send requests to that dev server and read responses, the other is an arbitrary file read *on Windows*. Concretely:
-- `drizzle-kit` is a **devDependency**. It is not installed in, and not invoked by, the deployed Fly image.
-- The vulnerable code path is the esbuild **dev server**, which this repo never starts — `drizzle-kit` uses esbuild to transpile config, not to serve.
-- The Windows-specific advisory cannot apply: the deploy target is Linux (Fly) and development is macOS.
+**There are TWO vulnerable `esbuild` paths, and one of them ships to production.** Be precise about this, because the obvious-sounding justification is wrong:
 
-**Re-evaluate if:** `drizzle-kit` ever becomes a production dependency, or a `drizzle-kit` release lands that resolves the `@esbuild-kit/*` chain forward instead of backward. Worth re-checking each dependency sweep.
+```
+node_modules/@esbuild-kit/core-utils/node_modules/esbuild   ← via drizzle-kit (dev tooling)
+node_modules/tsx/node_modules/esbuild                       ← via tsx, the PROD ENTRYPOINT
+```
+
+`backend/Dockerfile` runs `RUN npm install` — **all** dependencies including devDependencies — and only sets `ENV NODE_ENV=production` *afterwards*, so that flag never prunes anything. Its own comment says so: *"Install ALL dependencies (tsx is in devDeps, needed to run TypeScript)"*. The container then starts with `CMD ["npx", "tsx", "src/index.ts"]`. So **`tsx`, and the vulnerable `esbuild` underneath it, are installed in the Fly image and are actively running in production.** Any claim that these packages "are not installed in the deployed image" is false.
+
+**Actual exposure: none — but on reachability, not on absence.** Both advisories require **`esbuild`'s development HTTP server** (the `serve` API):
+- [GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99) — any website can send requests to that dev server and read the responses. **`tsx` never invokes `serve`.** It uses only esbuild's **transform** API to compile TypeScript in-process; it does not open a socket, and no HTTP server from esbuild is ever started in this image. `drizzle-kit` likewise uses esbuild to transpile its config, not to serve.
+- [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr) — arbitrary file read, **Windows-only**. Production is `node:22-alpine` (Linux) and development is macOS, so this leg cannot apply on any machine that runs this code.
+
+So the package is present and executing; the *vulnerable function* is not called. That is a weaker guarantee than "not installed" and it is the honest one.
+
+**Re-evaluate if:** anything in the backend starts an esbuild dev server or `tsx` gains a watch/serve mode that is used in the image; a `drizzle-kit` or `tsx` release resolves the chain forward; or the Dockerfile switches to `npm ci --omit=dev` with a compiled build step (which would remove the prod leg entirely and is the cleanest long-term fix). Worth re-checking each dependency sweep.
 
 ### E2 — `postcss` XSS via unescaped `</style>`, via `next` (web, 3 moderate)
 
 **Why not fixed:** npm's only offered remedy is `next@9.3.3` — a **major downgrade** from `15.5.19`, i.e. abandoning the App Router the entire `web/` workspace is built on. Categorically not an option. No forward fix exists at the time of writing.
 
-**Actual exposure: none.** The advisory requires an attacker to control **CSS source text that PostCSS then stringifies**. In this workspace PostCSS runs **at build time only**, over first-party stylesheets and Tailwind output committed to the repo. There is no path by which user- or tenant-supplied content reaches PostCSS: the build inputs are static files under version control, and nothing in `web/` compiles CSS at request time. An advisory whose precondition is attacker-controlled build-time CSS does not apply to a build whose CSS is entirely authored by us.
+**Actual exposure: none.** The advisory requires an attacker to control **CSS source text that PostCSS then stringifies**. In this workspace PostCSS runs **at build time only**, over first-party stylesheets and Tailwind output committed to the repo, so no user- or tenant-supplied content ever reaches it.
+
+One nuance worth stating rather than glossing, because `web/` *does* emit a `<style>` tag at render time: `app/layout.tsx:52` writes `<style id="theme-tokens" dangerouslySetInnerHTML={{ __html: themeCss() }} />`. That is **not** a PostCSS path and it is **not** attacker-influenced — `themeCss()` (`app/dashboard/tokens.ts:195`) takes **no arguments** and simply serializes a hardcoded first-party `themes` map into `k:v` declarations. React writes the string straight into the document; PostCSS is not involved at request time at all. So the render-time CSS carries no tenant input, and the build-time CSS that PostCSS *does* process is entirely authored by us. Neither half satisfies the advisory's precondition.
 
 **Re-evaluate if:** `web/` ever gains runtime CSS compilation or accepts user-supplied styles, or when a `next` release ships a patched `postcss` (this one should resolve itself on a routine Next bump — check on each upgrade).
 
