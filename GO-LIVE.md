@@ -503,3 +503,70 @@ Per the operating rules, I don't create accounts, enter passwords/keys, complete
 consent, change account settings, or rotate/enter credentials on your behalf. Everything I
 *can* automate — the adapter hardening, the one-command installer, this runbook — is done;
 the console/secret actions above are the ones only you can perform.
+
+---
+
+## ✅ Branch protection on `main` — APPLIED (HARD-2, 2026-07-20)
+
+**Status: ON.** Applied via `gh api` against `main` at `559450e`. This supersedes the
+"Do NOT require `npm audit`" warning in the section above: that warning was written when
+the audit job was permanently red against the frozen `app/` workspace. Since **#337** the
+audit runs against the three workspaces that actually ship (`backend`, `web`, `apps/mobile`)
+and is **green on merit**, so it is now a required check.
+
+### Required status checks (10) — exact context names
+
+Verified against the checks actually reported on PRs **#337** and **#338** (identical sets),
+not inferred from the workflow YAML:
+
+| Context | Workflow |
+|---|---|
+| `Backend unit tests` | `test.yml` |
+| `Install check (backend)` · `Install check (web)` · `Install check (app)` | `ci.yml` |
+| `Web (web)` | `ci.yml` |
+| `Mobile (apps/mobile)` ← parity tripwires | `ci.yml` |
+| `npm audit (backend)` · `npm audit (web)` · `npm audit (apps/mobile)` | `security.yml` |
+| `License check` | `security.yml` |
+
+**Deliberately NOT required:**
+- `Outdated dependencies` — informational, ends in `|| true`, can never fail. Requiring a
+  check that cannot go red adds latency and no signal.
+- `Deploy backend → Fly.io` / `Deploy web → Vercel` — `deploy.yml` triggers on
+  `push: branches: [main]` only, i.e. **after** merge. These never report on a PR, so
+  requiring one would make every PR permanently unmergeable.
+
+### Other settings
+
+- `strict: true` — branch must be up to date with `main` before merging.
+- `enforce_admins: **true**` — **this is the point of the change.** The house
+  `gh pr merge --squash --admin` convention no longer bypasses status checks.
+- `required_pull_request_reviews: null` — solo repo, no second reviewer exists.
+  Requiring reviews would hard-block every merge.
+- `restrictions: null` · `allow_force_pushes: false` · `allow_deletions: false`
+- `required_linear_history: true` (repo squash-merges) · `required_conversation_resolution: true`
+
+### ⚠️ Operational consequence: no more direct pushes to `main`
+
+Required status checks apply to **pushes**, not just merges. With `enforce_admins: true`,
+`git push origin main` is rejected — a fresh commit has no passing checks. **Everything,
+including docs-only changes, now goes through a PR.** (This very section was pushed directly
+*before* protection was applied, for exactly that reason.)
+
+### Emergency relax — one command
+
+Fully remove protection (reversible; re-apply by re-running the HARD-2 `PUT`):
+
+```bash
+gh api -X DELETE repos/Arturito7ei/7Ei-Mission_Control_App/branches/main/protection
+```
+
+Softer option — keep protection but restore the admin bypass (leaves checks required for
+non-admins, lets the owner `--admin` past a wedged check):
+
+```bash
+gh api -X DELETE repos/Arturito7ei/7Ei-Mission_Control_App/branches/main/protection/enforce_admins
+# re-arm with:  gh api -X POST repos/.../branches/main/protection/enforce_admins
+```
+
+Admins can always edit protection, so `enforce_admins: true` is **not** a lockout risk —
+it is one API call to flip in an emergency.
