@@ -21,6 +21,7 @@ import { summariseAgentBudget } from '../services/agent-budget'
 import { buildStaffCards } from '../services/staff-grid'
 import { spendForScope } from '../services/budget'
 import { projectConnectorExecution } from '../services/connector-execution'
+import { revokeAgentCredentials, agentNotDeleted } from '../services/agent-deletion'
 
 /** The agent, but only if it belongs to this org. Null otherwise (→ 404). */
 export async function agentInOrg(orgId: string, agentId: string) {
@@ -37,7 +38,8 @@ export async function agentDetailRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/staff', async (req) => {
     const { orgId } = req.params as { orgId: string }
     const [agents, tasks] = await Promise.all([
-      db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+      // AAD-1 — the staff grid excludes soft-deleted agents.
+      db.select().from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted)),
       db.select({
         agentId: schema.tasks.agentId, status: schema.tasks.status, costUsd: schema.tasks.costUsd,
         tokensUsed: schema.tasks.tokensUsed, createdAt: schema.tasks.createdAt, completedAt: schema.tasks.completedAt,
@@ -266,7 +268,7 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     if (!agent) return reply.code(404).send({ error: 'Agent not found' })
 
     const roster = await db.select({ id: schema.agents.id, reportsTo: schema.agents.reportsTo })
-      .from(schema.agents).where(eq(schema.agents.orgId, orgId))
+      .from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
 
     const result = validateConfigPatch((req.body ?? {}) as Record<string, unknown>, { agentId, agents: roster })
     if (result.ok === false) return reply.code(400).send({ error: result.error })
@@ -275,6 +277,67 @@ export async function agentDetailRoutes(app: FastifyInstance) {
     const after = await agentInOrg(orgId, agentId)
     await snapshot(orgId, agentId, agent, after, req)
     return { agent: after }
+  })
+
+  // ─── AAD-1 — owner-gated, org-scoped agent SOFT DELETE + credential revocation ──
+  //
+  // The legacy `DELETE /api/agents/:agentId` (routes/agents.ts) is a member-reachable
+  // HARD delete that orphans the agent's OAuth refresh tokens + secrets and writes its
+  // audit row with orgId:NULL (invisible in the org feed). This is its hardened
+  // replacement:
+  //   • owner-gated (requireOrgRole('owner')) — mirrors the config PUT above, so the
+  //     agent's two mutating surfaces share one authz story;
+  //   • org-scoped path → `requireOrgRole` actually fires (it no-ops without :orgId, the
+  //     R-4 trap) AND the audit hook records the correct orgId for free;
+  //   • SOFT delete — the row is retained for audit; read paths filter `deletedAt IS
+  //     NULL` and the token is revoked (apiTokenHash nulled + resolver filter);
+  //   • explicit credential revocation (revokeAgentCredentials) — no dangling Google
+  //     refresh token or connector secret.
+  //
+  // GC-0b gate-order note: the membership gate authorised the PRE-IMAGE via
+  // resolveRequestOrg; `agentInOrg(orgId, agentId)` re-reads the row under BOTH ids and
+  // the UPDATE's `where(and(id, orgId))` re-asserts the tenant on the row it mutates, so
+  // a cross-tenant delete cannot slip past. No agent id is read from the body.
+  app.delete('/api/orgs/:orgId/agents/:agentId', { preHandler: requireOrgRole('owner') }, async (req, reply) => {
+    const { orgId, agentId } = req.params as { orgId: string; agentId: string }
+    const agent = await agentInOrg(orgId, agentId)
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' })
+    // Idempotency: a second delete is a clean 404, never a silent 204 or a 500.
+    if ((agent as any).deletedAt) return reply.code(404).send({ error: 'Agent not found' })
+
+    const userId = (req as any).auth?.userId ?? (req as any).userId ?? null
+
+    // Revoke credentials BEFORE flipping the row: if revocation throws, the agent stays
+    // visible + retryable rather than becoming a hidden agent with live tokens.
+    const cleanup = await revokeAgentCredentials(orgId, agentId)
+
+    // Soft delete: retain the row, stop it acting (null the token hash), mark it deleted.
+    const now = new Date()
+    await db.update(schema.agents)
+      .set({ deletedAt: now, deletedBy: userId, apiTokenHash: null, status: 'deleted' })
+      .where(and(eq(schema.agents.id, agentId), eq(schema.agents.orgId, orgId)))
+
+    const after = await agentInOrg(orgId, agentId)
+    await snapshot(orgId, agentId, agent, after, req)
+
+    // Explicit audit row: names WHICH agent died and WHAT was revoked, with the correct
+    // non-null orgId (visible in the org-filtered audit query). The onResponse audit
+    // hook also records a generic agent.delete for this request; this is the detailed,
+    // deterministic record the plan calls for.
+    await db.insert(schema.auditLogs).values({
+      id: randomUUID(), orgId, userId, action: 'agent.delete',
+      method: 'DELETE', path: `/api/orgs/${orgId}/agents/${agentId}`,
+      statusCode: 204, durationMs: 0,
+      metadata: {
+        agentId, agentName: agent.name,
+        oauthProvidersRevoked: cleanup.oauthProvidersRevoked,
+        secretsDeleted: cleanup.secretsDeleted,
+        connectorsDisabled: cleanup.connectorsDisabled,
+      },
+      createdAt: now,
+    }).catch(() => {})
+
+    return reply.code(204).send()
   })
 
   // Avatar upload (multipart). The image is stored as a capped data URI on the

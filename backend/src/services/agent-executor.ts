@@ -62,6 +62,13 @@ export async function executeAgentTask(opts: {
   const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
   if (!agent) throw new Error('Agent not found')
 
+  // ─── AAD-1 — a SOFT-DELETED agent never executes ────────────────────────────
+  // The authoritative choke point: every execution path (chat, scheduler, heartbeat
+  // wake, orchestrator delegation) resolves the agent through here, so guarding this
+  // one spot means a deleted agent can never be run even if a stale enumeration reaches
+  // it by id. Mirrors the tenant invariant below — one choke point, no per-caller check.
+  if ((agent as any).deletedAt) throw new Error('Agent has been deleted')
+
   // ─── GC-0b (audit) — THE TENANT INVARIANT, ENFORCED AT THE CHOKE POINT ──────
   //
   // A task must be executed by an agent in the TASK'S OWN ORG.

@@ -20,6 +20,7 @@ import multipart from '@fastify/multipart'
 //     moved route returns 401, while a public webhook receiver is not gated.
 
 import { orgRoutes, agentRoutes, taskRoutes, projectRoutes, costRoutes, skillRoutes, authRoutes, credentialRoutes } from '../routes/all'
+import { agentDetailRoutes } from '../routes/agent-detail'
 import { knowledgeRoutes } from '../routes/knowledge'
 import { commsRoutes, commsWebhookRoutes } from '../routes/comms'
 import { connectorRoutes } from '../routes/connectors'
@@ -78,6 +79,7 @@ async function bootLikeIndex() {
     secured.addHook('preHandler', requireOrgMembership)
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
+    await secured.register(agentDetailRoutes)   // Epic AG + AAD-1 — per-agent detail incl. owner-gated DELETE
     await secured.register(taskRoutes)
     await secured.register(projectRoutes)
     await secured.register(costRoutes)
@@ -169,6 +171,9 @@ test('[MCA-85] no tenant-scoped route is publicly reachable outside the allowlis
   secured('GET', '/api/orgs/:orgId/notifications')
   secured('GET', '/api/agents/:agentId/memory')
   secured('DELETE', '/api/agents/:agentId/memory')
+  // AAD-1 — the owner-gated agent soft delete must be Clerk-secured (not the public
+  // legacy top-level path). A route the leak-guard cannot see is one it cannot protect.
+  secured('DELETE', '/api/orgs/:orgId/agents/:agentId')
   secured('POST', '/api/orgs/:orgId/webhooks')
   secured('GET', '/api/orgs/:orgId/usage')
   // ONB2 audit H-2 — the two routes this guard used to be blind to. Both are now

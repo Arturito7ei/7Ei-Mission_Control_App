@@ -42,6 +42,41 @@ describe('[ONB1] adapter registry — the taxonomy', () => {
     }
   })
 
+  // ── AAD-1 — the readiness tripwire: flip an unbuilt runtime to available and CI red ──
+  it('[ADD-1] joinableAdapterTypes() is EXACTLY the four built runtimes', () => {
+    // Pins the set so the moment anyone flips openclaw_gateway / http_webhook /
+    // hermes_gateway / hermes_local / grok_local to `available: true`, this fails — a
+    // join would then be accepted for a runtime that can never be handed work (dispatch
+    // is pull-only; there is no outbound WS/Hermes/xAI client). See PLAN §2c.
+    assert.deepEqual(
+      [...joinableAdapterTypes()].sort(),
+      ['claude_code', 'cursor', 'openai_generic', 'openclaw_local'],
+      'the set of joinable (built) runtimes changed — if this is intentional, update the pin AND ship the dispatch half',
+    )
+  })
+
+  it('[ADD-1] the five requested-but-unbuilt runtimes are declared, invitable, and NOT available', () => {
+    for (const t of ['openclaw_gateway', 'http_webhook', 'hermes_gateway', 'hermes_local', 'grok_local']) {
+      const a = getAdapter(t)!
+      assert.ok(a, `missing adapter ${t}`)
+      assert.equal(a.available, false, `${t} must stay available:false until its dispatch half is built`)
+      assert.equal(a.invitable, true, `${t} stays declarable so the taxonomy is an honest map`)
+      assert.ok(!joinableAdapterTypes().includes(t), `${t} must not be joinable`)
+    }
+  })
+
+  it('[ADD-1] every unavailable adapter carries a non-empty note explaining WHY (declared ≠ available)', () => {
+    for (const a of listAdapters().filter((x) => !x.available && x.type !== 'internal')) {
+      assert.ok(a.note && a.note.trim().length > 0, `${a.type} is unavailable but has no note explaining why`)
+    }
+  })
+
+  it('[ADD-1] the pickable invariant holds: joinable = invitable && available && kind !== internal', () => {
+    const pickable = listAdapters().filter((a) => a.invitable && a.available && a.kind !== 'internal').map((a) => a.type).sort()
+    assert.deepEqual(pickable, [...joinableAdapterTypes()].sort(), 'joinableAdapterTypes drifted from the pickable definition')
+    assert.ok(!pickable.includes('internal'), 'internal must never be pickable')
+  })
+
   it('an unknown adapterType resolves to null, never a fallback', () => {
     assert.equal(getAdapter('nope'), null)
     assert.equal(getAdapter(''), null)

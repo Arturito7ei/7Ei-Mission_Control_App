@@ -28,8 +28,14 @@ export function heartbeatFreshness(last: Date | number | null | undefined, now: 
 }
 
 /** Notify an external runtime that a task is waiting. Best-effort, never throws:
- *  fires an outbound webhook the runtime (or a relay) can listen on. Telegram
- *  ping is handled separately by the comms layer when contactChannel is set. */
+ *  fires an ORG-LEVEL outbound webhook the runtime (or a relay) can listen on.
+ *  Telegram ping is handled separately by the comms layer when contactChannel is set.
+ *
+ *  NOTE: `agent.externalEndpoint` is accepted for signature symmetry but is NEVER read —
+ *  there is no per-agent push dispatch. Dispatch is entirely PULL: the agent's own poll
+ *  loop collects `assigned` tasks via GET /api/agent/tasks. This ping is only a broadcast
+ *  hint to operator-registered org webhooks; for an org with none it is a silent no-op.
+ *  (See docs/PLAN-agent-add-delete.md §2c — the unbuilt push half.) */
 export async function notifyExternalAgent(
   agent: Pick<Agent, 'id' | 'orgId' | 'name' | 'runtime' | 'externalEndpoint'>,
   task: { taskId: string; input: string },
