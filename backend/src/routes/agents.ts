@@ -385,7 +385,8 @@ export async function agentRoutes(app: FastifyInstance) {
   // wrote its audit row with orgId:NULL (invisible in the org feed). Deletion now goes
   // through the owner-gated, org-scoped SOFT delete with explicit credential revocation:
   //   DELETE /api/orgs/:orgId/agents/:agentId   (routes/agent-detail.ts)
-  // No client ever called this path (verified: no web/mobile/cli caller); it is refused
+  // No web/apps-mobile/cli caller hit this path; the frozen legacy `app/` did (its
+  // agents.delete), and has been repointed to the new route in the same PR. It is refused
   // with a 410 rather than removed, so a direct API caller gets a clear signal instead of
   // a generic 404, and the route table stays stable for boot.test. A non-member still
   // hits 403 at the membership gate before reaching here.

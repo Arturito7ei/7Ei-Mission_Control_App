@@ -335,6 +335,28 @@ test('[AAD-1] MUTATION PROOF: the REAL resolver filters the deleted state even i
   assert.equal(res.statusCode, 401, 'the REAL resolver still resolved a soft-deleted agent — the deleted-state filter is missing')
 })
 
+// ══ THE EXECUTOR BACKSTOP — a deleted agent never executes ════════════════════
+
+test('[AAD-1] executeAgentTask REFUSES a soft-deleted agent (the authoritative execution backstop)', async () => {
+  // The read-path filters keep a deleted agent out of enumerations, but the AUTHORITATIVE
+  // "never runs" guarantee is at the executor choke point (agent-executor.ts). Removing it
+  // fails no other test — this is the one that bites. The agent is EXTERNAL runtime so
+  // that IF the backstop were removed, execution would reach the network-free external
+  // dispatch branch (not an LLM call), keeping the mutation-proof run deterministic +
+  // offline; with the backstop present it throws before any of that.
+  const { executeAgentTask } = await import('../services/agent-executor')
+  await db.insert(schema.agents).values(
+    agentRow('aad-exec-del', ORG_A, 'Deleted Exec', {
+      runtime: 'openclaw', status: 'deleted', deletedAt: new Date(), deletedBy: OWNER_A,
+    }) as any,
+  )
+  await assert.rejects(
+    () => executeAgentTask({ agentId: 'aad-exec-del', taskId: 'aad-exec-task', input: 'do work' }),
+    /deleted/i,
+    'a soft-deleted agent was allowed to execute — the executor backstop at agent-executor.ts is missing',
+  )
+})
+
 // ══ AUDIT + SNAPSHOT ══════════════════════════════════════════════════════════
 
 test('[AAD-1] audit: an agent.delete row lands with the correct non-null orgId, visible in the org feed, naming the agent', async () => {
