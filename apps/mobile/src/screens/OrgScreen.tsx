@@ -193,10 +193,10 @@ export default function OrgScreen({ onOpenAgent }: { onOpenAgent?: (id: string, 
           {agents === null ? <Loading text="Loading the org chart…" /> : null}
           {/* AAD-2 — the "+ Agent" entry point. The desk's Org section had no add
               affordance either (its toolbar was Import/Export/zoom only); both
-              surfaces get one in the same wave. Owner-gated inside the button. */}
-          <View style={{ marginBottom: space.md }}>
-            <AddAgentButton />
-          </View>
+              surfaces get one in the same wave. Owner-gated inside the button, and
+              unwrapped: it carries its own bottom margin, so a non-owner (for whom
+              it renders null) gets no stray gap. */}
+          <AddAgentButton />
           {rows.length ? (
             <View style={s.head}>
               <Text style={s.count}>

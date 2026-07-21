@@ -150,7 +150,34 @@ export default function InviteAgentSheet({
             </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md }} keyboardShouldPersistTaps="handled">
+          {/* KEYBOARD. This is the app's only BOTTOM-ANCHORED sheet (the backdrop
+              is `flex-end`, so the sheet does not move when the keyboard opens) and
+              it has three inputs low in the scroll — Max uses, Time to live, and the
+              multiline Message — with the "Create invite + prompt" button directly
+              beneath them. Without this the keyboard covers that whole band and the
+              submit button is simply unreachable: the ScrollView's frame still
+              extends under the keyboard, so there is no scroll offset that brings
+              the button into view.
+
+              `automaticallyAdjustKeyboardInsets` makes iOS add the keyboard/scroll
+              -view overlap as a bottom content inset, which both raises the maximum
+              scroll offset (every field AND the button can be scrolled clear of the
+              keyboard) and scrolls the focused input into the remaining visible
+              region. The app's other two keyboard surfaces (ConnectScreen,
+              CommandCenterScreen) use KeyboardAvoidingView instead — correct for a
+              full-screen `flex: 1` shell, but wrong here: `behavior="padding"` on a
+              height-capped sheet inside a Modal fights the `maxHeight: '92%'`
+              rather than the keyboard.
+
+              `keyboardShouldPersistTaps="handled"` is the other half and is load
+              -bearing, not decoration: with the keyboard up, it lets the tap on
+              "Create invite + prompt" reach onPress on the FIRST tap instead of
+              being consumed dismissing the keyboard. */}
+          <ScrollView
+            contentContainerStyle={{ padding: space.lg, gap: space.md }}
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
+          >
             {err ? <Banner kind="error">{err}</Banner> : null}
 
             {created ? (
@@ -487,6 +514,10 @@ const s = StyleSheet.create({
     paddingVertical: space.sm,
     paddingHorizontal: space.md,
     alignSelf: 'flex-start',
+    // The button owns its own spacing so the CALLER needs no wrapper View. A
+    // wrapper keeps laying out its margin after this component returns null for a
+    // non-owner — a stray ~16pt gap where a button they never see would have been.
+    marginBottom: space.md,
   },
   addBtnCompact: { paddingVertical: space.xs },
   addBtnText: { color: theme.blue, fontSize: font.sm, fontWeight: '800' },

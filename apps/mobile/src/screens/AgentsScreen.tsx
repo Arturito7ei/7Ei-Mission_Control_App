@@ -77,10 +77,10 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
 
       {/* AAD-2 — the "+ Agent" entry point, mirroring the desk's Agents roster.
           Owner-gated (creating an invite is `requireOrgRole('owner')`); the sheet
-          itself is the shipped ONB invite flow, called over the same endpoints. */}
-      <View style={{ marginBottom: space.md }}>
-        <AddAgentButton />
-      </View>
+          itself is the shipped ONB invite flow, called over the same endpoints.
+          Unwrapped on purpose: the button carries its own bottom margin, so a
+          non-owner (for whom it renders null) gets no stray gap. */}
+      <AddAgentButton />
 
       {agents === null ? (
         <Loading text="Loading agents…" />
