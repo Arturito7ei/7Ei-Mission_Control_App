@@ -1,7 +1,7 @@
 import { FastifyReply, FastifyRequest } from 'fastify'
 import { createHash, randomBytes } from 'crypto'
 import { db, schema } from '../db/client'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 
 // ─── AGENT TOKEN AUTH (MCA-EXT) ────────────────────────────────────────────
 //
@@ -36,8 +36,14 @@ export function extractBearerToken(req: FastifyRequest): string | null {
 
 export type AgentResolver = (hash: string) => Promise<typeof schema.agents.$inferSelect | null>
 
+// AAD-1: the resolver filters `deletedAt IS NULL`. The owner-gated soft delete also
+// nulls `apiTokenHash` (so the hash lookup already misses), but this is defence in
+// depth: a soft-deleted agent's row is retained, and its token must NEVER resolve —
+// the one property the old hard delete got right, kept under soft delete.
 const defaultResolver: AgentResolver = async (hash) =>
-  (await db.query.agents.findFirst({ where: eq(schema.agents.apiTokenHash, hash) })) ?? null
+  (await db.query.agents.findFirst({
+    where: and(eq(schema.agents.apiTokenHash, hash), isNull(schema.agents.deletedAt)),
+  })) ?? null
 
 /**
  * Build the agent-token onRequest hook. The resolver is injectable so tests can

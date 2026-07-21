@@ -7,6 +7,7 @@ import { eq, and, inArray } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { canAgentRun } from './governance'
 import { isExternalAgent, heartbeatFreshness } from './agent-runtime'
+import { agentNotDeleted } from './agent-deletion'
 
 export const ORPHAN_STALE_MS = 30 * 60 * 1000  // in_progress > 30 min = orphaned
 
@@ -45,9 +46,10 @@ export async function runHeartbeatSweep(orgId?: string): Promise<SweepResult> {
   const now = Date.now()
   const res: SweepResult = { orphansRecovered: 0, woken: 0, statusUpdated: 0 }
 
+  // AAD-1 — never sweep/wake a soft-deleted agent (the executor would refuse it anyway).
   const agents = await (orgId
-    ? db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
-    : db.select().from(schema.agents))
+    ? db.select().from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
+    : db.select().from(schema.agents).where(agentNotDeleted))
 
   // 1. Orphan recovery — reset stuck in_progress tasks for these agents.
   const agentIds = agents.map(a => a.id)

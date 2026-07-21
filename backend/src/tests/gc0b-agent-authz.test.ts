@@ -191,6 +191,11 @@ const NOT_MEMBER_WRITABLE: Record<string, string> = {
   lastHeartbeatAt: 'runtime-owned', heartbeatStatus: 'runtime-owned',
   nextWakeAt: 'runtime-owned', heartbeatEverySec: 'runtime-owned',
   skills: 'dedicated agent-skills route', memoryLongTerm: 'dedicated /memory routes',
+  // AAD-1 soft delete — server-owned lifecycle state, written ONLY by the owner-gated
+  // DELETE /api/orgs/:orgId/agents/:agentId. A member-writable deletedAt would let a
+  // member hide (or, by nulling it, resurrect) an agent through the legacy PATCH.
+  deletedAt: 'owner-gated soft-delete lifecycle (DELETE …/agents/:agentId)',
+  deletedBy: 'owner-gated soft-delete lifecycle (DELETE …/agents/:agentId)',
 }
 
 /** The partition check, as a pure function so it can be proven on synthetic input. */

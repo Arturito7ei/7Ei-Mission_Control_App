@@ -89,6 +89,13 @@ export const agents = sqliteTable('agents', {
   cheapModelEnabled: integer('cheap_model_enabled', { mode: 'boolean' }).notNull().default(false),
   reasoningEffort: text('reasoning_effort'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  // AAD-1 — soft delete. A deleted agent keeps its row (audit pre-image + the
+  // historical joins that render its name on past tasks) but is EXCLUDED from every
+  // enumeration/render path and can no longer act (its `apiTokenHash` is nulled and
+  // the token resolver filters `deletedAt IS NULL`). Both NULL for every existing
+  // agent → nothing changes until a delete lands. `deletedBy` is the acting user id.
+  deletedAt: integer('deleted_at', { mode: 'timestamp' }),
+  deletedBy: text('deleted_by'),
 })
 
 export const messages = sqliteTable('messages', {

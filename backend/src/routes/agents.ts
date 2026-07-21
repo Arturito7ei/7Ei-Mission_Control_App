@@ -20,6 +20,7 @@ import { resolveModelProfile, buildModelProfilePatch, flattenModelOptions, parse
 import { parseLlmChain } from '../services/arturita-pipeline'
 import { parseCustomModels } from '../services/custom-model'
 import { requireOrgRole, enforceOrgRole } from '../middleware/rbac'
+import { agentNotDeleted } from '../services/agent-deletion'
 
 // ─── AGENT TEMPLATES ────────────────────────────────────────────────────────
 
@@ -72,7 +73,8 @@ export async function agentRoutes(app: FastifyInstance) {
   app.get('/api/agent-templates', async () => ({ templates: AGENT_TEMPLATES }))
   app.get('/api/orgs/:orgId/agents', async (req) => {
     const { orgId } = req.params as any
-    return { agents: await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId)) }
+    // AAD-1 — the roster read path: soft-deleted agents are excluded.
+    return { agents: await db.select().from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted)) }
   })
   app.post('/api/orgs/:orgId/agents', async (req, reply) => {
     const { orgId } = req.params as any
@@ -378,9 +380,18 @@ export async function agentRoutes(app: FastifyInstance) {
       return { ok: true, status }
     })
   }
-  app.delete('/api/agents/:agentId', async (req, reply) => {
-    await db.delete(schema.agents).where(eq(schema.agents.id, (req.params as any).agentId))
-    reply.code(204)
+  // AAD-1 — the legacy member-reachable HARD delete is RETIRED. It was a member-level
+  // `db.delete` that orphaned the agent's OAuth refresh tokens + agent-scoped secrets and
+  // wrote its audit row with orgId:NULL (invisible in the org feed). Deletion now goes
+  // through the owner-gated, org-scoped SOFT delete with explicit credential revocation:
+  //   DELETE /api/orgs/:orgId/agents/:agentId   (routes/agent-detail.ts)
+  // No web/apps-mobile/cli caller hit this path; the frozen legacy `app/` did (its
+  // agents.delete), and has been repointed to the new route in the same PR. It is refused
+  // with a 410 rather than removed, so a direct API caller gets a clear signal instead of
+  // a generic 404, and the route table stays stable for boot.test. A non-member still
+  // hits 403 at the membership gate before reaching here.
+  app.delete('/api/agents/:agentId', async (_req, reply) => {
+    return reply.code(410).send({ error: 'Gone. Use DELETE /api/orgs/:orgId/agents/:agentId (owner-gated).' })
   })
   app.get('/api/agents/:agentId/messages', async (req) => {
     const { agentId } = req.params as any
@@ -435,7 +446,7 @@ export async function agentRoutes(app: FastifyInstance) {
   app.get('/api/orgs/:orgId/agents/advisors', async (req) => {
     const { orgId } = req.params as any
     return { agents: await db.select().from(schema.agents)
-      .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.agentType, 'advisor'))) }
+      .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.agentType, 'advisor'), agentNotDeleted)) }
   })
   app.post('/api/orgs/:orgId/agents/propose', async (req, reply) => {
     const { orgId } = req.params as any
@@ -572,7 +583,7 @@ export async function agentRoutes(app: FastifyInstance) {
     // Propose path → ask the LLM to design an agent from the prompt + org chart.
     if (!body.prompt) return reply.code(400).send({ error: 'prompt is required' })
     const agents = await db.select({ id: schema.agents.id, name: schema.agents.name, role: schema.agents.role, title: schema.agents.title })
-      .from(schema.agents).where(eq(schema.agents.orgId, orgId))
+      .from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
     const { system, user } = buildHirePrompt(body.prompt, org, agents)
     let out = ''
     await streamLLM({ provider: 'anthropic', model: 'claude-sonnet-4-20250514', system, messages: [{ role: 'user', content: user }], maxTokens: 1024, onToken: (t) => { out += t } })
@@ -587,7 +598,7 @@ export async function agentRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const now = Date.now()
     const userId = (req as any).userId ?? 'anon'
-    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const agents = await db.select().from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
     const [rawTasks, reads] = await Promise.all([
       db.select().from(schema.tasks)
         .where(eq(schema.tasks.orgId, orgId)).orderBy(desc(schema.tasks.createdAt)).limit(200),
@@ -632,7 +643,7 @@ export async function agentRoutes(app: FastifyInstance) {
     const [org, agents] = await Promise.all([
       db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId), columns: { deployConfig: true } }),
       db.select({ id: schema.agents.id, name: schema.agents.name, llmModel: schema.agents.llmModel, llmProvider: schema.agents.llmProvider })
-        .from(schema.agents).where(eq(schema.agents.orgId, orgId)),
+        .from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted)),
     ])
     const { rows, warnCount } = validateRoster(agents as any)
     return {
@@ -663,7 +674,7 @@ export async function agentRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const now = Date.now()
     const windowStart = new Date(now - TIMELINE_WINDOW_MS)
-    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    const agents = await db.select().from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
     const [runs, tasks] = await Promise.all([
       // Runs that touch the window: started within it, or still open (ongoing).
       db.select().from(schema.agentRuns).where(and(
@@ -693,7 +704,7 @@ export async function agentRoutes(app: FastifyInstance) {
       avatarEmoji: schema.agents.avatarEmoji, avatarUrl: schema.agents.avatarUrl,
       status: schema.agents.status, runtime: schema.agents.runtime,
       llmModel: schema.agents.llmModel, jobDescription: schema.agents.jobDescription,
-    }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
+    }).from(schema.agents).where(and(eq(schema.agents.orgId, orgId), agentNotDeleted))
     // `agents` is the flat roster: the canvas derives its own tree (web/lib/orgLayout)
     // so layout and cycle-breaking are testable client-side. `tree` stays for callers
     // that want the nesting done for them.

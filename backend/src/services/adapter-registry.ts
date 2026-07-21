@@ -237,7 +237,7 @@ const ADAPTERS: AdapterEntry[] = [
       { key: 'model', type: 'string', description: 'Grok model id.' },
     ],
     example: { workdir: '/Users/you/checkout', model: 'grok-latest' },
-    note: 'Declared, not built. The API flavour is covered today by openai_generic via the LLM router.',
+    note: 'Declared, not built. The API flavour is reachable today via openai_generic — the operator points that adapter\'s host-side base URL at xAI\'s OpenAI-compatible endpoint; Mission Control makes no outbound call (dispatch stays pull-based). NOT via the LLM router — it has no xAI provider.',
   },
   {
     type: 'internal',

@@ -60,7 +60,9 @@ export const api = {
     create: (orgId: string, d: Partial<Agent>) => request<{ agent: Agent }>(`/api/orgs/${orgId}/agents`, { method: 'POST', body: JSON.stringify(d) }),
     update: (id: string, d: Partial<Agent>) => request<{ agent: Agent }>(`/api/agents/${id}`, { method: 'PATCH', body: JSON.stringify(d) }),
     setStatus: (id: string, status: string) => request(`/api/agents/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-    delete: (id: string) => request(`/api/agents/${id}`, { method: 'DELETE' }),
+    // AAD-1: the legacy member-reachable hard-delete DELETE /api/agents/:id was retired
+    // to 410; deletion now goes through the owner-gated, org-scoped soft-delete route.
+    delete: (orgId: string, id: string) => request(`/api/orgs/${orgId}/agents/${id}`, { method: 'DELETE' }),
     templates: () => request<{ templates: Record<string, any> }>('/api/agent-templates'),
     messages: (id: string) => request<{ messages: Message[] }>(`/api/agents/${id}/messages`),
     assignSkill: (agentId: string, skillId: string) => request(`/api/agents/${agentId}/skills`, { method: 'POST', body: JSON.stringify({ skillId }) }),

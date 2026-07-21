@@ -6,7 +6,7 @@ export async function setupDatabase() {
     `CREATE TABLE IF NOT EXISTS organisations (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, logo_url TEXT, owner_id TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS departments (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, department_id TEXT, name TEXT NOT NULL, description TEXT, created_at INTEGER NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, department_id TEXT, name TEXT NOT NULL, role TEXT NOT NULL, personality TEXT, cv TEXT, terms_of_reference TEXT, llm_provider TEXT NOT NULL DEFAULT 'anthropic', llm_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514', skills TEXT DEFAULT '[]', status TEXT NOT NULL DEFAULT 'idle', avatar_emoji TEXT DEFAULT '🤖', agent_type TEXT NOT NULL DEFAULT 'standard', advisor_persona TEXT, memory_long_term TEXT, persona TEXT, expertise TEXT, advisor_ids TEXT, runtime TEXT NOT NULL DEFAULT 'internal', external_endpoint TEXT, api_token_hash TEXT, last_heartbeat_at INTEGER, heartbeat_status TEXT DEFAULT 'unknown', contact_channel TEXT, reports_to TEXT, title TEXT, job_description TEXT, created_at INTEGER NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, department_id TEXT, name TEXT NOT NULL, role TEXT NOT NULL, personality TEXT, cv TEXT, terms_of_reference TEXT, llm_provider TEXT NOT NULL DEFAULT 'anthropic', llm_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514', skills TEXT DEFAULT '[]', status TEXT NOT NULL DEFAULT 'idle', avatar_emoji TEXT DEFAULT '🤖', agent_type TEXT NOT NULL DEFAULT 'standard', advisor_persona TEXT, memory_long_term TEXT, persona TEXT, expertise TEXT, advisor_ids TEXT, runtime TEXT NOT NULL DEFAULT 'internal', external_endpoint TEXT, api_token_hash TEXT, last_heartbeat_at INTEGER, heartbeat_status TEXT DEFAULT 'unknown', contact_channel TEXT, reports_to TEXT, title TEXT, job_description TEXT, deleted_at INTEGER, deleted_by TEXT, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, org_id TEXT NOT NULL, project_id TEXT, title TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium', kanban_column TEXT DEFAULT 'todo', llm_model TEXT, tokens_used INTEGER, cost_usd REAL, duration_ms INTEGER, assigned_to TEXT, due_at INTEGER, parent_task_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER)`,
     `CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'github', github_path TEXT, org_id TEXT, last_synced_at INTEGER, created_at INTEGER NOT NULL)`,
@@ -174,6 +174,14 @@ export async function setupDatabase() {
     // 'auto_write' (owner-set) auto-approves WRITE actions for that (agent, connector);
     // DESTRUCTIVE always needs approval regardless. Additive + reversible; never a secret.
     `ALTER TABLE agent_connectors ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'approval_required'`,
+    // AAD-1 — agent SOFT DELETE. Both nullable and NULL for every existing agent, so
+    // nothing changes until the owner-gated DELETE lands: `deleted_at` timestamps the
+    // deletion (read paths filter `deleted_at IS NULL`), `deleted_by` records the
+    // acting user. Additive + reversible (the row is retained for audit). NOTE: these
+    // are ALSO in the CREATE TABLE agents string above — a new column on a table whose
+    // CREATE lives before this loop must go in BOTH or fresh/test DBs miss it.
+    `ALTER TABLE agents ADD COLUMN deleted_at INTEGER`,
+    `ALTER TABLE agents ADD COLUMN deleted_by TEXT`,
   ]
   for (const sql of alterStatements) {
     try { await dbClient.execute(sql) } catch { /* column already exists */ }

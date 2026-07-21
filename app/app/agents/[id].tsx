@@ -94,7 +94,7 @@ export default function AgentDetailScreen() {
   const handleDelete = () => {
     Alert.alert('Delete Agent', `Remove ${agent?.name}?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => { await api.agents.delete(id!); router.back() } },
+      { text: 'Delete', style: 'destructive', onPress: async () => { await api.agents.delete(agent!.orgId, id!); router.back() } },
     ])
   }
 
