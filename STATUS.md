@@ -7,6 +7,45 @@ _Last updated: 2026-07-18 (**FIX-1 — FOUR DEFECTS FROM A LIVE VISUAL PASS AGAI
 > protection), and the known-open follow-ups. This file is the full narrative log; that one is the
 > cold-start briefing.
 
+### 2026-07-21 — AAD-2: the "+ Agent" and "Delete agent" UI (web + mobile)
+
+Phases 2–4 of `docs/PLAN-agent-add-delete.md`, on top of AAD-1's backend (`3665a1f`).
+**Client-only: no endpoint, no schema, no gate changed.**
+
+**"+ Agent".** The shipped ONB6 `InviteAgentDialog` is now mounted where an operator
+actually looks for it — the **Agents roster** and the **Org** section — both of which
+had no add affordance at all, because all three creation buttons live in the
+Operations toolbar behind `{!focused && …}`. No second mint path, no new store; the
+dialog keeps its honest "public join is closed on this deployment" banner. The picker
+stays registry-driven, and now also **shows the five deferred runtimes** (openclaw_gateway,
+http_webhook, hermes_gateway, hermes_local, grok_local) as inert "not yet available"
+rows with the registry's own reason — they were previously just absent, which read as
+"unsupported" rather than "declared, not yet dispatchable". **None is selectable and
+none was flipped to `available: true`.** Invited agents still land `low_trust_review`
+with shell OFF (untouched — `secureRegistration()` and the registry default).
+
+**Delete agent.** A **Danger zone** at the foot of Agent Settings → Configuration, wired
+to AAD-1's owner-gated `DELETE /api/orgs/:orgId/agents/:agentId`. Typed-name confirmation,
+consequences listed (credential revocation is the part "delete" does not convey), cleared
+only on a confirmed 2xx — a 403 never renders as success (the APPR-1 lesson). On success
+the page routes back to the roster and re-reads it.
+
+**Owner gating.** New shared `useOrgRole` hook hoists the role signal the web already
+had — server-computed `isOwner` from `GET …/activity` — and `canDeleteAgent` fails closed
+(`'admin'`, unknown, null → false). Non-owners get a named note, not a button that only
+403s. The phone reuses its existing `orgRole`.
+
+**Parity: MIRRORED in the same PR.** `apps/mobile` gains the invite sheet (Agents + Org)
+and the Danger zone, over the same endpoints, with `invites.ts` / `agentDelete.ts` pinned
+against the web modules by drift tripwires. Zero-dep: RN's built-in `Share`, no clipboard
+package. **Visually verified on web** (dev server + stub backend): both entry points, the
+picker's available/not-available split, the confirm dialog, the real DELETE on the
+org-scoped path, and the control disappearing when `isOwner` is false. **Mobile is
+compile-verified only** (typecheck + 369 tests + `expo export`) — no simulator run.
+
+Backend **1898/1898** · evals 11/11 · web **333/333** + build · mobile **369/369** +
+typecheck + export. `aad-ui-web-mobile`.
+
 ### 2026-07-19 — session status: main is `17f172e`, green, nothing in flight
 
 Test, CI and Deploy all success on `17f172e`; `https://7ei-backend.fly.dev/api/health` 200,

@@ -996,3 +996,48 @@ test — otherwise the surface with the test silently becomes the only one holdi
 shipping with the same chrome as the pending queue is a legibility problem on a laptop and a worse one on a
 phone: there is no peripheral vision to fall back on, the screen *is* the list, so a tail that reads as a
 peer is a tail the operator scrolls past on their way to nothing. Same finding, stronger on the small screen.
+
+## 9. AAD-2 — "+ Agent" and "Delete agent" (as-built)
+
+**Parity verdict: MIRRORED, in the same PR.** Both halves were greenfield on the phone
+(no invite surface, no agent delete existed) — and both are operator-lifecycle controls,
+which is the category the phone exists for. Deferring them to a later MOB story was the
+plan's *recommendation*; it was rejected here because the desk's own gap was a
+placement gap, not a build gap, so mirroring cost one screen rather than an epic.
+
+**What crossed over, unchanged in contract.** Same endpoints, same field names, same
+limits: `GET /api/adapters`, `GET/POST …/agent-invites`, `POST …/agent-invites/:id/revoke`,
+`GET …/onboarding-posture`, and AAD-1's `DELETE /api/orgs/:orgId/agents/:agentId`. The
+backend served both surfaces already; the mirror is pure client work, as usual.
+
+**What is hand-copied, and what pins it.** Metro cannot import from `web/`, so
+`apps/mobile/src/invites.ts` and `apps/mobile/src/agentDelete.ts` mirror
+`web/lib/invites.logic.ts` and `web/lib/agentDelete.ts`. Both are pinned by tests that
+import the web module directly (`invites.test.ts`, `agentDelete.test.ts`) and assert
+agreement on the decisions that matter: which runtimes are pickable, what the POST body
+is, which values are refused, who may be offered delete, and the exact delete path. Safe
+to import because both web modules are dependency-free — Mobile CI installs only
+`apps/mobile`'s lockfile, and a web module that pulled in a dep would drop the whole test
+file silently in CI while passing locally.
+
+**Where the two surfaces DIFFER, deliberately:**
+
+- **Clipboard.** The desk has `navigator.clipboard` and renders copy buttons. The phone
+  has no clipboard module and adding `expo-clipboard` would be a new dependency for one
+  button, so it uses RN's built-in `Share` sheet plus `selectable` text for a long-press
+  copy. Same outcome — the token and prompt leave the device — by the platform's own idiom.
+- **Unknown role.** The desk's role is always resolvable or the surface is unusable, so an
+  unresolved role there hides the control (fail closed) and says why. The phone has a real
+  third state — a pasted token whose org was never listed with a role — and keeps the rule
+  `agentEdit.ts` already established: offer with a caution, let the backend 403 be the
+  enforcer. Locking a legitimate owner out of the only destructive control on the device,
+  on a *maybe*, is the worse failure. The typed-name confirmation stands in front of it either way.
+- **Placement.** The desk puts the Danger zone at the foot of the Configuration tab. The
+  phone has no tabs, so it goes last on the detail scroll — same principle (never on the
+  path to a normal read), different geometry.
+
+**Verified:** mobile 369/369 · typecheck · `expo export` · SDK 54, no new dependency.
+**Not verified visually** — no simulator run. The web half WAS rendered and driven
+(both entry points, the picker's available/not-available split, the confirm dialog, a
+real DELETE, and the owner gate flipping), so the shared decisions are visually
+confirmed on one surface and test-confirmed on the other.

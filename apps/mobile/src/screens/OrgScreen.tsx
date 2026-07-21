@@ -50,6 +50,7 @@ import {
 import { statusIcon, statusTone } from '../status'
 import { font, radius, space, theme } from '../theme'
 import { Banner, Empty, Loading } from '../ui'
+import { AddAgentButton } from './InviteAgentSheet'
 
 const INDENT = 16 // points per reporting level
 
@@ -190,6 +191,12 @@ export default function OrgScreen({ onOpenAgent }: { onOpenAgent?: (id: string, 
             </View>
           ) : null}
           {agents === null ? <Loading text="Loading the org chart…" /> : null}
+          {/* AAD-2 — the "+ Agent" entry point. The desk's Org section had no add
+              affordance either (its toolbar was Import/Export/zoom only); both
+              surfaces get one in the same wave. Owner-gated inside the button. */}
+          <View style={{ marginBottom: space.md }}>
+            <AddAgentButton />
+          </View>
           {rows.length ? (
             <View style={s.head}>
               <Text style={s.count}>

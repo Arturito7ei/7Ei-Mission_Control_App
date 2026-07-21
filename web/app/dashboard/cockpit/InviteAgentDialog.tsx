@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import {
-  pickableAdapters, inviteStatusChip, buildCreateInviteBody, validateCreateInvite,
+  pickableAdapters, unavailableAdapters, inviteStatusChip, buildCreateInviteBody, validateCreateInvite,
   CREATE_INVITE_DEFAULTS, INVITE_MAX_USES, INVITE_MAX_TTL_HOURS,
   type AdapterRegistryEntry, type CreateInviteForm,
 } from '@/lib/invites.logic'
@@ -73,6 +73,7 @@ export default function InviteAgentDialog({ orgId, getToken, onClose }: { orgId:
   }, [orgId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const picks = pickableAdapters(adapters)
+  const notYet = unavailableAdapters(adapters)
   const toggleAdapter = (t: string) =>
     setForm(f => ({ ...f, adapterTypes: f.adapterTypes.includes(t) ? f.adapterTypes.filter(x => x !== t) : [...f.adapterTypes, t] }))
 
@@ -172,6 +173,30 @@ export default function InviteAgentDialog({ orgId, getToken, onClose }: { orgId:
               {form.adapterTypes.length === 0 ? 'None selected → any invitable runtime may join.' : `${form.adapterTypes.length} selected.`}
             </span>
           </FormLabel>
+
+          {/* AAD-2 — declared but NOT dispatchable yet. Inert on purpose: Mission
+              Control has no way to hand these runtimes work (no outbound WS
+              client, no per-agent HTTP pusher, no Hermes client, no xAI provider),
+              so an invite naming one could never be spent. Shown rather than
+              hidden, with the registry's own reason, so "where is Grok?" has an
+              answer instead of an empty space. */}
+          {notYet.length > 0 && (
+            <div>
+              <span style={{ fontSize: text.xs.fontSize, fontWeight: 700, color: tk.muted }}>Not yet available</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: space.sm, marginTop: space.xs }}>
+                {notYet.map(a => (
+                  <span key={a.type} title={a.note ?? 'Declared in the adapter registry, but Mission Control cannot dispatch work to it yet.'}
+                    aria-disabled="true"
+                    style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft, border: `1px dashed ${tk.line}`, borderRadius: 8, padding: '5px 10px' }}>
+                    ○ {a.label}
+                  </span>
+                ))}
+              </div>
+              <span style={{ fontSize: text.xs.fontSize, color: tk.mutedSoft }}>
+                Declared in the adapter registry, but Mission Control cannot hand these runtimes work yet — so they cannot be invited.
+              </span>
+            </div>
+          )}
 
           <FormLabel>Uses
             <div style={{ display: 'flex', alignItems: 'center', gap: space.md }}>

@@ -10,6 +10,9 @@ import { FormLabel, sx } from '../cockpit/shared'
 import { tk, text, space } from '../tokens'
 import { AgentAvatar, ax, type DAgent, type Getter } from './shared'
 import CustomModelDialog, { type CustomModel } from './CustomModelDialog'
+import DeleteAgentDialog from './DeleteAgentDialog'
+import { useOrgRole } from '../useOrgRole'
+import { NON_OWNER_DELETE_NOTE, UNKNOWN_ROLE_DELETE_NOTE, canDeleteAgent } from '@/lib/agentDelete'
 
 type Roster = { id: string; name: string; role: string; avatarEmoji?: string | null; reportsTo?: string | null }
 type ModelOption = { id: string; label: string; provider: string; tier: string; custom?: boolean }
@@ -22,11 +25,14 @@ const ADAPTERS: { value: string; label: string }[] = [
   { value: 'custom', label: 'Custom runtime' },
 ]
 
-export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: {
+export default function ConfigurationTab({ orgId, agentId, getToken, onSaved, onDeleted }: {
   orgId: string
   agentId: string
   getToken: Getter
   onSaved?: () => void
+  /** AAD-2 — the agent is gone: leave this page and refresh the roster. Absent →
+   *  the Delete control is not offered at all (nowhere to route back to). */
+  onDeleted?: () => void
 }) {
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [roster, setRoster] = useState<Roster[]>([])
@@ -39,6 +45,10 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // AAD-2 — the owner gate for the Delete control. The role is the SERVER's
+  // answer (see useOrgRole); `null` means unresolved and offers nothing.
+  const { isOwner, role, loading: roleLoading } = useOrgRole(orgId, getToken)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const load = useCallback(async () => {
     setErr(null)
@@ -276,6 +286,41 @@ export default function ConfigurationTab({ orgId, agentId, getToken, onSaved }: 
         </Button>
         {saved && <span style={{ color: tk.green, fontSize: text.sm.fontSize }}>✓ Saved</span>}
       </div>
+
+      {/* ── Danger zone (AAD-2) ─────────────────────────────────────────
+          Owner-only, and gated on the SERVER's answer about this caller —
+          `canDeleteAgent` fails closed, so an unresolved role offers nothing
+          rather than a button that would only ever collect a 403. Last on the
+          page, below the save bar, so it is never on the path to a normal edit. */}
+      {onDeleted && (
+        <section>
+          <h2 style={{ ...ax.sectionTitle, marginBottom: space.sm, color: tk.red }}>Danger zone</h2>
+          <Card style={{ display: 'flex', alignItems: 'center', gap: space.lg, flexWrap: 'wrap', borderColor: 'var(--danger-line, var(--line-strong))' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontSize: text.md.fontSize, fontWeight: 600 }}>Delete this agent</div>
+              <p style={{ ...ax.empty, fontSize: text.xs.fontSize, maxWidth: 520, margin: `${space.xs}px 0 0` }}>
+                Removes {agent.name} from the organisation and <b>revokes its connected credentials</b> — its API token,
+                OAuth tokens and agent-scoped secrets. History is retained for the audit trail; there is no restore in the app.
+              </p>
+              {!roleLoading && !canDeleteAgent(role) && (
+                <p style={{ ...ax.empty, fontSize: text.xs.fontSize, maxWidth: 520, margin: `${space.sm}px 0 0` }}>
+                  {isOwner === false ? NON_OWNER_DELETE_NOTE : UNKNOWN_ROLE_DELETE_NOTE}
+                </p>
+              )}
+            </div>
+            {canDeleteAgent(role) && (
+              <Button variant="danger" onClick={() => setDeleteOpen(true)} disabled={busy || uploading}>
+                Delete agent…
+              </Button>
+            )}
+          </Card>
+        </section>
+      )}
+
+      {deleteOpen && onDeleted && (
+        <DeleteAgentDialog orgId={orgId} agentId={agentId} agentName={agent.name} getToken={getToken}
+          onClose={() => setDeleteOpen(false)} onDeleted={() => { setDeleteOpen(false); onDeleted() }} />
+      )}
 
       {dialog.open && (
         <CustomModelDialog orgId={orgId} getToken={getToken} existing={dialog.editing}
