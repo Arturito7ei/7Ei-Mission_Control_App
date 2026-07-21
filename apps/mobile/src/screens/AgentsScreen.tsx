@@ -39,6 +39,7 @@ import { useAuth } from '../auth'
 import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
 import { font, space, theme } from '../theme'
 import { Banner, Card, Chip, Empty, Loading } from '../ui'
+import { AddAgentButton } from './InviteAgentSheet'
 
 export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: string, name?: string) => void }) {
   const { apiUrl, getToken, orgId } = useAuth()
@@ -73,6 +74,13 @@ export default function AgentsScreen({ onOpenAgent }: { onOpenAgent?: (id: strin
           <Banner kind="error">{error}</Banner>
         </View>
       ) : null}
+
+      {/* AAD-2 — the "+ Agent" entry point, mirroring the desk's Agents roster.
+          Owner-gated (creating an invite is `requireOrgRole('owner')`); the sheet
+          itself is the shipped ONB invite flow, called over the same endpoints.
+          Unwrapped on purpose: the button carries its own bottom margin, so a
+          non-owner (for whom it renders null) gets no stray gap. */}
+      <AddAgentButton />
 
       {agents === null ? (
         <Loading text="Loading agents…" />

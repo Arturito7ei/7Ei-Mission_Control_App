@@ -17,7 +17,7 @@ import ConnectorsTab from './ConnectorsTab'
 import RunsTab from './RunsTab'
 import BudgetTab from './BudgetTab'
 
-export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask, onOpenLibrary }: {
+export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getToken, onOpenTask, onOpenLibrary, onDeleted }: {
   orgId: string
   agentId: string
   tab: AgentTab
@@ -27,6 +27,9 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
   onOpenTask?: (taskId: string) => void
   /** AG4 — jump to the company skills library area. */
   onOpenLibrary?: () => void
+  /** AAD-2 — this agent was deleted (Configuration → Danger zone). The page owns
+   *  what happens next: leave the detail view and refresh the roster. */
+  onDeleted?: () => void
 }) {
   const [agent, setAgent] = useState<DAgent | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -139,7 +142,7 @@ export default function AgentDetail({ orgId, agentId, tab, onTab, onBack, getTok
           onViewRuns={() => onTab('runs')} onOpenTask={onOpenTask} />}
         {tab === 'instructions' && <InstructionsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'skills' && <SkillsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenLibrary={onOpenLibrary} />}
-        {tab === 'configuration' && <ConfigurationTab orgId={orgId} agentId={agentId} getToken={getToken} onSaved={load} />}
+        {tab === 'configuration' && <ConfigurationTab orgId={orgId} agentId={agentId} getToken={getToken} onSaved={load} onDeleted={onDeleted} />}
         {tab === 'connectors' && <ConnectorsTab orgId={orgId} agentId={agentId} getToken={getToken} />}
         {tab === 'runs' && <RunsTab orgId={orgId} agentId={agentId} getToken={getToken} onOpenTask={onOpenTask} />}
         {tab === 'budget' && <BudgetTab orgId={orgId} agentId={agentId} agentName={agent.name} getToken={getToken} />}

@@ -16,6 +16,8 @@ import StaffGrid from './agent/StaffGrid'
 import { allSurfaces, isPlaceholder, isSection, navSectionKey, navPageTabs, navSelectedId, navSurfaceTitle } from '@/lib/navModel'
 import { DEFAULT_AGENT_TAB, agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
 import { AgentAvatar } from './agent/shared'
+import InviteAgentDialog from './cockpit/InviteAgentDialog'
+import { useOrgRole } from './useOrgRole'
 import { useTheme } from '../theme'
 import { CommandPalette, type Command } from './CommandPalette'
 import { statusColor, statusIcon } from './status'
@@ -96,6 +98,13 @@ export default function DashboardPage() {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [uploadingField, setUploadingField] = useState<string | null>(null)
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null)
+  // AAD-2 — the "+ Agent" entry point on the Agents roster, owner-gated on the
+  // server's answer about this caller (useOrgRole). It opens the SHIPPED
+  // InviteAgentDialog; nothing about the invite spine changes.
+  const [inviteOpen, setInviteOpen] = useState(false)
+  // The caller's role in the current org (server-computed; null until known, and
+  // null on any failure — never assumed to be owner).
+  const { isOwner } = useOrgRole(org?.id, getToken)
 
   const load = useCallback(async () => {
     const token = await getToken()
@@ -446,12 +455,26 @@ export default function DashboardPage() {
         {tab === 'agents' && (agentRoute
           ? <AgentDetail orgId={org.id} agentId={agentRoute.agentId} tab={agentRoute.tab} getToken={getToken}
               onTab={t => openAgent(agentRoute.agentId, t)} onBack={closeAgent} onOpenTask={setOpenTaskId}
-              onOpenLibrary={() => selectTab('skills')} />
+              onOpenLibrary={() => selectTab('skills')}
+              onDeleted={() => { closeAgent(); load() }} />
           : (
           <div style={s.page}>
             {/* AG7 — Staff (card grid, the default) vs the dense table. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <h1 style={s.h1}>Agents ({agents.length})</h1>
+              {/* AAD-2 — the "+ Agent" entry point. The Agents roster had no add
+                  affordance at all: all three creation buttons live in the
+                  Operations toolbar behind `{!focused && …}`, so the two places an
+                  operator actually looks for one showed nothing. This mounts the
+                  SHIPPED invite dialog (ONB6) — no second mint path, no new
+                  endpoint — and only for an owner, since creating an invite is
+                  `requireOrgRole('owner')` on the backend. */}
+              {isOwner === true && (
+                <button onClick={() => setInviteOpen(true)} style={s.addAgentBtn}
+                  title="Create an invite + a copy-able onboarding prompt to paste into any external agent">
+                  ＋ Agent
+                </button>
+              )}
               <div role="tablist" aria-label="Agent view" style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
                 {([['staff', 'Staff'], ['table', 'Table']] as const).map(([v, label]) => (
                   <button key={v} role="tab" aria-selected={agentView === v} onClick={() => setAgentView(v)}
@@ -586,6 +609,14 @@ export default function DashboardPage() {
 
         {openTaskId && org && <TaskDrawer orgId={org.id} taskId={openTaskId} getToken={getToken} onClose={() => setOpenTaskId(null)} />}
 
+        {/* AAD-2 — the "+ Agent" flow, mounted once for the whole page. The dialog
+            itself is unchanged from ONB6, including its honest "public join is
+            closed on this deployment" banner: an entry point that mints an invite
+            the agent cannot yet spend must keep saying so. */}
+        {inviteOpen && org && (
+          <InviteAgentDialog orgId={org.id} getToken={getToken} onClose={() => { setInviteOpen(false); load() }} />
+        )}
+
         {tab === 'usage' && (
           <div style={s.page}>
             <h1 style={s.h1}>Usage & Limits</h1>
@@ -707,4 +738,7 @@ const s: Record<string, React.CSSProperties> = {
   primaryBtn: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 15, fontWeight: 700, marginTop: 4 },
   uploadChip: { fontSize: 12, fontWeight: 600, color: 'var(--accent)', background: 'var(--s2)', border: '1px solid var(--line-strong)', padding: '5px 12px', borderRadius: 8, cursor: 'pointer' },
   approvalsLink: { fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', background: 'var(--s2)', border: '1px solid var(--line-strong)', padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit' },
+  // AAD-2 — the roster's "+ Agent" entry point. Same shape as approvalsLink (the
+  // page's own button idiom) with the accent border an add-affordance earns.
+  addAgentBtn: { fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', border: '1px solid var(--accent-line)', padding: '7px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit' },
 }

@@ -33,6 +33,10 @@ import type { SkillsPayload } from './agentEdit'
 // invariant it encodes: the read shape carries NO secret / token / secretRef —
 // only status + non-secret config + a derived label. A credential is WRITE-ONLY.
 import type { PublicConnectorState, ConnectorExecutionItem } from './agentConnectors'
+// AAD-2 — same rule: the adapter-registry wire shape is defined in the pure
+// module that reads it (invites.ts, itself pinned against the web's
+// invites.logic.ts), so the picker and the client agree by construction.
+import type { AdapterRegistryEntry } from './invites'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -127,6 +131,32 @@ export type Agent = {
 /** MOB-7d — a selectable model, as `GET …/available-models` returns it (web's
  *  ConfigurationTab uses the same route to populate its Model picker). */
 export type ModelOption = { id: string; label: string; provider: string; tier: string; custom?: boolean }
+
+// ─── AAD-2 — agent invites ────────────────────────────────────────────────────
+// The LIST shape. Note what is NOT here: no `token`, no `tokenHash`. The list
+// route never returns either (hash-only storage), and the client must not invent
+// a field to hold one.
+export type AgentInvite = {
+  id: string
+  status: string
+  allowedAdapterTypes: string[] | null
+  maxUses: number
+  usesRemaining: number
+  expiresAt: string
+  createdAt: string
+}
+
+/** The CREATE response — the only place the raw invite token exists, ever. It is
+ *  rendered once and never persisted on the device. `onboardingPrompt` is the
+ *  one-paste artifact; `joinEnabled` is the deployment's honest posture. */
+export type CreateInviteResult = {
+  inviteToken: string
+  onboardingTextUrl: string
+  onboardingPrompt: string
+  joinEnabled: boolean
+  onboardingDocPublic: boolean
+  invite: AgentInvite
+}
 
 /**
  * MOB-6b — a task row as the Task Log reads it. The backend returns the whole
@@ -680,6 +710,67 @@ export const Api = {
     api<{ models: ModelOption[] }>(base, `/api/orgs/${orgId}/available-models`, { token }).then(
       (r) => r.models ?? [],
     ),
+
+  // ─── AAD-2 — "+ Agent" (invite onboarding) and "Delete agent" ─────────────
+  // Both halves call the SAME routes the desk calls. Nothing about the invite
+  // spine is re-implemented here: no second mint path, no local token store, no
+  // client-side default for uses/TTL (the server owns those).
+
+  // GET /api/adapters — the PUBLIC adapter registry. The runtime picker renders
+  // FROM this, never from a hardcoded list on the device: `available: false` is
+  // the server's statement that MC cannot dispatch to that runtime, and the phone
+  // must not be able to contradict it.
+  adapters: (base: string, token: string) =>
+    api<{ adapters: AdapterRegistryEntry[] }>(base, '/api/adapters', { token }).then(
+      (r) => r.adapters ?? [],
+    ),
+
+  // GET …/onboarding-posture — owner-gated. `publicJoinEnabled === false` is the
+  // hosted reality (MC_ENABLE_REMOTE_ONBOARDING unset → join/claim 404), and the
+  // sheet SAYS so rather than pretending the invite is immediately spendable.
+  onboardingPosture: (base: string, token: string, orgId: string) =>
+    api<{ posture: { publicJoinEnabled: boolean } }>(
+      base,
+      `/api/orgs/${orgId}/onboarding-posture`,
+      { token },
+    ).then((r) => r.posture),
+
+  // GET …/agent-invites — owner-gated. NEVER returns a token or a hash.
+  agentInvites: (base: string, token: string, orgId: string) =>
+    api<{ invites: AgentInvite[] }>(base, `/api/orgs/${orgId}/agent-invites`, { token }).then(
+      (r) => r.invites ?? [],
+    ),
+
+  // POST …/agent-invites — owner-gated. The response is the ONLY place the raw
+  // invite token ever exists; it is stored hash-only server-side and is not
+  // persisted on the device. `inviteToken` is NOT an agent key — the agent key is
+  // minted at claim time and only the claimer sees it.
+  createAgentInvite: (base: string, token: string, orgId: string, body: Record<string, unknown>) =>
+    api<CreateInviteResult>(base, `/api/orgs/${orgId}/agent-invites`, {
+      token,
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  // POST …/revoke — owner-gated, idempotent.
+  revokeAgentInvite: (base: string, token: string, orgId: string, inviteId: string) =>
+    api<Record<string, unknown>>(base, `/api/orgs/${orgId}/agent-invites/${inviteId}/revoke`, {
+      token,
+      method: 'POST',
+      body: '{}',
+    }),
+
+  // DELETE /api/orgs/:orgId/agents/:agentId — AAD-1's owner-gated SOFT delete,
+  // which also revokes the agent's credentials (API token, OAuth tokens,
+  // agent-scoped secrets, connectors). The ORG-SCOPED path is load-bearing:
+  // `requireOrgRole` reads `:orgId` off the path and silently no-ops without one,
+  // and the audit row takes its orgId from the same place. The legacy top-level
+  // `DELETE /api/agents/:agentId` is retired to a 410 — never call it.
+  deleteAgent: (base: string, token: string, orgId: string, agentId: string) =>
+    api<Record<string, never>>(base, `/api/orgs/${orgId}/agents/${agentId}`, {
+      token,
+      method: 'DELETE',
+    }),
 
   // ─── CONN-3 — per-agent connectors (owner-gated, MASKED reads) ─────────────
   // The SAME owner-gated, org-scoped-path routes the web's ConnectorsTab (CONN-2)

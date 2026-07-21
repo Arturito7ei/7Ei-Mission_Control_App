@@ -339,7 +339,15 @@ export default function RootNavigator() {
           name="AgentDetail"
           options={({ route }) => ({ title: (route.params as { name?: string }).name ?? 'Agent' })}
         >
-          {({ route }) => <AgentDetailScreen agentId={(route.params as { agentId: string }).agentId} />}
+          {({ route }) => (
+            <AgentDetailScreen
+              agentId={(route.params as { agentId: string }).agentId}
+              // AAD-2 — the agent is gone. Navigating at the Tabs route pops this
+              // pushed screen on the way, so the operator cannot swipe back into a
+              // detail page for an agent that no longer exists.
+              onDeleted={() => goToTab('agents')}
+            />
+          )}
         </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>

@@ -79,6 +79,13 @@ import {
   type SkillsPayload,
   type TrustModeLite,
 } from '../agentEdit'
+import {
+  DELETE_CONSEQUENCES,
+  DELETE_TITLE,
+  NON_OWNER_DELETE_NOTE,
+  UNKNOWN_ROLE_DELETE_NOTE,
+  isDeleteConfirmed,
+} from '../agentDelete'
 import { ConnectorsSection } from './AgentConnectors'
 import { heartbeatIcon, heartbeatTone, statusIcon, statusTone } from '../status'
 import { formatCost, formatTokens, NONE } from '../taskLog'
@@ -116,7 +123,12 @@ const emptyModelForm = (a: Agent): ModelProfileForm => ({
   reasoningEffort: (a.reasoningEffort ?? '').toLowerCase(),
 })
 
-export default function AgentDetailScreen({ agentId }: { agentId: string }) {
+export default function AgentDetailScreen({ agentId, onDeleted }: {
+  agentId: string
+  /** AAD-2 — the agent is gone: pop back to the roster. Absent → the Delete
+   *  control is not offered (there would be nowhere to route back to). */
+  onDeleted?: () => void
+}) {
   const { apiUrl, getToken, orgId, orgRole } = useAuth()
   const [agent, setAgent] = useState<Agent | null>(null)
   const [data, setData] = useState<Data | null>(null)
@@ -314,6 +326,23 @@ export default function AgentDetailScreen({ agentId }: { agentId: string }) {
             </Text>
           ) : null}
         </Section>
+      ) : null}
+
+      {/* ── Danger zone (AAD-2) — the desk's Configuration → Danger zone ─────
+          LAST on the screen on purpose: a destructive, irreversible control must
+          never sit on the path to a normal read. Owner-gated, and behind a
+          typed-name confirmation. */}
+      {agent && orgId && onDeleted ? (
+        <DangerZone
+          agent={agent}
+          agentId={agentId}
+          apiUrl={apiUrl}
+          orgId={orgId}
+          getToken={getToken}
+          canOffer={canOfferEdit}
+          roleUnknown={roleUnknown}
+          onDeleted={onDeleted}
+        />
       ) : null}
     </ScrollView>
   )
@@ -887,6 +916,142 @@ function SkillRow({
   )
 }
 
+// ─── Danger zone: delete this agent (AAD-2) ────────────────────────────────────
+//
+// Mirrors the desk's Configuration → Danger zone over the SAME owner-gated,
+// org-scoped route. Two things make this harder to trip than any other control
+// on the phone, deliberately:
+//
+//   * the consequences are LISTED, not summarised — credential revocation is the
+//     part an operator cannot infer from the word "delete";
+//   * the agent's NAME must be typed. A native Alert alone is one tap from a
+//     mis-scroll; typing is a statement of intent.
+//
+// And it is honest about failure: the screen is NOT dismissed until the backend
+// has returned 2xx. A 403 (not an owner — the real gate) surfaces as a 403.
+
+function DangerZone({
+  agent,
+  agentId,
+  apiUrl,
+  orgId,
+  getToken,
+  canOffer,
+  roleUnknown,
+  onDeleted,
+}: {
+  agent: Agent
+  agentId: string
+  apiUrl: string
+  orgId: string
+  getToken: () => Promise<string | null>
+  canOffer: boolean
+  roleUnknown: boolean
+  onDeleted: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  if (!canOffer) {
+    return (
+      <Section title="Danger zone">
+        <Text style={s.note}>{NON_OWNER_DELETE_NOTE}</Text>
+      </Section>
+    )
+  }
+
+  const confirmed = isDeleteConfirmed(typed, agent.name ?? '')
+
+  const run = async () => {
+    if (!confirmed || busy) return
+    const token = await getToken()
+    if (!token) {
+      setErr('Not signed in.')
+      return
+    }
+    setBusy(true)
+    setErr(null)
+    try {
+      await Api.deleteAgent(apiUrl, token, orgId, agentId)
+      setOpen(false)
+      onDeleted() // only after a confirmed 2xx
+    } catch (e: any) {
+      setErr(e?.message ?? 'The delete failed — nothing was changed.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Section title="Danger zone">
+      <Card style={{ gap: space.md }}>
+        <Text style={s.cardTitle}>Delete this agent</Text>
+        <Text style={s.cardHint}>
+          Removes {agent.name} from the organisation and revokes its connected credentials. History is retained for the
+          audit trail; there is no restore in the app.
+        </Text>
+        {roleUnknown ? <Text style={s.note}>{UNKNOWN_ROLE_DELETE_NOTE}</Text> : null}
+        <Button
+          title="Delete agent…"
+          tone="danger"
+          onPress={() => {
+            setTyped('')
+            setErr(null)
+            setOpen(true)
+          }}
+        />
+      </Card>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => !busy && setOpen(false)}>
+        <View style={s.modalBackdrop}>
+          <View style={s.modalSheet}>
+            <Text style={s.modalTitle}>{DELETE_TITLE}</Text>
+            <ScrollView style={{ maxHeight: 320 }}>
+              <Text style={s.cardHint}>
+                <Text style={{ fontWeight: '800', color: theme.text }}>{agent.name}</Text> will be removed from this
+                organisation. This cannot be undone from the app.
+              </Text>
+              <View style={{ gap: space.sm, marginTop: space.md }}>
+                {DELETE_CONSEQUENCES.map((c) => (
+                  <Text key={c} style={s.consequence}>
+                    • {c}
+                  </Text>
+                ))}
+              </View>
+            </ScrollView>
+
+            {err ? (
+              <View style={{ marginTop: space.md }}>
+                <Banner kind="error">{err}</Banner>
+              </View>
+            ) : null}
+
+            <View style={{ gap: space.xs, marginTop: space.md }}>
+              <Text style={s.fieldLabel}>Type “{agent.name}” to confirm</Text>
+              <TextInput
+                value={typed}
+                onChangeText={setTyped}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder={agent.name ?? ''}
+                placeholderTextColor={theme.textFaint}
+                accessibilityLabel={`Type ${agent.name} to confirm deletion`}
+                style={s.input}
+              />
+            </View>
+
+            <View style={{ gap: space.sm, marginTop: space.lg }}>
+              <Button title="Delete agent" tone="danger" busy={busy} disabled={!confirmed || busy} onPress={run} />
+              <Button title="Cancel" tone="ghost" disabled={busy} onPress={() => setOpen(false)} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </Section>
+  )
+}
+
 // ─── Small form primitives (RN only — no native module, no new dep) ────────────
 
 function LabeledInput({
@@ -1106,6 +1271,7 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.s3,
   },
+  consequence: { color: theme.textDim, fontSize: font.sm, lineHeight: 19 },
   skillName: { color: theme.text, fontSize: font.base, fontWeight: '600' },
   skillMeta: { color: theme.textFaint, fontSize: font.sm - 2 },
   runHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

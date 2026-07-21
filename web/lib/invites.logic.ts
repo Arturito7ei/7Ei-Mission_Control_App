@@ -16,6 +16,10 @@ export interface AdapterRegistryEntry {
   kind: string
   available: boolean
   invitable: boolean
+  /** Why an `available: false` adapter is unavailable. The registry carries a
+   *  note on every one of them (pinned by the backend's [ADD-1] tripwire), and
+   *  AAD-2 shows it rather than hiding the runtime entirely. */
+  note?: string | null
 }
 
 /**
@@ -26,6 +30,25 @@ export interface AdapterRegistryEntry {
  */
 export function pickableAdapters(adapters: AdapterRegistryEntry[] | null | undefined): AdapterRegistryEntry[] {
   return (adapters ?? []).filter((a) => a.invitable && a.available && a.kind !== 'internal')
+}
+
+/**
+ * AAD-2 — the declared-but-NOT-YET-BUILT runtimes, for an inert "not yet
+ * available" list under the picker.
+ *
+ * The picker used to render only `pickableAdapters`, so a runtime that Mission
+ * Control cannot hand work to (openclaw_gateway, http_webhook, hermes_gateway,
+ * hermes_local, grok_local — all `available: false`) was simply ABSENT. An
+ * operator who came looking for Grok or Hermes read that absence as "not
+ * supported at all", or worse, went hunting for a setting to turn it on. Showing
+ * them as inert, with the registry's own reason, is the honest answer: declared,
+ * not yet dispatchable, and therefore not selectable.
+ *
+ * `internal` is excluded — MC runs those itself, so it is not "coming soon", it
+ * is simply not something you invite.
+ */
+export function unavailableAdapters(adapters: AdapterRegistryEntry[] | null | undefined): AdapterRegistryEntry[] {
+  return (adapters ?? []).filter((a) => a.invitable && !a.available && a.kind !== 'internal')
 }
 
 export type ChipTone = 'ok' | 'warn' | 'fail' | 'muted'

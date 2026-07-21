@@ -26,6 +26,7 @@ import AddAgentWizard from './cockpit/AddAgentWizard'
 import HireDialog from './cockpit/HireDialog'
 import InviteAgentDialog from './cockpit/InviteAgentDialog'
 import StepUpDialog from './cockpit/StepUpDialog'
+import { useOrgRole } from './useOrgRole'
 import { approvalNeedsStepUp } from '@/lib/dangerousApprovals'
 import type { ActivityEvent } from '@/lib/activityKinds'
 
@@ -62,6 +63,9 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
   const [stepUp, setStepUp] = useState<Approval | null>(null)
   const [deciding, setDeciding] = useState<Set<string>>(new Set())
   const [decideErr, setDecideErr] = useState<Record<string, string>>({})
+  // AAD-2 — the caller's role, server-computed. `null` (unknown / failed) offers
+  // nothing; it is never treated as owner.
+  const { isOwner } = useOrgRole(orgId, getToken)
 
   // ACT-1 — the decided tail, on its own so a decision can refresh it WITHOUT
   // re-running the 10-way cockpit load. This is the freshness leg of the APPR-1 lesson:
@@ -259,6 +263,18 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
         </div>
         <div style={{ display: 'flex', gap: space.md, flexWrap: 'wrap' }}>
           <Button style={{ color: tk.accent }} onClick={load}>↻ Refresh</Button>
+          {/* AAD-2 — the "+ Agent" entry point for the FOCUSED Org / Agents views.
+              The three creation buttons below are `{!focused && …}`, so the Org
+              section (which is this panel with `only={['org']}`) showed no add
+              affordance at all — its toolbar had Import/Export/zoom and nothing
+              else. This mounts the SAME shipped InviteAgentDialog rather than a
+              second path, and only for an owner: `POST …/agent-invites` is
+              `requireOrgRole('owner')`, so offering it to a member would be a
+              button that can only 403. */}
+          {focused && (only ?? []).some(k => k === 'org' || k === 'agents') && isOwner === true && (
+            <Button variant="primary" onClick={() => setInvite(true)}
+              title="Create an invite + a copy-able onboarding prompt to paste into any external agent">＋ Agent</Button>
+          )}
           {/* Full-stack-only actions — a focused area keeps just Refresh. */}
           {!focused && <>
             <Button style={{ color: tk.accent }} onClick={sweep} title="Run heartbeat engine: recover stalled tasks, refresh statuses, wake due agents">💓 Sweep</Button>
