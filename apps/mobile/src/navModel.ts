@@ -120,6 +120,17 @@ export const NAV_GROUPS: NavGroup[] = [
       // its Tasks segment (navigation.tsx `TasksEntry` → InboxScreen). The entry
       // stays: it is a web surface, so the model owes it a destination and More
       // still lists it. What changed is where it renders, not whether it exists.
+      // MCC-1 — Chat: direct conversation with an agent, replies included. A
+      // hosted tab under Inbox on the web (before Tasks in its bar), rendered
+      // here as a segment of the same Inbox screen.
+      {
+        id: 'chat',
+        label: 'Chat',
+        glyph: '💬',
+        status: 'ready',
+        blurb: 'Talk to an agent — thread and composer, replies included.',
+        webHosted: 'inbox',
+      },
       {
         id: 'tasks',
         label: 'Tasks',

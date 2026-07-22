@@ -140,6 +140,7 @@ test("'ready' is exactly the set of screens that exist", () => {
       'agents',
       'assistant',
       'budgets',
+      'chat', // MCC-1 — the Inbox screen's Chat segment (ChatPane)
       'connectors',
       'costs',
       'governance',

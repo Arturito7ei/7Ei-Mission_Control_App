@@ -78,6 +78,9 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
   // with the Tasks segment selected, which is what the web's Tasks tab does too.
   // The Task Log component itself is unchanged; InboxScreen hosts it.
   tasks: TasksEntry,
+  // MCC-1 — Chat renders inside the Inbox too, on its own segment (the web hosts
+  // it as an Inbox tab). Same named-component rule as TasksEntry.
+  chat: ChatEntry,
   // MOB-6d — Delivery's cost pair (Budgets is the web's hosted tab under Costs,
   // so the two stay adjacent), plus the Activity feed.
   costs: CostsScreen,
@@ -106,6 +109,11 @@ const SCREENS: Record<string, React.ComponentType<ScreenNav>> = {
  */
 function TasksEntry(nav: ScreenNav) {
   return <InboxScreen {...nav} initialSegment="tasks" />
+}
+
+/** MCC-1 — the `chat` destination: the Inbox screen opened on its Chat segment. */
+function ChatEntry(nav: ScreenNav) {
+  return <InboxScreen {...nav} initialSegment="chat" />
 }
 
 /**

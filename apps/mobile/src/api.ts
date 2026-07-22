@@ -37,6 +37,9 @@ import type { PublicConnectorState, ConnectorExecutionItem } from './agentConnec
 // module that reads it (invites.ts, itself pinned against the web's
 // invites.logic.ts), so the picker and the client agree by construction.
 import type { AdapterRegistryEntry } from './invites'
+// MCC-1 — the chat wire shape is defined in the pure module that reads it
+// (chat.ts, itself parity-pinned against web/lib/chat.logic.ts).
+import type { ChatMsgLite } from './chat'
 
 export type ApiInit = RequestInit & { token?: string | null; base?: string }
 
@@ -759,6 +762,24 @@ export const Api = {
       method: 'POST',
       body: '{}',
     }),
+
+  // ─── MCC-1 — agent chat (the same org-scoped routes the web's ChatPanel calls) ──
+  // GET returns the newest-N window ascending; POST sends. For an EXTERNAL agent
+  // the reply arrives later through its poll loop (the response says `async:
+  // true`), so the screen keeps polling the GET — never invents a reply.
+  agentChat: (base: string, token: string, orgId: string, agentId: string) =>
+    api<{ messages: ChatMsgLite[]; agent: { id: string; name: string; external: boolean } }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/chat`,
+      { token },
+    ),
+
+  sendAgentChat: (base: string, token: string, orgId: string, agentId: string, content: string) =>
+    api<{ ok: boolean; async: boolean; taskId: string; message: ChatMsgLite; reply?: ChatMsgLite }>(
+      base,
+      `/api/orgs/${orgId}/agents/${agentId}/chat`,
+      { token, method: 'POST', body: JSON.stringify({ content }) },
+    ),
 
   // DELETE /api/orgs/:orgId/agents/:agentId — AAD-1's owner-gated SOFT delete,
   // which also revokes the agent's credentials (API token, OAuth tokens,

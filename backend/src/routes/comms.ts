@@ -40,19 +40,25 @@ export async function commsRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const { channel, limit = '50' } = req.query as any
 
-    const messages = await db.select().from(schema.messages)
+    // MCC-1 tenancy fix: this selected from `messages` with NO org filter — every
+    // org's rows, with other orgs' agents rendered as "Unknown". Messages carry no
+    // orgId column, so scope by JOINING the org's agents (the same derivation the
+    // membership gate uses).
+    const rows = await db.select({
+        m: schema.messages,
+        agentName: schema.agents.name,
+        agentEmoji: schema.agents.avatarEmoji,
+      })
+      .from(schema.messages)
+      .innerJoin(schema.agents, eq(schema.messages.agentId, schema.agents.id))
+      .where(eq(schema.agents.orgId, orgId))
       .orderBy(desc(schema.messages.createdAt))
       .limit(Number(limit))
 
-    // Enrich with agent info
-    const agents = await db.select({ id: schema.agents.id, name: schema.agents.name, avatarEmoji: schema.agents.avatarEmoji })
-      .from(schema.agents).where(eq(schema.agents.orgId, orgId))
-    const agentMap = new Map(agents.map(a => [a.id, a]))
-
-    const enriched = messages.map(m => ({
-      ...m,
-      agentName: agentMap.get(m.agentId)?.name ?? 'Unknown',
-      agentEmoji: agentMap.get(m.agentId)?.avatarEmoji ?? '🤖',
+    const enriched = rows.map(r => ({
+      ...r.m,
+      agentName: r.agentName ?? 'Unknown',
+      agentEmoji: r.agentEmoji ?? '🤖',
     }))
 
     return { messages: enriched, total: enriched.length }

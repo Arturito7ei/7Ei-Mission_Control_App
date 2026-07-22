@@ -7,10 +7,12 @@ import {
   parseCollapsed, serializeCollapsed, toggleCollapsed, type NavGroupId,
 } from './navModel.ts'
 
-// The 14 dashboard tabs that must ALL stay reachable after the re-fold.
+// The dashboard tabs that must ALL stay reachable after the re-fold
+// (14 at the P2 re-fold; +chat with MCC-1).
 const EXISTING_TABS = [
   'overview', 'cockpit', 'assistant', 'memory', 'agents', 'tasks',
   'projects', 'skills', 'costs', 'comms', 'connectors', 'governance', 'usage', 'settings',
+  'chat', // MCC-1
 ]
 
 // P1 — surfaces taken off the rail entirely. Still routable, never rendered in the sidebar.
@@ -21,6 +23,7 @@ const REMOVED_FROM_RAIL = ['search', 'goals', 'pipelines', 'workspaces', 'artifa
 const FOLDED: Record<string, string> = {
   budgets: 'costs',
   plugins: 'connectors',
+  chat: 'inbox', // MCC-1 — talk to an agent, replies included
   tasks: 'inbox', // P2 — tasks + approvals are one area
   comms: 'inbox',
   adapters: 'settings',
@@ -98,6 +101,7 @@ test('[P1-nav] each parent page exposes exactly the expected tab bar, itself fir
   // is the log, and they sit side by side under one rail entry.
   assert.deepEqual(navPageTabs('inbox'), [
     { id: 'inbox', label: 'Inbox' },
+    { id: 'chat', label: 'Chat' }, // MCC-1
     { id: 'tasks', label: 'Tasks' },
     { id: 'comms', label: 'Comms' },
   ])
@@ -119,6 +123,16 @@ test('[P1-nav] each parent page exposes exactly the expected tab bar, itself fir
 
 // P2 — the operator asked for tasks folded under Inbox and for "Tasks" to reach
 // the tasks + approvals dashboard. These are that ask, locked down.
+test('[MCC-1] Chat is folded under Inbox, renders a real tab, and keeps Inbox lit', () => {
+  const railIds = allNavItems().map(i => i.id)
+  assert.equal(railIds.includes('chat'), false, 'Chat is not its own rail entry')
+  assert.equal(isHidden('chat'), false, 'Chat is not an off-rail surface')
+  assert.equal(navParentId('chat'), 'inbox')
+  assert.equal(navSelectedId('chat'), 'inbox')
+  assert.equal(findNavItem('chat')?.kind, 'tab', 'Chat renders the real Chat surface, not a placeholder')
+  assert.equal(findNavItem('chat')?.label, 'Chat')
+})
+
 test('[P2-nav] Tasks is folded under Inbox and clicking it keeps Inbox lit', () => {
   const railIds = allNavItems().map(i => i.id)
   assert.equal(railIds.includes('tasks'), false, 'Tasks is not its own rail entry')
