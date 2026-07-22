@@ -13,7 +13,7 @@
 // ALIGNMENT + label, never color alone; the awaiting-reply state is text + ⏳.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import { mergeThread, awaitingReply, threadPreview, chatSendError, type ChatMsg } from '@/lib/chat.logic'
+import { mergeThread, awaitingReply, threadPreview, chatSendError, authorLabel, type ChatMsg } from '@/lib/chat.logic'
 import { tk, text, space } from './tokens'
 import { Button, Card, SectionLabel, TextArea } from './ui'
 
@@ -29,6 +29,8 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // MCC-2 — who is looking. Server-supplied on the GET; drives You/Member labels.
+  const [viewer, setViewer] = useState<string | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
 
@@ -38,10 +40,11 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
   const load = useCallback(async (agentId: string) => {
     try {
       const token = await getToken()
-      const r = await api<{ messages: ChatMsg[]; agent: { external: boolean } }>(
+      const r = await api<{ viewer?: string | null; messages: ChatMsg[]; agent: { external: boolean } }>(
         `/api/orgs/${orgId}/agents/${agentId}/chat`, { token })
       setThreads(t => ({ ...t, [agentId]: mergeThread(t[agentId] ?? [], r.messages) }))
       setMeta(m => ({ ...m, [agentId]: { external: r.agent.external } }))
+      setViewer(r.viewer ?? null)
       setErr(null)
     } catch (e: any) { setErr(e?.message ?? 'Failed to load the thread.') }
   }, [orgId, getToken])
@@ -132,7 +135,11 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
               }}>
               {msgs.length === 0 && <div style={{ ...text.sm, color: tk.muted }}>No messages yet — say hello.</div>}
               {msgs.map(m => {
-                const mine = m.role === 'user'
+                // MCC-2 — right-aligned "You" only for rows THIS viewer wrote;
+                // another member's (or a legacy/webhook) row sits left as "Member".
+                const isUser = m.role === 'user'
+                const mine = isUser && authorLabel(m, viewer) === 'You'
+                const label = isUser ? authorLabel(m, viewer) : selAgent.name
                 return (
                   <div key={m.id} style={{ display: 'flex', justifyContent: mine ? 'flex-end' : 'flex-start', marginBottom: space.sm }}>
                     <div style={{
@@ -141,7 +148,7 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
                       border: '1px solid ' + (mine ? 'var(--accent)' : 'var(--line)'),
                     }}>
                       <div style={{ ...text.sm, color: tk.muted, marginBottom: 2 }}>
-                        {mine ? 'You' : selAgent.name} · {new Date(m.createdAt as any).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {label} · {new Date(m.createdAt as any).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
                       <div style={{ ...text.md, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.content}</div>
                     </div>

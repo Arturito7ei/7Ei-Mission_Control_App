@@ -62,6 +62,9 @@ export async function agentChatRoutes(app: FastifyInstance) {
       .orderBy(desc(schema.messages.createdAt), desc(sql`rowid`)).limit(limit)
     rows.reverse()
     return {
+      // MCC-2 — the viewer's own id rides along so clients can label "You" vs
+      // "Member" honestly (the thread is org-shared; author is per-row).
+      viewer: (req as any).auth?.userId ?? (req as any).userId ?? null,
       messages: rows,
       agent: {
         id: agent.id, name: agent.name,
@@ -93,7 +96,9 @@ export async function agentChatRoutes(app: FastifyInstance) {
       id: taskId, agentId, orgId, title: `chat: ${content.slice(0, 80)}`,
       input: content, status: 'pending', priority: 'medium', createdAt: new Date(),
     } as any)
-    const userMsg = { id: randomUUID(), agentId, taskId, role: 'user' as const, content, createdAt: new Date() }
+    // MCC-2 — record WHO sent it (the Clerk user the membership gate authorised).
+    const authorUser = (req as any).auth?.userId ?? (req as any).userId ?? null
+    const userMsg = { id: randomUUID(), agentId, taskId, role: 'user' as const, content, authorUser, createdAt: new Date() }
     await db.insert(schema.messages).values(userMsg)
 
     if (isExternalAgent(agent as any)) {

@@ -31,16 +31,32 @@ export function verifyWebhookSecret(provided: string | undefined | null, expecte
 }
 
 /** Decide whether an inbound webhook delivery is authorized.
- *  - No serverSecret configured → verification disabled (dev/local): authorized,
- *    enforced=false. Mirrors the global Telegram receiver's opt-in behaviour.
+ *  - No serverSecret configured:
+ *      · failClosed=false (dev/local) → authorized, enforced=false — the
+ *        historical opt-in behaviour, kept so local runs need no secret.
+ *      · failClosed=true (production) → REFUSED. These receivers write
+ *        user-role rows into agent threads that MCC-1 renders and replays; an
+ *        unset secret in prod was an unauthenticated message-injection door
+ *        (audit MCC-1 #4b). The route passes failClosed from NODE_ENV.
  *  - serverSecret configured → `provided` must equal the derived per-org token. */
 export function checkWebhook(
   serverSecret: string | undefined | null,
   channel: WebhookChannel,
   orgId: string,
   provided: string | undefined | null,
+  failClosed = false,
 ): { authorized: boolean; enforced: boolean } {
-  if (!serverSecret) return { authorized: true, enforced: false }
+  if (!serverSecret) return failClosed
+    ? { authorized: false, enforced: true }
+    : { authorized: true, enforced: false }
   const expected = deriveWebhookSecret(serverSecret, channel, orgId)
   return { authorized: verifyWebhookSecret(provided, expected), enforced: true }
+}
+
+/** When does a missing signing secret REFUSE deliveries? For any explicit
+ *  non-dev environment — matching only the literal 'production' would let a
+ *  typo ('prod') or a staging env silently reopen an internet-facing receiver
+ *  (audit MCC-2 #4). Unset/empty NODE_ENV keeps the local-dev open posture. */
+export function webhookFailClosed(nodeEnv: string | undefined | null): boolean {
+  return !!nodeEnv && nodeEnv !== 'development' && nodeEnv !== 'test'
 }

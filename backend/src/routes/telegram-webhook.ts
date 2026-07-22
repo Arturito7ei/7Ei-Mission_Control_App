@@ -7,6 +7,7 @@ import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { TelegramBot, formatAgentResponse } from '../services/telegram-bot'
+import { webhookFailClosed } from '../services/webhook-auth'
 import { executeAgentTask } from '../services/agent-executor'
 import {
   parseCommand, handleStart, handleStatus, handleAgents,
@@ -17,7 +18,14 @@ import {
 export async function telegramWebhookRoutes(app: FastifyInstance) {
   // POST /api/telegram/webhook — receive Telegram updates
   app.post('/api/telegram/webhook', async (req, reply) => {
-    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET
+    // MCC-2 (audit finding 1): same fail-closed rule as the per-org receivers.
+    // This route resolves an org from the chat id and DRIVES executeAgentTask —
+    // an open posture in prod was unauthenticated task injection + LLM spend.
+    // Honours WEBHOOK_SIGNING_SECRET as fallback, like routes/comms.ts does.
+    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET ?? process.env.WEBHOOK_SIGNING_SECRET
+    if (!webhookSecret && webhookFailClosed(process.env.NODE_ENV)) {
+      return reply.code(403).send({ error: 'Webhook signing secret not configured' })
+    }
     if (webhookSecret) {
       const headerSecret = req.headers['x-telegram-bot-api-secret-token']
       if (headerSecret !== webhookSecret) {

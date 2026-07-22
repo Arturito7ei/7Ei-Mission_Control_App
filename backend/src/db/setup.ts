@@ -7,7 +7,7 @@ export async function setupDatabase() {
     `CREATE TABLE IF NOT EXISTS departments (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, department_id TEXT, name TEXT NOT NULL, description TEXT, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, department_id TEXT, name TEXT NOT NULL, role TEXT NOT NULL, personality TEXT, cv TEXT, terms_of_reference TEXT, llm_provider TEXT NOT NULL DEFAULT 'anthropic', llm_model TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514', skills TEXT DEFAULT '[]', status TEXT NOT NULL DEFAULT 'idle', avatar_emoji TEXT DEFAULT '🤖', agent_type TEXT NOT NULL DEFAULT 'standard', advisor_persona TEXT, memory_long_term TEXT, persona TEXT, expertise TEXT, advisor_ids TEXT, runtime TEXT NOT NULL DEFAULT 'internal', external_endpoint TEXT, api_token_hash TEXT, last_heartbeat_at INTEGER, heartbeat_status TEXT DEFAULT 'unknown', contact_channel TEXT, reports_to TEXT, title TEXT, job_description TEXT, deleted_at INTEGER, deleted_by TEXT, created_at INTEGER NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, content TEXT NOT NULL, author_user TEXT, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, org_id TEXT NOT NULL, project_id TEXT, title TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium', kanban_column TEXT DEFAULT 'todo', llm_model TEXT, tokens_used INTEGER, cost_usd REAL, duration_ms INTEGER, assigned_to TEXT, due_at INTEGER, parent_task_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER)`,
     `CREATE TABLE IF NOT EXISTS skills (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, domain TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'github', github_path TEXT, org_id TEXT, last_synced_at INTEGER, created_at INTEGER NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS knowledge_items (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, mime_type TEXT, external_id TEXT, external_url TEXT, parent_id TEXT, content TEXT, backend TEXT NOT NULL DEFAULT 'google_drive', created_at INTEGER NOT NULL)`,
@@ -36,6 +36,8 @@ export async function setupDatabase() {
     `ALTER TABLE organisations ADD COLUMN preferred_llm TEXT`,
     `ALTER TABLE organisations ADD COLUMN deploy_config TEXT DEFAULT '{}'`,
     `ALTER TABLE organisations ADD COLUMN budget_monthly_usd REAL`,
+    // MCC-2: chat author attribution (also in the CREATE string above — the setup.ts trap)
+    `ALTER TABLE messages ADD COLUMN author_user TEXT`,
     // Sprint 4: agent profile fields
     `ALTER TABLE tasks ADD COLUMN parent_task_id TEXT`,
     `ALTER TABLE agents ADD COLUMN persona TEXT`,

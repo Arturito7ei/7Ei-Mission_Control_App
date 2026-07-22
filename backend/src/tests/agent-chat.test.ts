@@ -179,6 +179,20 @@ test('[MCC-1] POST to an external agent writes the user message and an assigned 
   assert.equal(msgs.length, 1)
   assert.equal(msgs[0].role, 'user')
   assert.equal(msgs[0].content, 'status report please')
+  // MCC-2 — the row records WHO sent it (the gate-authorised Clerk user)…
+  assert.equal((msgs[0] as any).authorUser, MEMBER_A)
+})
+
+test('[MCC-2] GET returns the viewer id, and rows carry their author', async () => {
+  await as(MEMBER_A, 'POST', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat`, { content: 'from the member' })
+  // …and a DIFFERENT viewer reading the shared thread sees the author is not them.
+  const r = await as(OWNER_A, 'GET', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat`)
+  const body = r.json() as any
+  assert.equal(body.viewer, OWNER_A)
+  const row = body.messages.find((m: any) => m.content === 'from the member')
+  assert.ok(row, 'the member message is in the thread')
+  assert.equal(row.authorUser, MEMBER_A)
+  assert.notEqual(row.authorUser, body.viewer)
 })
 
 test('[MCC-1] POST validation: empty and oversized content are refused, nothing is written', async () => {

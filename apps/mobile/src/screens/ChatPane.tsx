@@ -26,7 +26,7 @@ import {
 } from 'react-native'
 import { Api, type Agent } from '../api'
 import { useAuth } from '../auth'
-import { awaitingReply, chatSendError, mergeThread, threadPreview, type ChatMsgLite } from '../chat'
+import { authorLabel, awaitingReply, chatSendError, mergeThread, threadPreview, type ChatMsgLite } from '../chat'
 import { font, space, theme } from '../theme'
 import { Banner, Empty, Loading } from '../ui'
 
@@ -41,6 +41,8 @@ export default function ChatPane() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // MCC-2 — who is looking (server-supplied). Drives the You/Member labels.
+  const [viewer, setViewer] = useState<string | null>(null)
   const scroller = useRef<ScrollView>(null)
 
   // Roster once; select the first agent so the pane opens on a real thread.
@@ -68,6 +70,7 @@ export default function ChatPane() {
       const r = await Api.agentChat(apiUrl, token, orgId, agentId)
       setThreads((t) => ({ ...t, [agentId]: mergeThread(t[agentId] ?? [], r.messages) }))
       setExternal((x) => ({ ...x, [agentId]: r.agent.external }))
+      setViewer(r.viewer ?? null)
       setError(null)
     } catch (e: any) { setError(e?.message ?? 'Failed to load the thread.') }
   }, [apiUrl, getToken, orgId])
@@ -142,12 +145,16 @@ export default function ChatPane() {
       <ScrollView ref={scroller} style={s.thread} contentContainerStyle={{ padding: space.lg }}>
         {msgs.length === 0 && <Empty text={selAgent ? `No messages with ${selAgent.name} yet — say hello.` : 'Select an agent.'} />}
         {msgs.map((m) => {
-          const mine = m.role === 'user'
+          // MCC-2 — right-aligned "You" only for rows THIS viewer wrote; another
+          // member's (or a legacy/webhook) row sits left as "Member".
+          const isUser = m.role === 'user'
+          const mine = isUser && authorLabel(m, viewer) === 'You'
+          const label = isUser ? authorLabel(m, viewer) : selAgent?.name ?? 'Agent'
           return (
             <View key={m.id} style={[s.bubbleRow, { justifyContent: mine ? 'flex-end' : 'flex-start' }]}>
               <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleTheirs]}>
                 <Text style={s.bubbleMeta}>
-                  {mine ? 'You' : selAgent?.name ?? 'Agent'} · {new Date(m.createdAt as any).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {label} · {new Date(m.createdAt as any).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </Text>
                 <Text style={s.bubbleText}>{m.content}</Text>
               </View>

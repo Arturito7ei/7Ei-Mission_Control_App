@@ -4,7 +4,7 @@ import { db, schema } from '../db/client'
 import { eq, desc, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { getGoogleConnectorCfg } from './connectors'
-import { checkWebhook, deriveWebhookSecret } from '../services/webhook-auth'
+import { checkWebhook, deriveWebhookSecret, webhookFailClosed } from '../services/webhook-auth'
 import { assertAgentInOrg } from '../services/tenant-guard'
 
 // Signing secret for per-org inbound webhook receivers. Falls back to the legacy
@@ -218,8 +218,11 @@ export async function commsWebhookRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
 
     // Shared-secret check: Telegram echoes the registered secret_token here.
+    // MCC-2: in production a MISSING signing secret refuses the delivery (fail
+    // closed) — this receiver writes user-role rows into agent threads, so an
+    // open posture in prod was unauthenticated message injection.
     const provided = req.headers['x-telegram-bot-api-secret-token'] as string | undefined
-    const { authorized } = checkWebhook(telegramSigningSecret(), 'telegram', orgId, provided)
+    const { authorized } = checkWebhook(telegramSigningSecret(), 'telegram', orgId, provided, webhookFailClosed(process.env.NODE_ENV))
     if (!authorized) return reply.code(403).send({ error: 'Invalid webhook signature' })
 
     const update = req.body as any

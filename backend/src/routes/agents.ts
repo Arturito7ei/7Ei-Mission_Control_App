@@ -393,9 +393,14 @@ export async function agentRoutes(app: FastifyInstance) {
   app.delete('/api/agents/:agentId', async (_req, reply) => {
     return reply.code(410).send({ error: 'Gone. Use DELETE /api/orgs/:orgId/agents/:agentId (owner-gated).' })
   })
-  app.get('/api/agents/:agentId/messages', async (req) => {
-    const { agentId } = req.params as any
-    return { messages: await db.select().from(schema.messages).where(eq(schema.messages.agentId, agentId)) }
+  // MCC-2 (audit finding 2) — retired. This read was tenant-BLIND: no :orgId in
+  // the path means requireOrgMembership skips (the documented R-4 trap), so any
+  // authenticated user of any org could read any agent's thread — and with
+  // author attribution it would have leaked Clerk user ids cross-tenant. The
+  // AAD-1 pattern: 410, pointing at the org-scoped route. Only the frozen
+  // legacy app/ tree ever called it.
+  app.get('/api/agents/:agentId/messages', async (_req, reply) => {
+    return reply.code(410).send({ error: 'Gone. Use GET /api/orgs/:orgId/agents/:agentId/chat (org-scoped).' })
   })
   app.post('/api/agents/:agentId/skills', async (req) => {
     const { agentId } = req.params as any
@@ -409,39 +414,20 @@ export async function agentRoutes(app: FastifyInstance) {
     if (!current.includes(skill.name)) await db.update(schema.agents).set({ skills: [...current, skill.name] }).where(eq(schema.agents.id, agentId))
     return { ok: true }
   })
-  app.post('/api/agents/:agentId/chat', async (req, reply) => {
-    const { agentId } = req.params as any
-    const { input, history } = req.body as any
-    const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
-    if (!agent) return reply.code(404).send({ error: 'Not found' })
-    const taskId = randomUUID()
-    await db.insert(schema.tasks).values({ id: taskId, agentId, orgId: agent.orgId, title: input.slice(0, 100), input, status: 'pending', priority: 'medium', createdAt: new Date() })
-    await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'user', content: input, createdAt: new Date() })
-    const result = await executeAgentTask({ agentId, taskId, input, conversationHistory: history ?? [] })
-    await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-    return { output: result.output, taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }
+  // MCC-2 (audit finding 3) — both legacy chat writers retired. They were
+  // tenant-blind (no :orgId → the membership gate's R-4 skip), trusted a
+  // CLIENT-SUPPLIED history array straight into the model, and wrote
+  // unattributed user rows that — unlike webhook rows — carried a taskId and so
+  // PASSED the MCC-1 provenance filter into future prompts. A member of org A
+  // could inject prompt-context into org B's agent and spend its budget. The
+  // org-scoped POST /api/orgs/:orgId/agents/:agentId/chat solves all three;
+  // only the frozen legacy app/ tree ever called these.
+  app.post('/api/agents/:agentId/chat', async (_req, reply) => {
+    return reply.code(410).send({ error: 'Gone. Use POST /api/orgs/:orgId/agents/:agentId/chat (org-scoped).' })
   })
-  app.get('/api/agents/:agentId/stream', { websocket: true }, async (socket: any, req: any) => {
-    socket.on('message', async (raw: Buffer) => {
-      try {
-        const { input, history } = JSON.parse(raw.toString())
-        const { agentId } = req.params
-        const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
-        if (!agent) { socket.send(JSON.stringify({ type: 'error', data: 'Agent not found' })); return }
-        const taskId = randomUUID()
-        await db.insert(schema.tasks).values({ id: taskId, agentId, orgId: agent.orgId, title: input.slice(0, 100), input, status: 'pending', priority: 'medium', createdAt: new Date() })
-        await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'user', content: input, createdAt: new Date() })
-        socket.send(JSON.stringify({ type: 'start', taskId }))
-        await executeAgentTask({
-          agentId, taskId, input, conversationHistory: history ?? [],
-          onToken: (token) => socket.send(JSON.stringify({ type: 'token', data: token })),
-          onDone: async (result) => {
-            await db.insert(schema.messages).values({ id: randomUUID(), agentId, taskId, role: 'assistant', content: result.output, createdAt: new Date() })
-            socket.send(JSON.stringify({ type: 'done', taskId, tokensUsed: result.tokensUsed, costUsd: result.costUsd, budgetWarning: result.budgetWarning }))
-          },
-        })
-      } catch (err: any) { socket.send(JSON.stringify({ type: 'error', data: err.message })) }
-    })
+  app.get('/api/agents/:agentId/stream', { websocket: true }, async (socket: any) => {
+    socket.send(JSON.stringify({ type: 'error', data: 'Gone. Use POST /api/orgs/:orgId/agents/:agentId/chat (org-scoped).' }))
+    socket.close()
   })
   app.get('/api/orgs/:orgId/agents/advisors', async (req) => {
     const { orgId } = req.params as any

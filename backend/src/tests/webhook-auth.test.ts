@@ -2,7 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 
-import { deriveWebhookSecret, verifyWebhookSecret, checkWebhook } from '../services/webhook-auth'
+// MCC-2 — the routes read NODE_ENV at request time and fail CLOSED for any
+// explicit non-dev env. The "stays open without a secret" parity tests below
+// assert the DEV posture, so pin the env rather than inherit the runner's.
+process.env.NODE_ENV = 'test'
+
+import { deriveWebhookSecret, verifyWebhookSecret, checkWebhook, webhookFailClosed } from '../services/webhook-auth'
 import { commsWebhookRoutes } from '../routes/comms'
 import { jiraWebhookRoutes } from '../routes/jira-webhook'
 
@@ -42,6 +47,35 @@ test('[MCA-85] verifyWebhookSecret matches only the exact token', () => {
 test('[MCA-85] checkWebhook: no server secret → verification disabled (dev)', () => {
   const r = checkWebhook(undefined, 'telegram', 'org-1', undefined)
   assert.deepEqual(r, { authorized: true, enforced: false })
+})
+
+test('[MCC-2] checkWebhook fails CLOSED in production when no secret is configured', () => {
+  // These receivers write user-role rows into agent threads MCC-1 renders and
+  // replays — an open posture in prod was unauthenticated message injection.
+  assert.deepEqual(
+    checkWebhook(undefined, 'telegram', 'org-1', undefined, true),
+    { authorized: false, enforced: true },
+  )
+  // …and a caller-provided "secret" cannot talk its way past a missing config.
+  assert.deepEqual(
+    checkWebhook(undefined, 'telegram', 'org-1', 'anything', true),
+    { authorized: false, enforced: true },
+  )
+  // A configured secret behaves exactly as before, failClosed or not.
+  const secret = 'srv'
+  const good = deriveWebhookSecret(secret, 'telegram', 'org-1')
+  assert.deepEqual(checkWebhook(secret, 'telegram', 'org-1', good, true), { authorized: true, enforced: true })
+})
+
+test('[MCC-2] webhookFailClosed: closed for any explicit non-dev env, open for local dev', () => {
+  assert.equal(webhookFailClosed('production'), true)
+  assert.equal(webhookFailClosed('prod'), true, 'a typo must not reopen the receiver')
+  assert.equal(webhookFailClosed('staging'), true)
+  assert.equal(webhookFailClosed('development'), false)
+  assert.equal(webhookFailClosed('test'), false)
+  assert.equal(webhookFailClosed(undefined), false)
+  assert.equal(webhookFailClosed(null), false)
+  assert.equal(webhookFailClosed(''), false)
 })
 
 test('[MCA-85] checkWebhook: configured secret enforces the correct token', () => {
