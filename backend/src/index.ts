@@ -24,6 +24,7 @@ import { usageRoutes } from './middleware/ratelimit'
 import { modelRoutes } from './routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from './routes/scheduled'
 import { agentDetailRoutes } from './routes/agent-detail'
+import { agentChatRoutes } from './routes/agent-chat'
 import { webhookRoutes } from './routes/webhooks'
 import { telegramWebhookRoutes } from './routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
@@ -184,6 +185,7 @@ async function start() {
     await secured.register(orgRoutes)
     await secured.register(agentRoutes)
     await secured.register(agentDetailRoutes)   // Epic AG — per-agent detail page (org-scoped)
+    await secured.register(agentChatRoutes)     // MCC-1 — org-scoped agent chat threads
     await secured.register(taskRoutes)
     await secured.register(projectRoutes)
     await secured.register(costRoutes)

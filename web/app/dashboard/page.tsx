@@ -5,6 +5,7 @@ import { api, API } from '@/lib/api'
 import CockpitPanel, { type CockpitSectionKey } from './CockpitPanel'
 import AssistantPanel from './AssistantPanel'
 import MemoryPanel from './MemoryPanel'
+import ChatPanel from './ChatPanel'
 import ConnectorsPanel from './ConnectorsPanel'
 import TaskDrawer from './TaskDrawer'
 import GovernancePanel from './GovernancePanel'
@@ -590,6 +591,14 @@ export default function DashboardPage() {
               const ac = tasks.filter(t => t.agentId === a.id).reduce((sum, t) => sum + (t.costUsd ?? 0), 0)
               return (<div key={a.id} style={s.costRow}><span style={{ minWidth: 120, fontSize: 14 }}>{a.avatarEmoji} {a.name}</span><div style={s.barTrack}><div style={{ ...s.barFill, width: `${Math.max(totalCost > 0 ? (ac / totalCost) * 100 : 0, 1)}%` }} /></div><span style={{ color: 'var(--accent)', fontSize: 13, minWidth: 70, textAlign: 'right' }}>${ac.toFixed(4)}</span></div>)
             })}
+          </div>
+        )}
+
+        {/* MCC-1 — Chat: direct conversation with an agent, replies included. */}
+        {tab === 'chat' && org && (
+          <div style={s.page}>
+            <h1 style={s.h1}>Chat</h1>
+            <ChatPanel orgId={org.id} getToken={getToken} agents={agents} />
           </div>
         )}
 

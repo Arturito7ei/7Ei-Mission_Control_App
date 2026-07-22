@@ -31,6 +31,7 @@ import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { customModelRoutes } from '../routes/custom-models'
 import { agentInviteRoutes, adapterRegistryRoutes, agentInviteDocRoutes, agentJoinRoutes } from '../routes/agent-invites'
 import { activityRoutes } from '../routes/activity'
+import { agentChatRoutes } from '../routes/agent-chat'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
 import { arturitaSttRoutes } from '../routes/arturita-stt'
 import { agentApiRoutes } from '../routes/agent-api'
@@ -67,6 +68,7 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(arturitaSttRoutes)   // MOB-5a — hosted STT
     await secured.register(agentInviteRoutes)
     await secured.register(activityRoutes)      // ACT-1 — unified activity feed
+    await secured.register(agentChatRoutes)     // MCC-1 — org-scoped agent chat threads
   })
 
   // Public / externally-called route groups.

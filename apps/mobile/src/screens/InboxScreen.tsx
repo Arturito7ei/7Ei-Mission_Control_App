@@ -29,6 +29,7 @@ import { INBOX_SEGMENTS, isInboxSegment, resolveInboxSegment } from '../inboxSeg
 import { font, space, theme } from '../theme'
 import type { ScreenNav } from '../navigation'
 import ApprovalsPane from './ApprovalsPane'
+import ChatPane from './ChatPane'
 import TasksScreen from './TasksScreen'
 
 export default function InboxScreen({
@@ -79,7 +80,10 @@ export default function InboxScreen({
       <View style={s.pane}>
         {/* The Task Log is read-only and takes only `onOpenTab` — it drills into
             no agent, so there is no onOpenAgent to forward. */}
-        {segment === 'tasks' ? (
+        {/* MCC-1 — the Chat segment renders the agent-conversation pane. */}
+        {segment === 'chat' ? (
+          <ChatPane />
+        ) : segment === 'tasks' ? (
           <TasksScreen onOpenTab={openTab} />
         ) : (
           <ApprovalsPane />

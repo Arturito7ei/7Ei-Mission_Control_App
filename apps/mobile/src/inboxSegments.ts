@@ -29,6 +29,7 @@ export interface InboxSegment {
  */
 export const INBOX_SEGMENTS: InboxSegment[] = [
   { id: 'inbox', label: 'Inbox' },
+  { id: 'chat', label: 'Chat' }, // MCC-1 — the web's Chat tab, foldable and ready
   { id: 'tasks', label: 'Tasks' },
 ]
 

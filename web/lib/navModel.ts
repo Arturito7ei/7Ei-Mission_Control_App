@@ -91,6 +91,10 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         id: 'inbox', label: 'Inbox', icon: '📥', kind: 'section', section: 'inbox', paperclip: 'Inbox',
         tabs: [
+          // MCC-1 — direct conversation with an agent (thread + composer), replies
+          // included. Hosted here because "talk to my office" and "what needs me"
+          // are the same area of attention.
+          { id: 'chat', label: 'Chat', icon: '💬', kind: 'tab', paperclip: 'Board Chat / DMs', beyond: true },
           { id: 'tasks', label: 'Tasks', icon: '📋', kind: 'tab', paperclip: 'Issues / Tasks' },
           { id: 'comms', label: 'Comms', icon: '📬', kind: 'tab', paperclip: 'Communications', beyond: true },
         ],
