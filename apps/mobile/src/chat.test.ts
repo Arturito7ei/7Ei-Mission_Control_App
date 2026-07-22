@@ -44,3 +44,17 @@ test('[MCC-1] awaitingReply / threadPreview / chatSendError agree with the web',
   }
   assert.equal(phone.MAX_CHAT_CONTENT, web.MAX_CHAT_CONTENT)
 })
+
+test('[MCC-2] authorLabel agrees with the web', () => {
+  const rows: any[] = [
+    { ...m('a', 'user', 'hi', 1), authorUser: 'user_me' },
+    { ...m('b', 'user', 'yo', 2), authorUser: 'user_other' },
+    m('c', 'user', 'legacy', 3),
+    { ...m('d', 'assistant', 'reply', 4), authorUser: null },
+  ]
+  for (const row of rows) {
+    for (const viewer of ['user_me', 'user_other', null, undefined]) {
+      assert.equal(phone.authorLabel(row, viewer as any), web.authorLabel(row, viewer as any))
+    }
+  }
+})

@@ -7,7 +7,20 @@ export interface ChatMsg {
   role: string
   content: string
   taskId?: string | null
+  /** MCC-2 — Clerk user id of the human who wrote a user-role row. Null on
+   *  assistant rows and on legacy/webhook rows. */
+  authorUser?: string | null
   createdAt: string | number | Date
+}
+
+/**
+ * MCC-2 — label for a user-role row. The thread is org-shared, so "You" is only
+ * honest when the row's author IS the viewer; anything else (another member, a
+ * legacy row, a webhook-injected row) is "Member". Fail toward "Member": a row
+ * that can't prove it's yours must not claim to be.
+ */
+export function authorLabel(m: ChatMsg, viewer: string | null | undefined): 'You' | 'Member' {
+  return m.authorUser && viewer && m.authorUser === viewer ? 'You' : 'Member'
 }
 
 export const msgTime = (m: ChatMsg): number => new Date(m.createdAt as any).getTime()

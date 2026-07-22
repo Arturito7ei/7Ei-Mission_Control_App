@@ -104,6 +104,10 @@ export const messages = sqliteTable('messages', {
   taskId: text('task_id'),
   role: text('role').notNull(),
   content: text('content').notNull(),
+  // MCC-2 — WHO wrote a user-role row (Clerk user id). The thread is org-shared,
+  // so without this every member's message rendered as "You" to every viewer.
+  // Nullable: assistant rows and legacy/webhook rows carry none.
+  authorUser: text('author_user'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 })
 

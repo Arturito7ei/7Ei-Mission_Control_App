@@ -1,7 +1,7 @@
 // MCC-1 — chat-thread logic tests (node --test, no jest/vitest — house rule).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeThread, awaitingReply, threadPreview, chatSendError, type ChatMsg } from './chat.logic.ts'
+import { mergeThread, awaitingReply, threadPreview, chatSendError, authorLabel, type ChatMsg } from './chat.logic.ts'
 
 const m = (id: string, role: string, content: string, t: number): ChatMsg =>
   ({ id, role, content, createdAt: new Date(2026, 0, 1, 0, 0, t).toISOString() })
@@ -45,6 +45,16 @@ test('[MCC-1] threadPreview squeezes whitespace and truncates with an ellipsis',
   assert.equal(long.length, 10)
   assert.ok(long.endsWith('…'))
   assert.equal(threadPreview([]), '')
+})
+
+test('[MCC-2] authorLabel: "You" only when the author IS the viewer, fails toward "Member"', () => {
+  const mine = { ...m('a', 'user', 'hi', 1), authorUser: 'user_me' }
+  const theirs = { ...m('b', 'user', 'yo', 2), authorUser: 'user_other' }
+  const legacy = m('c', 'user', 'old row', 3) // no author (pre-MCC-2 / webhook)
+  assert.equal(authorLabel(mine, 'user_me'), 'You')
+  assert.equal(authorLabel(theirs, 'user_me'), 'Member')
+  assert.equal(authorLabel(legacy, 'user_me'), 'Member')
+  assert.equal(authorLabel(mine, null), 'Member') // no viewer known → never claim "You"
 })
 
 test('[MCC-1] chatSendError mirrors the server rules', () => {

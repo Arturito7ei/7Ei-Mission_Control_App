@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
-import { checkWebhook, deriveWebhookSecret } from '../services/webhook-auth'
+import { checkWebhook, deriveWebhookSecret, webhookFailClosed } from '../services/webhook-auth'
 
 // Signing secret for the per-org Jira receiver. Jira Cloud can't set a custom
 // header, so the secret rides in the URL query (?secret=…) that webhook-url mints.
@@ -32,7 +32,9 @@ export async function jiraWebhookRoutes(app: FastifyInstance) {
     // Shared-secret check: the secret rides in the URL query Jira was configured
     // with (webhook-url mints it), or an x-webhook-secret header for other posters.
     const provided = (req.query as any)?.secret ?? (req.headers['x-webhook-secret'] as string | undefined)
-    const { authorized } = checkWebhook(jiraSigningSecret(), 'jira', orgId, provided)
+    // MCC-2: same fail-closed rule as the Telegram receiver — prod refuses when
+    // no signing secret is configured, instead of accepting anything.
+    const { authorized } = checkWebhook(jiraSigningSecret(), 'jira', orgId, provided, webhookFailClosed(process.env.NODE_ENV))
     if (!authorized) return reply.code(403).send({ error: 'Invalid webhook signature' })
 
     const payload = req.body as any

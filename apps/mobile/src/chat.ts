@@ -9,7 +9,16 @@ export interface ChatMsgLite {
   role: string
   content: string
   taskId?: string | null
+  /** MCC-2 — Clerk user id of the human author of a user-role row (null on
+   *  assistant/legacy/webhook rows). */
+  authorUser?: string | null
   createdAt: string | number | Date
+}
+
+/** MCC-2 — "You" only when the row's author IS the viewer; else "Member".
+ *  Fail toward "Member": a row that can't prove it's yours must not claim to be. */
+export function authorLabel(m: ChatMsgLite, viewer: string | null | undefined): 'You' | 'Member' {
+  return m.authorUser && viewer && m.authorUser === viewer ? 'You' : 'Member'
 }
 
 export const msgTime = (m: ChatMsgLite): number => new Date(m.createdAt as any).getTime()

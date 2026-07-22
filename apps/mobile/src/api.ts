@@ -768,7 +768,7 @@ export const Api = {
   // the reply arrives later through its poll loop (the response says `async:
   // true`), so the screen keeps polling the GET — never invents a reply.
   agentChat: (base: string, token: string, orgId: string, agentId: string) =>
-    api<{ messages: ChatMsgLite[]; agent: { id: string; name: string; external: boolean } }>(
+    api<{ viewer?: string | null; messages: ChatMsgLite[]; agent: { id: string; name: string; external: boolean } }>(
       base,
       `/api/orgs/${orgId}/agents/${agentId}/chat`,
       { token },
