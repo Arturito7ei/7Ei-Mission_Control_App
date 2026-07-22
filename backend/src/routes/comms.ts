@@ -53,7 +53,8 @@ export async function commsRoutes(app: FastifyInstance) {
       .innerJoin(schema.agents, eq(schema.messages.agentId, schema.agents.id))
       .where(eq(schema.agents.orgId, orgId))
       .orderBy(desc(schema.messages.createdAt))
-      .limit(Number(limit))
+      // Clamped: `?limit=abc` used to reach the driver as LIMIT NaN → 500.
+      .limit(Math.max(1, Math.min(Number(limit) || 50, 200)))
 
     const enriched = rows.map(r => ({
       ...r.m,

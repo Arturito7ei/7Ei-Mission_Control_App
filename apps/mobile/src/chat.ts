@@ -14,13 +14,25 @@ export interface ChatMsgLite {
 
 export const msgTime = (m: ChatMsgLite): number => new Date(m.createdAt as any).getTime()
 
+const ROLE_ORDER: Record<string, number> = { user: 0, assistant: 1 }
+
 /** Merge a polled window into the on-screen thread: dedupe by id (server copy
- *  wins), order by (createdAt, id) so same-second rows don't flicker. */
+ *  wins), order by (createdAt, question-before-answer within a task, id).
+ *  createdAt is second-precision and ids are random UUIDs, so a same-second
+ *  Q/A pair needs the taskId+role tie-break to render in true order. */
 export function mergeThread(existing: ChatMsgLite[], incoming: ChatMsgLite[]): ChatMsgLite[] {
   const byId = new Map<string, ChatMsgLite>()
   for (const m of existing) byId.set(m.id, m)
   for (const m of incoming) byId.set(m.id, m)
-  return [...byId.values()].sort((a, b) => (msgTime(a) - msgTime(b)) || String(a.id).localeCompare(String(b.id)))
+  return [...byId.values()].sort((a, b) => {
+    const dt = msgTime(a) - msgTime(b)
+    if (dt) return dt
+    if (a.taskId && a.taskId === b.taskId) {
+      const dr = (ROLE_ORDER[a.role] ?? 2) - (ROLE_ORDER[b.role] ?? 2)
+      if (dr) return dr
+    }
+    return String(a.id).localeCompare(String(b.id))
+  })
 }
 
 /** Waiting on the agent? True when the user spoke last — drives the ⏳ row. */

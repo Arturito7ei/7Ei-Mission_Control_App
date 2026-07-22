@@ -131,6 +131,7 @@ before(async () => {
   const { usageRoutes } = await import('../middleware/ratelimit')
   const { scheduledRoutes } = await import('../routes/scheduled')
   const { agentDetailRoutes } = await import('../routes/agent-detail')
+  const { agentChatRoutes } = await import('../routes/agent-chat')
   const { arturitaRoutes } = await import('../routes/arturita')
   const { arturitaWalletRoutes } = await import('../routes/arturita-wallet')
   const { arturitaVoiceRoutes } = await import('../routes/arturita-voice')
@@ -155,6 +156,7 @@ before(async () => {
     await secured.register(all.orgRoutes)
     await secured.register(all.agentRoutes)
     await secured.register(agentDetailRoutes)
+    await secured.register(agentChatRoutes)  // MCC-1 — the leak-guard sweep must see the chat routes
     await secured.register(all.taskRoutes)
     await secured.register(all.projectRoutes)
     await secured.register(all.costRoutes)

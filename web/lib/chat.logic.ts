@@ -12,17 +12,32 @@ export interface ChatMsg {
 
 export const msgTime = (m: ChatMsg): number => new Date(m.createdAt as any).getTime()
 
+const ROLE_ORDER: Record<string, number> = { user: 0, assistant: 1 }
+
 /**
- * Merge a freshly-polled window into what's on screen, deduped by id, ordered by
- * (createdAt, id). Dedupe matters twice: the optimistic append after POST will
- * reappear in the next poll, and the newest-N windows of consecutive polls
- * overlap almost entirely.
+ * Merge a freshly-polled window into what's on screen, deduped by id. Dedupe
+ * matters twice: the optimistic append after POST reappears in the next poll,
+ * and consecutive newest-N windows overlap almost entirely.
+ *
+ * Ordering: (createdAt, then question-before-answer within a task, then id).
+ * The server stores createdAt at SECOND precision, so a Q/A pair routinely
+ * shares a timestamp — and message ids are random UUIDs, useless as a
+ * tie-break (audit MCC-1 #1). Within one taskId the user's question always
+ * precedes the assistant's answer, which mirrors the server's rowid order.
  */
 export function mergeThread(existing: ChatMsg[], incoming: ChatMsg[]): ChatMsg[] {
   const byId = new Map<string, ChatMsg>()
   for (const m of existing) byId.set(m.id, m)
   for (const m of incoming) byId.set(m.id, m) // server copy wins over optimistic
-  return [...byId.values()].sort((a, b) => (msgTime(a) - msgTime(b)) || String(a.id).localeCompare(String(b.id)))
+  return [...byId.values()].sort((a, b) => {
+    const dt = msgTime(a) - msgTime(b)
+    if (dt) return dt
+    if (a.taskId && a.taskId === b.taskId) {
+      const dr = (ROLE_ORDER[a.role] ?? 2) - (ROLE_ORDER[b.role] ?? 2)
+      if (dr) return dr
+    }
+    return String(a.id).localeCompare(String(b.id))
+  })
 }
 
 /**

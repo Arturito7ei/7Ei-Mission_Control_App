@@ -775,7 +775,7 @@ export const Api = {
     ),
 
   sendAgentChat: (base: string, token: string, orgId: string, agentId: string, content: string) =>
-    api<{ ok: boolean; async: boolean; taskId: string; message: ChatMsgLite; reply?: ChatMsgLite }>(
+    api<{ ok: boolean; async: boolean; taskId: string; message: ChatMsgLite; reply?: ChatMsgLite; notice?: string }>(
       base,
       `/api/orgs/${orgId}/agents/${agentId}/chat`,
       { token, method: 'POST', body: JSON.stringify({ content }) },

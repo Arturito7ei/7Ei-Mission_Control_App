@@ -85,6 +85,7 @@ export default function ChatPane() {
 
   const send = useCallback(async () => {
     if (!sel || sending) return
+    if (!input.trim()) return // an empty composer is a no-op, not an error
     const problem = chatSendError(input)
     if (problem) { setError(problem); return }
     const content = input.trim()
@@ -99,6 +100,9 @@ export default function ChatPane() {
         ...t,
         [sel]: mergeThread(t[sel] ?? [], [r.message, ...(r.reply ? [r.reply] : [])]),
       }))
+      // A governance/budget refusal is a NOTICE, not a reply — the server does
+      // not persist it into the thread, so surface it here.
+      if (r.notice) setError(String(r.notice))
     } catch (e: any) { setError(e?.message ?? 'Send failed.') }
     finally { setSending(false) }
   }, [sel, sending, input, apiUrl, getToken, orgId])

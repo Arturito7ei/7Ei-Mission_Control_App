@@ -63,18 +63,22 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
 
   const send = useCallback(async () => {
     if (!sel || sending) return
+    if (!input.trim()) return // Enter on an empty composer is a no-op, not an error
     const problem = chatSendError(input)
     if (problem) { setErr(problem); return }
     const content = input.trim()
     setSending(true); setErr(null)
     try {
       const token = await getToken()
-      const r = await api<{ message: ChatMsg; reply?: ChatMsg }>(
+      const r = await api<{ message: ChatMsg; reply?: ChatMsg; notice?: string }>(
         `/api/orgs/${orgId}/agents/${sel}/chat`,
         { token, method: 'POST', body: JSON.stringify({ content }) })
       setInput('')
       stickToBottom.current = true
       setThreads(t => ({ ...t, [sel]: mergeThread(t[sel] ?? [], [r.message, ...(r.reply ? [r.reply] : [])]) }))
+      // A governance/budget refusal is a NOTICE to the operator, not a reply —
+      // the server deliberately does not persist it into the thread.
+      if (r.notice) setErr(String(r.notice))
     } catch (e: any) { setErr(e?.message ?? 'Send failed.') }
     finally { setSending(false) }
   }, [sel, sending, input, orgId, getToken])
@@ -97,11 +101,14 @@ export default function ChatPanel({ orgId, getToken, agents }: { orgId: string; 
               border: '1px solid ' + (sel === a.id ? 'var(--accent)' : 'transparent'),
               borderRadius: 8, padding: `${space.sm}px ${space.md}px`, marginBottom: space.xs,
             }}>
-            <div style={{ ...text.md, fontWeight: 600, color: tk.text }}>
+            {/* Selection reads from weight + border + aria-current, not hue alone. */}
+            <div style={{ ...text.md, fontWeight: sel === a.id ? 800 : 600, color: tk.text }}>
               {a.avatarEmoji ? `${a.avatarEmoji} ` : ''}{a.name}
             </div>
             <div style={{ ...text.sm, color: tk.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {threadPreview(threads[a.id] ?? []) || (a.runtime && a.runtime !== 'internal' ? a.runtime : 'no messages yet')}
+              {/* Only the selected thread is fetched — an unvisited one shows its
+                  runtime, never a false "no messages yet". */}
+              {threadPreview(threads[a.id] ?? []) || (a.runtime && a.runtime !== 'internal' ? a.runtime : ' ')}
             </div>
           </button>
         ))}

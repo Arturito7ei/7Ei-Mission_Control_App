@@ -14,7 +14,7 @@
 // the blessed paths.
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
-import { and, desc, eq, gt } from 'drizzle-orm'
+import { and, desc, eq, gte, sql } from 'drizzle-orm'
 import { db, schema } from '../db/client'
 import { agentInOrg } from './agent-detail'
 import { executeAgentTask } from '../services/agent-executor'
@@ -30,9 +30,20 @@ const HISTORY_ROWS = 40
 
 export async function agentChatRoutes(app: FastifyInstance) {
   // ── Read the thread ──────────────────────────────────────────────────────
-  // Newest-N returned in ascending render order. `since` (ms epoch) returns
-  // only strictly-newer rows so the UI can poll cheaply. An ascending LIMIT N
-  // without the desc-then-reverse would return the OLDEST N — wrong window.
+  // Newest-N returned in ascending render order. An ascending LIMIT N without
+  // the desc-then-reverse would return the OLDEST N — wrong window.
+  //
+  // ORDERING (audit MCC-1 #1): `createdAt` is stored at SECOND precision
+  // (drizzle integer timestamp), and message ids are random UUIDs — so id is
+  // NOT a usable tie-break. `rowid` is: it is SQLite's monotonic insertion
+  // order, and every writer of this thread (chat POST below, the agent /result
+  // handler) inserts the question before its answer. Same-second pairs
+  // therefore render in true order, deterministically.
+  //
+  // `since` (ms epoch) is a cheap-poll window, GTE at second granularity: the
+  // boundary second is RE-delivered rather than newer same-second rows being
+  // missed (gt at floored seconds silently dropped them — audit #3). Clients
+  // merge by id, so re-delivery is free and loss is not.
   app.get('/api/orgs/:orgId/agents/:agentId/chat', async (req, reply) => {
     const { orgId, agentId } = req.params as any
     const agent = await agentInOrg(orgId, agentId)
@@ -45,10 +56,10 @@ export async function agentChatRoutes(app: FastifyInstance) {
       if (!Number.isFinite(since)) return reply.code(400).send({ error: 'since must be a millisecond timestamp' })
     }
     const where = since !== null
-      ? and(eq(schema.messages.agentId, agentId), gt(schema.messages.createdAt, new Date(since)))
+      ? and(eq(schema.messages.agentId, agentId), gte(schema.messages.createdAt, new Date(since)))
       : eq(schema.messages.agentId, agentId)
     const rows = await db.select().from(schema.messages).where(where)
-      .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(limit)
+      .orderBy(desc(schema.messages.createdAt), desc(sql`rowid`)).limit(limit)
     rows.reverse()
     return {
       messages: rows,
@@ -93,16 +104,40 @@ export async function agentChatRoutes(app: FastifyInstance) {
       return { ok: true, async: true, taskId, message: userMsg }
     }
 
-    // Internal: answer now, replaying the recent thread (excluding the row just
-    // written — executeAgentTask appends `input` itself, so including it would
-    // send the question twice).
+    // Internal: answer now, replaying the recent thread as context.
+    // PROVENANCE FILTER (audit MCC-1 #4): only rows tied to a TASK are replayed.
+    // Chat and task flows always write a taskId; the two plantable writers do
+    // not — `POST …/comms/inbox/send` (same-org member can insert an
+    // assistant-role row) and the Telegram webhook (unauthenticated when no
+    // signing secret is set) both insert taskId:null. Those rows may still
+    // RENDER in the thread, but they never re-enter the model's prompt.
+    // Also excluded: the row just written (executeAgentTask appends `input`
+    // itself — including it would send the question twice).
     const prior = await db.select().from(schema.messages)
       .where(eq(schema.messages.agentId, agentId))
-      .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id)).limit(HISTORY_ROWS)
+      .orderBy(desc(schema.messages.createdAt), desc(sql`rowid`)).limit(HISTORY_ROWS)
     const history = prior.reverse()
-      .filter(m => m.id !== userMsg.id && (m.role === 'user' || m.role === 'assistant') && !!m.content)
+      .filter(m => m.id !== userMsg.id && !!m.taskId && (m.role === 'user' || m.role === 'assistant') && !!m.content)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-    const result = await executeAgentTask({ agentId, taskId, input: content, conversationHistory: history })
+
+    // Refusals and failures must not become "replies" (audit MCC-1 #5): a
+    // governance/budget/preflight hard-stop is a NOTICE to the operator, not
+    // the agent speaking — persisting it would pollute the thread and the next
+    // turn's history. And a THROW (budget/concurrency guards) must fail the
+    // task it already created rather than 500 with an orphaned pending row.
+    let result
+    try {
+      result = await executeAgentTask({ agentId, taskId, input: content, conversationHistory: history })
+    } catch (e: any) {
+      const msg = String(e?.message ?? 'Agent execution failed.')
+      await db.update(schema.tasks).set({ status: 'failed', output: msg } as any)
+        .where(eq(schema.tasks.id, taskId)).catch(() => {})
+      return reply.code(502).send({ error: msg, taskId })
+    }
+    const REFUSAL_PROVIDERS = new Set(['governance', 'budget', 'preflight'])
+    if (REFUSAL_PROVIDERS.has(String((result as any).provider ?? ''))) {
+      return { ok: false, async: false, taskId, message: userMsg, notice: result.output }
+    }
     const assistant = { id: randomUUID(), agentId, taskId, role: 'assistant' as const, content: result.output, createdAt: new Date() }
     await db.insert(schema.messages).values(assistant)
     return { ok: true, async: false, taskId, message: userMsg, reply: assistant, tokensUsed: result.tokensUsed, costUsd: result.costUsd }

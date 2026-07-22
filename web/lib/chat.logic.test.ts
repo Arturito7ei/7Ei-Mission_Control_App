@@ -24,6 +24,15 @@ test('[MCC-1] mergeThread orders by time then id, across overlapping poll window
   assert.deepEqual(t1.map(x => x.id), ['y', 'z'])
 })
 
+test('[MCC-1] same-second Q/A pair renders question before answer regardless of ids', () => {
+  // The server stores createdAt at second precision; ids are random UUIDs. An
+  // id tie-break alone would put 'aa-answer' first — the taskId+role rule bites.
+  const q = { ...m('zz-question', 'user', 'Q', 7), taskId: 'task-1' }
+  const ans = { ...m('aa-answer', 'assistant', 'A', 7), taskId: 'task-1' }
+  assert.deepEqual(mergeThread([q], [ans]).map(x => x.id), ['zz-question', 'aa-answer'])
+  assert.deepEqual(mergeThread([ans], [q]).map(x => x.id), ['zz-question', 'aa-answer'])
+})
+
 test('[MCC-1] awaitingReply is true only when the user spoke last', () => {
   assert.equal(awaitingReply([]), false)
   assert.equal(awaitingReply([m('a', 'user', 'hi', 1)]), true)

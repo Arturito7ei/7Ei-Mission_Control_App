@@ -18,6 +18,9 @@ test('[MCC-1] mergeThread agrees with the web on dedupe, order and overlap', () 
     [[m('x', 'user', 'draft', 1)], [{ ...m('x', 'user', 'server', 1), taskId: 't' }]],
     [[m('a', 'user', '1', 1), m('b', 'assistant', '2', 2)], [m('b', 'assistant', '2', 2), m('c', 'user', '3', 3)]],
     [[m('z', 'user', 'z', 5)], [m('y', 'assistant', 'y', 5)]],
+    // same-second Q/A pair sharing a taskId — the question must sort first even
+    // though its id is lexicographically later (audit MCC-1 #1)
+    [[{ ...m('zz-q', 'user', 'Q', 7), taskId: 't1' }], [{ ...m('aa-a', 'assistant', 'A', 7), taskId: 't1' }]],
   ]
   for (const [a, b] of cases) {
     assert.deepEqual(phone.mergeThread(a as any, b as any), web.mergeThread(a as any, b as any))

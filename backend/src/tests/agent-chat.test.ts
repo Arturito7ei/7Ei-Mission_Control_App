@@ -128,16 +128,22 @@ test('[MCC-1] GET returns the newest-N window in ascending render order', async 
   assert.equal(body.agent.external, true)
 })
 
-test('[MCC-1] GET since returns only strictly-newer rows', async () => {
+test('[MCC-1] GET since is a GTE window — boundary second re-delivered, same-second rows never missed', async () => {
   const t1 = new Date(CREATED_AT.getTime() + 1000)
   const t2 = new Date(CREATED_AT.getTime() + 60_000)
   await db.insert(schema.messages).values([
     msgRow('m1', EXT_A, 'user', 'old', t1),
-    msgRow('m2', EXT_A, 'assistant', 'new', t2),
+    msgRow('m2', EXT_A, 'assistant', 'boundary', t2),
+    msgRow('m3', EXT_A, 'user', 'same second as m2', t2),
   ] as any)
-  const r = await as(OWNER_A, 'GET', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat?since=${t1.getTime()}`)
+  // since = the boundary second: BOTH rows in it come back (a gt at floored
+  // seconds silently dropped m3 forever — audit MCC-1 #3); clients dedupe by id.
+  const r = await as(OWNER_A, 'GET', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat?since=${t2.getTime()}`)
   assert.equal(r.statusCode, 200)
-  assert.deepEqual((r.json() as any).messages.map((m: any) => m.id), ['m2'])
+  assert.deepEqual((r.json() as any).messages.map((m: any) => m.id).sort(), ['m2', 'm3'])
+  // a since past the newest row returns nothing
+  const empty = await as(OWNER_A, 'GET', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat?since=${t2.getTime() + 1000}`)
+  assert.deepEqual((empty.json() as any).messages, [])
   const bad = await as(OWNER_A, 'GET', `/api/orgs/${ORG_A}/agents/${EXT_A}/chat?since=nonsense`)
   assert.equal(bad.statusCode, 400)
 })
