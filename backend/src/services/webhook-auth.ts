@@ -53,8 +53,10 @@ export function checkWebhook(
   return { authorized: verifyWebhookSecret(provided, expected), enforced: true }
 }
 
-/** Production runs fail CLOSED on a missing signing secret; everything else
- *  keeps the dev-friendly open posture. Route layers pass this in. */
+/** When does a missing signing secret REFUSE deliveries? For any explicit
+ *  non-dev environment — matching only the literal 'production' would let a
+ *  typo ('prod') or a staging env silently reopen an internet-facing receiver
+ *  (audit MCC-2 #4). Unset/empty NODE_ENV keeps the local-dev open posture. */
 export function webhookFailClosed(nodeEnv: string | undefined | null): boolean {
-  return nodeEnv === 'production'
+  return !!nodeEnv && nodeEnv !== 'development' && nodeEnv !== 'test'
 }

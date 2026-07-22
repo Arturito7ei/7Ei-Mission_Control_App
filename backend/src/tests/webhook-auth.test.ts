@@ -2,6 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 
+// MCC-2 — the routes read NODE_ENV at request time and fail CLOSED for any
+// explicit non-dev env. The "stays open without a secret" parity tests below
+// assert the DEV posture, so pin the env rather than inherit the runner's.
+process.env.NODE_ENV = 'test'
+
 import { deriveWebhookSecret, verifyWebhookSecret, checkWebhook, webhookFailClosed } from '../services/webhook-auth'
 import { commsWebhookRoutes } from '../routes/comms'
 import { jiraWebhookRoutes } from '../routes/jira-webhook'
@@ -62,12 +67,15 @@ test('[MCC-2] checkWebhook fails CLOSED in production when no secret is configur
   assert.deepEqual(checkWebhook(secret, 'telegram', 'org-1', good, true), { authorized: true, enforced: true })
 })
 
-test('[MCC-2] webhookFailClosed is true only for production', () => {
+test('[MCC-2] webhookFailClosed: closed for any explicit non-dev env, open for local dev', () => {
   assert.equal(webhookFailClosed('production'), true)
+  assert.equal(webhookFailClosed('prod'), true, 'a typo must not reopen the receiver')
+  assert.equal(webhookFailClosed('staging'), true)
   assert.equal(webhookFailClosed('development'), false)
   assert.equal(webhookFailClosed('test'), false)
   assert.equal(webhookFailClosed(undefined), false)
   assert.equal(webhookFailClosed(null), false)
+  assert.equal(webhookFailClosed(''), false)
 })
 
 test('[MCA-85] checkWebhook: configured secret enforces the correct token', () => {
