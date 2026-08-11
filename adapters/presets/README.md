@@ -12,6 +12,7 @@ and the provider key.
 | `codex.env` | OpenAI (Codex/GPT) | `llm` | `MC_LLM_API_KEY` = OpenAI key |
 | `gemini.env` | Google Gemini | `llm` | Google's OpenAI-compatible endpoint |
 | `nvidia-minimax.env` | MiniMax-M3 @ NVIDIA NIM | `llm` | needs `MC_LLM_MAX_TOKENS` (NIM quirk) |
+| `ollama.env` | Local Ollama | `llm` | `http://localhost:11434/v1`, **no key** — `ollama pull <model>` first |
 | `shell.env` | Deterministic shell | `shell` | runs `task.input` as a command (gated) |
 | `http.env` | Bring-your-own HTTP bot | `http` | POSTs the task to your webhook |
 

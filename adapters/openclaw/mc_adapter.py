@@ -18,9 +18,9 @@ Stdlib only (urllib, json, subprocess) — no pip install.
   MC_POLL_SECONDS   loop interval (default: 20)
   MC_MAX_STEPS      max brain↔tool steps (default: 4)
   # LLM brain (OpenAI-compatible chat completions):
-  MC_LLM_BASE_URL   e.g. https://api.minimax.io/v1
-  MC_LLM_API_KEY    provider key
-  MC_LLM_MODEL      e.g. MiniMax-Text-01
+  MC_LLM_BASE_URL   e.g. https://api.minimax.io/v1  (local Ollama: http://localhost:11434/v1)
+  MC_LLM_API_KEY    provider key (leave empty for a local host like Ollama / LM Studio)
+  MC_LLM_MODEL      e.g. MiniMax-Text-01            (local Ollama: e.g. llama3.1)
   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID   optional completion pings
 """
 import json, os, re, subprocess, sys, time, urllib.request, urllib.error
@@ -135,12 +135,18 @@ def llm_chat(messages):
         max_tokens = int(os.environ.get("MC_LLM_MAX_TOKENS", str(LLM_MAX_TOKENS)))
     except ValueError:
         max_tokens = LLM_MAX_TOKENS
-    if not (base and key):
-        raise RuntimeError("MC_LLM_BASE_URL / MC_LLM_API_KEY not configured")
+    if not base:
+        raise RuntimeError("MC_LLM_BASE_URL not configured")
+    # Local OpenAI-compatible hosts (Ollama at http://localhost:11434/v1, LM Studio, …)
+    # need no API key; hosted providers do. Only send the Authorization header when a
+    # key is present so a keyless local brain works without a bogus "Bearer ".
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = "Bearer " + key
     req = urllib.request.Request(
         base + "/chat/completions",
         data=json.dumps({"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}).encode(),
-        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+        headers=headers,
         method="POST")
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.loads(r.read().decode())
