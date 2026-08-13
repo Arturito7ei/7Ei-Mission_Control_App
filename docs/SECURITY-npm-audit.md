@@ -44,7 +44,8 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 | Package | Sev | Direct? | Advisory | Disposition |
 |---|---|---|---|---|
 | `next` | **HIGH** | **direct** | [GHSA-m99w-x7hq-7vfj](https://github.com/advisories/GHSA-m99w-x7hq-7vfj) and related Server Actions / cache-confusion advisories (reclassified since HARD-1) | ✅ **FIXED** — 15.5.19 → 15.5.23 |
-| `postcss` | **HIGH** | transitive | [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) and related source-map advisories (reclassified moderate→high since HARD-1) | ✅ **FIXED** — resolved via patched `next@15.5.23` transitive tree |
+| `nanoid` | **HIGH** | transitive | [GHSA-28wg-ghj8-5hjv](https://github.com/advisories/GHSA-28wg-ghj8-5hjv), [GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8) (new since initial #347 pass) | ✅ **FIXED** — `npm audit fix` → 3.3.18 |
+| `postcss` | **HIGH** | transitive | [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) and related source-map advisories (reclassified moderate→high since HARD-1) | ✅ **FIXED** — `overrides.postcss: ^8.5.26` (next@15.5.23 still pins 8.4.31) |
 | `@clerk/nextjs` | **CRITICAL** | **direct** | [GHSA-vqx2-fgx2-5wq9](https://github.com/advisories/GHSA-vqx2-fgx2-5wq9) · [GHSA-w24r-5266-9c3c](https://github.com/advisories/GHSA-w24r-5266-9c3c) | ✅ **FIXED** (HARD-1) — 6.39.1 → 6.39.6 |
 
 > **The Clerk finding is the headline of this PR.** Both criticals are *authorization bypasses* in the library that enforces route protection and organisation scoping on the live dashboard. This repo leans on exactly those mechanisms — Clerk middleware for route protection, and org-scoped role gates (`requireOrgRole`, the membership gates closed in #264/#265, the mass-assignment class closed in #333). An auth-bypass advisory in that layer is the highest-severity item found in this workstream. It was fixed by a patch-level bump inside the existing semver range, and CI would have surfaced it months earlier had `web/` been in the matrix.
@@ -58,9 +59,10 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 | `image-size` via `metro` / `@expo/metro` | **HIGH** | [GHSA-w3rx-r6r6-pgpr](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr), [GHSA-5p2g-fcmc-qvqq](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq) | `expo@57` only — **forbidden** (SDK 54 ceiling) | ⚠️ **BLOCKED** — see exposure note E3 |
 | `postcss` via `metro` | **HIGH** | [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) (reclassified) | `expo@57` only | ⚠️ BLOCKED (E3) |
 | `@solana-mobile/*` via `@clerk/clerk-js` | **HIGH** | wallet-adapter transitive chain | Clerk major downgrade or `expo@57` | ⚠️ BLOCKED — MC mobile does not use Solana wallets; chain is Clerk bundle bloat (E4) |
-| `js-yaml`, `tar`, `undici` via `@expo/cli` | **HIGH** / critical | various | `expo@57` or overrides that break Expo 54 | ⚠️ BLOCKED pending Expo 54 patch or `--omit=dev` policy decision |
+| `js-yaml`, `tar`, `undici` via `@expo/cli` | **HIGH** / critical | various | `expo@57` or overrides that break Expo 54 | ⚠️ BLOCKED pending Expo 54 patch or judgment-tier gate change |
+| `brace-expansion`, `nanoid` | **HIGH** | transitive via RN/Metro | reclassified since HARD-1 | ⚠️ BLOCKED (E3) — same SDK 54 ceiling |
 
-> **`npm audit --omit=dev --audit-level=high` exits 0** on the current lockfile — all remaining highs sit in Metro/CLI/build tooling, not in the Hermes bundle shipped to devices. That is **not** the CI policy today; narrowing to `--omit=dev` for mobile only requires an explicit update to this doc + `security.yml` (option (c) in the HARD-1 mobile risk note). Do not apply silently.
+> **`npm audit --omit=dev --audit-level=high` exits 1** on the current lockfile (19 high) — verified 2026-08-13 after advisory DB reclassification. Prod deps **`expo`**, **`react-native`**, and **`@clerk/clerk-expo`** transitively pull Metro/`@expo/cli` chains; `--omit=dev` does **not** exclude them. Option C (`--omit=dev` CI scope) is **insufficient** until Thierry picks B (temp drop checks), Wait (Expo patch/SDK 57), or a broader judgment-tier gate change. Policy PR #352 blocked on this finding.
 
 No changes were required and **the mobile lockfile was not touched** in the backend/web remediation PR. Pins verified intact: `expo ~54.0.36`, `react 19.1.0`, `react-dom 19.1.0`.
 
@@ -91,17 +93,17 @@ So the package is present and executing; the *vulnerable function* is not called
 
 **Re-evaluate if:** anything in the backend starts an esbuild dev server or `tsx` gains a watch/serve mode that is used in the image; a `drizzle-kit` or `tsx` release resolves the chain forward; or the Dockerfile switches to `npm ci --omit=dev` with a compiled build step (which would remove the prod leg entirely and is the cleanest long-term fix). Worth re-checking each dependency sweep.
 
-### E2 — `postcss` via `next` (web) — **FIXED 2026-08-13**
+### E2 — `postcss` / `nanoid` via `next` (web) — **FIXED 2026-08-13**
 
-Was accepted as moderate at HARD-1; advisory database later reclassified the chain to **high**. Resolved by bumping `next` 15.5.19 → **15.5.23** (patched transitive `postcss`). Historical exposure analysis (build-time only, no tenant CSS input) remains valid for the period it was accepted.
+Was accepted as moderate at HARD-1; advisory database later reclassified the chain to **high**. `next@15.5.23` alone still pinned `postcss@8.4.31` and `nanoid@3.3.11` after new advisories ([GHSA-28wg-ghj8-5hjv](https://github.com/advisories/GHSA-28wg-ghj8-5hjv)). Resolved by `npm audit fix` (nanoid → 3.3.18) + **`overrides.postcss: ^8.5.26`**. Build verified green. Historical exposure analysis (build-time only, no tenant CSS input) remains valid for the period it was accepted.
 
 ### E3 — `image-size` / Metro build toolchain (`apps/mobile`, SDK 54 blocked)
 
 **Why not fixed:** npm's only offered remedy is **`expo@57`**, which violates the SDK 54 / Expo Go ceiling (root `CLAUDE.md`). The `image-size` advisory scope is `*` (all published versions flagged).
 
-**Actual exposure: none in the shipped app.** `image-size` is used by Metro during bundling only. `npm audit --omit=dev --audit-level=high` in `apps/mobile` exits 0.
+**Actual exposure: none in the shipped Hermes bundle** — `image-size` runs in Metro during bundling. **However, `--omit=dev` does not clear the gate:** `expo` and `react-native` are production dependencies and npm counts their Metro/`@expo/cli` transitive tree in prod-only audits (19 high as of 2026-08-13; matches CI run on #352).
 
-**Re-evaluate if:** Expo SDK 54 receives a Metro bump; SDK 57 is approved; or policy adopts mobile `--omit=dev` audit (document here + `security.yml` first).
+**Re-evaluate if:** Expo SDK 54 receives a Metro bump; SDK 57 is approved; or Thierry authorizes judgment-tier gate change (option B or broader scope).
 
 ### E4 — `@solana-mobile/*` via `@clerk/clerk-js` (mobile, transitive)
 
@@ -116,8 +118,8 @@ Was accepted as moderate at HARD-1; advisory database later reclassified the cha
 ```bash
 cd backend    && npm audit --audit-level=high; echo "backend exit: $?"   # expect 0
 cd web        && npm audit --audit-level=high; echo "web exit: $?"       # expect 0
-cd apps/mobile && npm audit --audit-level=high; echo "mobile exit: $?"   # expect 1 until E3 resolved or policy narrows to --omit=dev
-cd apps/mobile && npm audit --omit=dev --audit-level=high; echo "mobile prod-only exit: $?"   # expect 0 (build-tooling highs only)
+cd apps/mobile && npm audit --audit-level=high; echo "mobile exit: $?"   # expect 1 until E3 resolved or gate policy changes
+cd apps/mobile && npm audit --omit=dev --audit-level=high; echo "mobile prod-only exit: $?"   # expect 1 (prod deps pull Metro chain; option C insufficient)
 ```
 
 Full (informational) picture including the accepted moderates: drop `--audit-level=high`.
