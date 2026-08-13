@@ -24,10 +24,16 @@ jobs:
         include:
           - workspace: backend
             install: npm ci --legacy-peer-deps
+            audit_flags: --audit-level=high
           - workspace: web
             install: npm ci --legacy-peer-deps
+            audit_flags: --audit-level=high
+          # Mobile prod deps only: Metro/CLI highs are build-time tooling (E3 in
+          # docs/SECURITY-npm-audit.md). Full-tree audit stays red on SDK 54 until
+          # Expo ships a patch or SDK 57 is approved. Thierry GO 2026-08-13.
           - workspace: apps/mobile
             install: npm ci
+            audit_flags: --audit-level=high --omit=dev
     defaults:
       run:
         working-directory: ${{ matrix.workspace }}
@@ -46,7 +52,7 @@ jobs:
       # There is NO advisory allow-list and no `|| true`: a NEW high or critical
       # in any of these three workspaces turns this job red, which is the point.
       - name: Audit (fails on high + critical)
-        run: npm audit --audit-level=high
+        run: npm audit ${{ matrix.audit_flags }}
 
   license-check:
     name: License check
