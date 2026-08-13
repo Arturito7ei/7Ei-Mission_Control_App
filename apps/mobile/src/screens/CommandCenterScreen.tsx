@@ -193,6 +193,31 @@ export default function CommandCenterScreen() {
   const voiceRepliesRef = useRef(voiceReplies)
   useEffect(() => { voiceRepliesRef.current = voiceReplies }, [voiceReplies])
 
+  // GC-2 — hydrate persisted thread on load / recipient switch.
+  useEffect(() => {
+    if (!orgId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        if (!token || cancelled) return
+        const wire = toWireAgentId(recipient)
+        const r = await Api.loadCommandCenterThread(apiUrl, orgId, token, wire)
+        if (cancelled) return
+        setMessages(r.turns.map(t => ({
+          role: t.role === 'user' ? 'user' : 'assistant',
+          content: t.content,
+          via: t.meta?.via ? { label: t.meta.via, tone: 'info' as const, glyph: '◆' } : undefined,
+          agent: t.meta?.agent ?? null,
+          fromAgent: t.meta?.fromAgent ?? null,
+          pendingApprovalNote: t.meta?.pendingApprovalNote ?? null,
+          assignedTo: t.meta?.assignedTo ?? null,
+        })))
+      } catch { /* first visit */ }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, apiUrl, getToken, recipient])
+
   const recorderAvailable = !!getAv()
   const captureEngine = resolveCaptureEngine({ recorderAvailable, sttConfigured })
   const voiceState = resolveVoiceState({ speaking, thinking: busy, listening })

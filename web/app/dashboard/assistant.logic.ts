@@ -359,6 +359,39 @@ export function toConverseRequest(input: {
   }
 }
 
+/** GC-2 — hydrate Command Center from persisted server turns. */
+export function persistedTurnsToMessages(turns: Array<{
+  id: string
+  role: 'user' | 'arturita' | 'assistant'
+  content: string
+  meta?: {
+    mode?: ConverseMode
+    via?: string | null
+    taskId?: string | null
+    fromAgent?: string | null
+    agent?: AgentIdentity | null
+    assignedTo?: { id: string; name: string } | null
+    pendingApprovalNote?: string | null
+    degraded?: boolean
+    routing?: Routing | null
+  }
+}>): Message[] {
+  return turns.map(t => ({
+    id: t.id,
+    role: t.role === 'user' ? 'user' : 'arturita',
+    text: t.content,
+    mode: t.meta?.mode,
+    routing: t.meta?.routing ?? null,
+    taskId: t.meta?.taskId ?? null,
+    degraded: t.meta?.degraded,
+    via: t.meta?.via ?? null,
+    agent: t.meta?.agent ?? null,
+    fromAgent: t.meta?.fromAgent ?? null,
+    pendingApprovalNote: t.meta?.pendingApprovalNote ?? null,
+    assignedTo: t.meta?.assignedTo ?? null,
+  }))
+}
+
 /** Normalize a /converse response into an Arturita message (never throws). */
 export function toArturitaMessage(input: { id: string; resp: ConverseResponse }): Message {
   const { id, resp } = input

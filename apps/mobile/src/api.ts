@@ -27,6 +27,7 @@ import type { OrgSettingsLite } from './settings'
 // (agentEdit.ts), imported here so there is ONE definition of the skills payload,
 // not a second the client could drift from.
 import type { SkillsPayload } from './agentEdit'
+import type { PickedAgent } from './agentPicker'
 // CONN-3 — the per-agent connector wire shape is defined in the pure module that
 // reads it (agentConnectors.ts, itself a parity-pinned mirror of the web's), so
 // there is ONE definition of the MASKED connector projection. NOTE the security
@@ -607,6 +608,16 @@ export const Api = {
         ...(agentId ? { agentId } : {}),
       }),
     }),
+
+  /** GC-2 — load persisted Command Center thread. */
+  loadCommandCenterThread: (base: string, orgId: string, token: string, agentId?: string | null) => {
+    const q = agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''
+    return api<{ viewer?: string | null; taskThreadId: string | null; turns: Array<{
+      id: string; role: 'user' | 'arturita' | 'assistant'; content: string
+      meta?: { via?: string | null; fromAgent?: string | null; agent?: PickedAgent | null
+        assignedTo?: { id: string; name: string } | null; pendingApprovalNote?: string | null }
+    }> }>(base, `/api/orgs/${orgId}/arturita/thread${q}`, { token })
+  },
 
   // ─── Push token registration (MOB-3) ──────────────────────────────────────
   // The backend register endpoint is USER-scoped, not org-scoped, and takes the
