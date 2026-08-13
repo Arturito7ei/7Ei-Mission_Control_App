@@ -1,6 +1,7 @@
 // GC-2 — Command Center thread persistence
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'crypto'
 
 process.env.DATABASE_URL = ':memory:'
 process.env.SECRETS_ENC_KEY = 'gc2-thread-key'
@@ -30,8 +31,8 @@ test('[GC-2] turnsToConverseHistory marks agent replies with fromAgent', () => {
   assert.equal(h[1].fromAgent, 'Bruno')
 })
 
-test('[GC-2] appendTurns + loadThread round-trip', async () => {
-  const ORG = 'gc2-org-roundtrip'
+test('[GC-2] appendTurns + loadThread round-trip', { concurrency: false }, async () => {
+  const ORG = `gc2-org-${randomUUID()}`
   const { db, schema } = await import('../db/client')
   await (await import('../db/setup')).setupDatabase()
   await db.insert(schema.organisations).values({ id: ORG, name: 'GC2 Org', ownerId: 'u1', createdAt: new Date() })

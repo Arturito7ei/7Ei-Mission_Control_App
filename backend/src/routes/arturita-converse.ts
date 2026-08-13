@@ -227,7 +227,11 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     const ccHistory = turnsToConverseHistory(ccLoaded.turns)
     const converseHistoryIn = ccHistory.length ? ccHistory : (b.history ?? [])
     const authorUser = (req as any).auth?.userId ?? (req as any).userId ?? null
-    const userBubble = buildUserBubbleText(message, attachment, image)
+    const userBubble = buildUserBubbleText(
+      message,
+      attachment?.name ? { name: attachment.name } : null,
+      image?.name ? { name: image.name } : null,
+    )
     const finish = async (payload: Record<string, any>) => {
       const text = String(payload.reply?.text ?? '').trim()
       if (!text || payload.deferred) return payload
