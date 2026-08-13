@@ -66,7 +66,7 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
       const cmd = parseCommand(text)
       if (cmd) {
         switch (cmd.command) {
-          case 'start': await handleStart(ctx); break
+          case 'start': await handleStart(ctx, cmd.args); break
           case 'status': await handleStatus(ctx); break
           case 'agents': await handleAgents(ctx); break
           case 'tasks': await handleTasks(ctx); break
