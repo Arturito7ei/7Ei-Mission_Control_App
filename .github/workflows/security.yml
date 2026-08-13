@@ -49,7 +49,7 @@ jobs:
           set +e
           npm audit --audit-level=high
           EXIT=$?
-          echo "::warning title=Mobile audit informational (B until 2026-09-13)::19 high advisories tracked in issue #353. npm audit exit $EXIT — gate not blocking until expire or SDK fix."
+          echo "::warning title=Mobile audit informational (B until 2026-09-13)::16 high advisories tracked in issue #353. npm audit exit $EXIT — gate not blocking until expire or SDK fix."
           exit 0
 
   license-check:

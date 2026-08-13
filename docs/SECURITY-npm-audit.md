@@ -9,9 +9,9 @@ CI runs `npm audit --audit-level=high` in **every workspace that ships** — `ba
 
 ### Time-boxed B policy — `apps/mobile` only (2026-08-13 → **2026-09-13**)
 
-Thierry GO 2026-08-13. Option C (`--omit=dev`) is void — prod deps pull Metro and 19 highs remain. To unblock CRIT-01 (#345) without bumping Expo SDK:
+Thierry GO 2026-08-13. Option C (`--omit=dev`) is void — prod deps pull Metro and **16 highs remain** (was 19; #354 lockfile fix cleared 3). To unblock CRIT-01 (#345) without bumping Expo SDK:
 
-- **`npm audit (apps/mobile)` runs on every PR but does not fail the job** until **2026-09-13** (or until the 19 highs are remediated within SDK 54).
+- **`npm audit (apps/mobile)` runs on every PR but does not fail the job** until **2026-09-13** (or until the 16 highs are remediated within SDK 54).
 - Residual ownership: issue **#353** on epic **#348**.
 - **Expire action:** on or before 2026-09-13, either (a) restore blocking mobile audit with a green lockfile, (b) Thierry approves SDK 57, or (c) a judgment-tier rewrite with documented carve-outs. Silent extension is forbidden.
 - Backend/web blocking behaviour is unchanged.
@@ -59,7 +59,7 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 
 > **The Clerk finding is the headline of this PR.** Both criticals are *authorization bypasses* in the library that enforces route protection and organisation scoping on the live dashboard. This repo leans on exactly those mechanisms — Clerk middleware for route protection, and org-scoped role gates (`requireOrgRole`, the membership gates closed in #264/#265, the mass-assignment class closed in #333). An auth-bypass advisory in that layer is the highest-severity item found in this workstream. It was fixed by a patch-level bump inside the existing semver range, and CI would have surfaced it months earlier had `web/` been in the matrix.
 
-### `apps/mobile` — 19 high / 0 critical ⚠️ informational until 2026-09-13 (time-boxed B)
+### `apps/mobile` — 16 high / 0 critical ⚠️ informational until 2026-09-13 (time-boxed B)
 
 **Regression since HARD-1:** npm advisory database reclassified several packages from moderate to **high** (`postcss`, `image-size` chain via Metro). The lockfile pins were unchanged; the gate turned red without a code change.
 
@@ -69,9 +69,9 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 | `postcss` via `metro` | **HIGH** | [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93) (reclassified) | `expo@57` only | ⚠️ BLOCKED (E3) |
 | `@solana-mobile/*` via `@clerk/clerk-js` | **HIGH** | wallet-adapter transitive chain | Clerk major downgrade or `expo@57` | ⚠️ BLOCKED — MC mobile does not use Solana wallets; chain is Clerk bundle bloat (E4) |
 | `js-yaml`, `tar`, `undici` via `@expo/cli` | **HIGH** / critical | various | `expo@57` or overrides that break Expo 54 | ⚠️ BLOCKED pending Expo 54 patch or judgment-tier gate change |
-| `brace-expansion`, `nanoid` | **HIGH** | transitive via RN/Metro | reclassified since HARD-1 | ⚠️ BLOCKED (E3) — same SDK 54 ceiling |
+| `brace-expansion`, `nanoid`, `js-yaml` (transitive) | **HIGH** | various | semver-safe lockfile bump | ✅ **FIXED** (#354) — `npm audit fix` (no `--force`); 19→16 high |
 
-> **`npm audit --omit=dev --audit-level=high` exits 1** on the current lockfile (19 high) — verified 2026-08-13. Prod deps **`expo`**, **`react-native`**, and **`@clerk/clerk-expo`** transitively pull Metro/`@expo/cli`; `--omit=dev` does **not** exclude them. Option C is **void**. **Time-boxed B active:** CI job reports but does not fail until **2026-09-13** (Thierry GO 2026-08-13; tracked #353).
+> **`npm audit --omit=dev --audit-level=high` exits 1** on the current lockfile (**16 high** as of 2026-08-13 post-#354) — verified 2026-08-13. Prod deps **`expo`**, **`react-native`**, and **`@clerk/clerk-expo`** transitively pull Metro/`@expo/cli`; `--omit=dev` does **not** exclude them. Option C is **void**. **Time-boxed B active:** CI job reports but does not fail until **2026-09-13** (Thierry GO 2026-08-13; tracked #353).
 
 No changes were required and **the mobile lockfile was not touched** in the backend/web remediation PR. Pins verified intact: `expo ~54.0.36`, `react 19.1.0`, `react-dom 19.1.0`.
 
@@ -110,7 +110,7 @@ Was accepted as moderate at HARD-1; advisory database later reclassified the cha
 
 **Why not fixed:** npm's only offered remedy is **`expo@57`**, which violates the SDK 54 / Expo Go ceiling (root `CLAUDE.md`). The `image-size` advisory scope is `*` (all published versions flagged).
 
-**Actual exposure: none in the shipped Hermes bundle** — `image-size` runs in Metro during bundling. **However, `--omit=dev` does not clear the gate:** `expo` and `react-native` are production dependencies and npm counts their Metro/`@expo/cli` transitive tree in prod-only audits (19 high as of 2026-08-13; matches CI run on #352).
+**Actual exposure: none in the shipped Hermes bundle** — `image-size` runs in Metro during bundling. **However, `--omit=dev` does not clear the gate:** `expo` and `react-native` are production dependencies and npm counts their Metro/`@expo/cli` transitive tree in prod-only audits (**16 high** as of 2026-08-13 post-#354; matches CI run on #352).
 
 **Re-evaluate if:** Expo SDK 54 receives a Metro bump; SDK 57 is approved; or **2026-09-13** expires (restore blocking gate or judgment-tier rewrite).
 
@@ -127,7 +127,7 @@ Was accepted as moderate at HARD-1; advisory database later reclassified the cha
 ```bash
 cd backend    && npm audit --audit-level=high; echo "backend exit: $?"   # expect 0
 cd web        && npm audit --audit-level=high; echo "web exit: $?"       # expect 0
-cd apps/mobile && npm audit --audit-level=high; echo "mobile exit: $?"   # expect 1 (19 high; CI informational until 2026-09-13)
+cd apps/mobile && npm audit --audit-level=high; echo "mobile exit: $?"   # expect 1 (16 high; CI informational until 2026-09-13)
 cd apps/mobile && npm audit --omit=dev --audit-level=high; echo "mobile prod-only exit: $?"   # expect 1 (option C void)
 ```
 
