@@ -2,9 +2,15 @@
 // Handlers for /start, /status, /agents, /tasks, /ask, /help
 
 import { db, schema } from '../db/client'
-import { eq, and, desc } from 'drizzle-orm'
-import { randomUUID } from 'crypto'
+import { eq, desc } from 'drizzle-orm'
 import { TelegramBot, escapeMarkdownV2, inlineKeyboardRows } from '../services/telegram-bot'
+import { linkTelegramChatFromBindCode } from '../services/telegram-bind'
+import {
+  normalizeBindCode,
+  unlinkedStartMessage,
+  bindCodeAcceptedMessage,
+  bindCodeRejectedMessage,
+} from '../services/telegram-start'
 
 export interface CommandContext {
   bot: TelegramBot
@@ -28,9 +34,8 @@ export async function resolveOrgFromChat(chatId: number): Promise<{ orgId: strin
   return { orgId: org.id, orgName: org.name, userId: member.userId }
 }
 
-// /start — Register and link to org
-export async function handleStart(ctx: CommandContext): Promise<void> {
-  // Check if already linked
+// /start — Link via Cockpit one-time bind code only (CRIT-01: never auto-link first org)
+export async function handleStart(ctx: CommandContext, bindCodeArgs = ''): Promise<void> {
   const existing = await resolveOrgFromChat(ctx.chatId)
   if (existing) {
     await ctx.bot.sendMessage(ctx.chatId,
@@ -39,32 +44,19 @@ export async function handleStart(ctx: CommandContext): Promise<void> {
     return
   }
 
-  // Find orgs for this user or create a link
-  const orgs = await db.select().from(schema.organisations).limit(1)
-  if (orgs.length > 0) {
-    const org = orgs[0]
-    // Link this chat to the org
-    await db.insert(schema.orgMembers).values({
-      id: randomUUID(),
-      orgId: org.id,
-      userId: `telegram_${ctx.chatId}`,
-      role: 'member',
-      telegramChatId: String(ctx.chatId),
-      createdAt: new Date(),
-    })
-    await ctx.bot.sendMessage(ctx.chatId,
-      `🎯 *Welcome to 7Ei Mission Control\\!*\n\nYou're now connected to *${escapeMarkdownV2(org.name)}*\\.\n\n` +
-      `I'm Arturito, your Chief of Staff\\. You can:\n` +
-      `• Just type a message to chat with me\n` +
-      `• Use /agents to see your team\n` +
-      `• Use /tasks to check open work\n` +
-      `• Use /help for all commands`,
-      { parseMode: 'MarkdownV2' })
-  } else {
-    await ctx.bot.sendMessage(ctx.chatId,
-      '🤖 Welcome to 7Ei Mission Control\\!\n\nNo organisations found yet\\. Create one in the app first, then come back here\\.',
-      { parseMode: 'MarkdownV2' })
+  const code = normalizeBindCode(bindCodeArgs)
+  if (!code) {
+    await ctx.bot.sendMessage(ctx.chatId, unlinkedStartMessage(), { parseMode: 'MarkdownV2' })
+    return
   }
+
+  const linked = await linkTelegramChatFromBindCode(ctx.chatId, code)
+  if (!linked.ok || !linked.orgName) {
+    await ctx.bot.sendMessage(ctx.chatId, bindCodeRejectedMessage(linked.error ?? 'bind failed'), { parseMode: 'MarkdownV2' })
+    return
+  }
+
+  await ctx.bot.sendMessage(ctx.chatId, bindCodeAcceptedMessage(linked.orgName), { parseMode: 'MarkdownV2' })
 }
 
 // /status — Org health summary
@@ -140,7 +132,7 @@ export async function handleHelp(ctx: CommandContext): Promise<void> {
   await ctx.bot.sendMessage(ctx.chatId,
     `🎯 *7Ei Mission Control Bot*\n\n` +
     `Available commands:\n` +
-    `/start — Connect to your organisation\n` +
+    `/start \\<bind\\-code\\> — Link Telegram to your organisation\n` +
     `/status — Org health summary\n` +
     `/agents — List agents \\(tap to chat\\)\n` +
     `/tasks — View recent tasks\n` +
