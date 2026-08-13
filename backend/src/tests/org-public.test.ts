@@ -32,6 +32,8 @@ let app: FastifyInstance
 let PUBLIC_ORG_FIELDS: readonly string[]
 let SECRET_ORG_FIELDS: readonly string[]
 let toPublicOrg: (org: any) => any
+let ORG_PATCH_WRITABLE_FIELDS: readonly string[]
+let orgPatchWritableFieldsAreClassified: () => string[]
 
 const OWNER = 'user-owner'
 const ORG = 'org-1'
@@ -45,7 +47,7 @@ const LLM_KEY_ENC = 'SENTINEL-encrypted-llm-api-key-9012'
 before(async () => {
   ;({ db, schema } = await import('../db/client'))
   await (await import('../db/setup')).setupDatabase()
-  ;({ PUBLIC_ORG_FIELDS, SECRET_ORG_FIELDS, toPublicOrg } = await import('../services/org-public'))
+  ;({ PUBLIC_ORG_FIELDS, SECRET_ORG_FIELDS, toPublicOrg, ORG_PATCH_WRITABLE_FIELDS, orgPatchWritableFieldsAreClassified } = await import('../services/org-public'))
 
   await db.insert(schema.organisations).values({
     id: ORG,
@@ -182,6 +184,16 @@ test('[SEC-ORG] every organisations column is classified public or secret', asyn
   for (const secret of SECRET_ORG_FIELDS) {
     assert.ok(!PUBLIC_ORG_FIELDS.includes(secret), `"${secret}" is in BOTH lists — it would ship to clients.`)
   }
+})
+
+test('[SEC-ORG] PATCH allow-list fields are public-only and match OrgPatchSchema', async () => {
+  assert.deepEqual(orgPatchWritableFieldsAreClassified(), [])
+  const { ORG_PATCH_SCHEMA_FIELD_NAMES } = await import('../routes/orgs.ts')
+  assert.deepEqual(
+    [...ORG_PATCH_SCHEMA_FIELD_NAMES].sort(),
+    [...ORG_PATCH_WRITABLE_FIELDS].sort(),
+    'OrgPatchSchema drifted from ORG_PATCH_WRITABLE_FIELDS in org-public.ts',
+  )
 })
 
 test('[SEC-ORG] toPublicOrg drops secrets and preserves nulls', async () => {

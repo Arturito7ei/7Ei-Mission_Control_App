@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { requireOrgRole } from '../middleware/rbac'
 import { upsertDocument } from '../services/vector-search'
-import { toPublicOrg } from '../services/org-public'
+import { toPublicOrg, ORG_PATCH_WRITABLE_FIELDS } from '../services/org-public'
 
 // ─── ORGS ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +22,15 @@ import { toPublicOrg } from '../services/org-public'
 //   • `createdAt`          — immutable provenance.
 // Not `.strict()`, matching the other five: unknown keys are stripped, so a client that
 // round-trips a whole org object still succeeds — it just cannot write a credential.
+// Keys must stay in sync with ORG_PATCH_WRITABLE_FIELDS (org-public.test.ts tripwire).
+export const ORG_PATCH_SCHEMA_FIELD_NAMES = [
+  'name',
+  'description',
+  'logoUrl',
+  'mission',
+  'culture',
+] as const satisfies ReadonlyArray<(typeof ORG_PATCH_WRITABLE_FIELDS)[number]>
+
 const OrgPatchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().nullable().optional(),
