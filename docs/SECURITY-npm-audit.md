@@ -60,7 +60,7 @@ This is the one exclusion in the policy, so it deserves to be defended explicitl
 | `@solana-mobile/*` via `@clerk/clerk-js` | **HIGH** | wallet-adapter transitive chain | Clerk major downgrade or `expo@57` | ⚠️ BLOCKED — MC mobile does not use Solana wallets; chain is Clerk bundle bloat (E4) |
 | `js-yaml`, `tar`, `undici` via `@expo/cli` | **HIGH** / critical | various | `expo@57` or overrides that break Expo 54 | ⚠️ BLOCKED pending Expo 54 patch or `--omit=dev` policy decision |
 
-> **`npm audit --omit=dev --audit-level=high` exits 0** on the current lockfile — all remaining highs sit in Metro/CLI/build tooling, not in the Hermes bundle shipped to devices. **CI policy (2026-08-13, Thierry GO):** the `apps/mobile` matrix leg in `.github/workflows/security.yml` audits **production dependencies only** (`--omit=dev`). Full-tree audit remains informational — run locally without `--omit=dev` during dependency sweeps.
+> **`npm audit --omit=dev --audit-level=high` exits 0** on the current lockfile — all remaining highs sit in Metro/CLI/build tooling, not in the Hermes bundle shipped to devices. That is **not** the CI policy today; narrowing to `--omit=dev` for mobile only requires an explicit update to this doc + `security.yml` (option (c) in the HARD-1 mobile risk note). Do not apply silently.
 
 No changes were required and **the mobile lockfile was not touched** in the backend/web remediation PR. Pins verified intact: `expo ~54.0.36`, `react 19.1.0`, `react-dom 19.1.0`.
 
