@@ -38,15 +38,19 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: ${{ matrix.install }}
-      # Threshold `high` (fails on high + critical) is the honest strictest
-      # setting today: every high/critical is FIXED as of HARD-1, so this gate is
-      # green on merit, not by suppression. The residual moderates are all
-      # dev-only toolchain paths that never run in production — each one is
-      # enumerated with its exposure analysis in docs/SECURITY-npm-audit.md.
-      # There is NO advisory allow-list and no `|| true`: a NEW high or critical
-      # in any of these three workspaces turns this job red, which is the point.
+      # Threshold `high` (fails on high + critical) for backend + web. Mobile is
+      # time-boxed informational only — see docs/SECURITY-npm-audit.md § B-policy.
       - name: Audit (fails on high + critical)
+        if: matrix.workspace != 'apps/mobile'
         run: npm audit --audit-level=high
+      - name: Audit (informational — time-boxed B until 2026-09-13)
+        if: matrix.workspace == 'apps/mobile'
+        run: |
+          set +e
+          npm audit --audit-level=high
+          EXIT=$?
+          echo "::warning title=Mobile audit informational (B until 2026-09-13)::19 high advisories tracked in issue #353. npm audit exit $EXIT — gate not blocking until expire or SDK fix."
+          exit 0
 
   license-check:
     name: License check
