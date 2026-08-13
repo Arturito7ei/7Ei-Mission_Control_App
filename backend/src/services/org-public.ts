@@ -56,6 +56,35 @@ export const SECRET_ORG_FIELDS = ['deployConfig', 'telegramBotToken'] as const
 export type PublicOrg = Pick<OrgRow, (typeof PUBLIC_ORG_FIELDS)[number]>
 
 /**
+ * Member-gated `PATCH /api/orgs/:orgId` may write ONLY these public fields.
+ * Credentials, budget, deployment posture, and identity columns have dedicated
+ * owner-gated routes — see GC-0b / #333 (`backend/src/routes/orgs.ts`).
+ */
+export const ORG_PATCH_WRITABLE_FIELDS = [
+  'name',
+  'description',
+  'logoUrl',
+  'mission',
+  'culture',
+] as const satisfies ReadonlyArray<(typeof PUBLIC_ORG_FIELDS)[number]>
+
+export type OrgPatchWritableField = (typeof ORG_PATCH_WRITABLE_FIELDS)[number]
+
+/** Tripwire: every PATCH-allowlisted field is public and never secret. */
+export function orgPatchWritableFieldsAreClassified(): string[] {
+  const errors: string[] = []
+  for (const field of ORG_PATCH_WRITABLE_FIELDS) {
+    if (!(PUBLIC_ORG_FIELDS as readonly string[]).includes(field)) {
+      errors.push(`"${field}" is not in PUBLIC_ORG_FIELDS`)
+    }
+    if ((SECRET_ORG_FIELDS as readonly string[]).includes(field)) {
+      errors.push(`"${field}" is in SECRET_ORG_FIELDS`)
+    }
+  }
+  return errors
+}
+
+/**
  * Project an org row down to its public fields.
  *
  * Allow-list, not deny-list: a column added to the schema is invisible to
