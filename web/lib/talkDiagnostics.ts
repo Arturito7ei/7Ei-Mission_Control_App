@@ -252,6 +252,10 @@ export interface SelfTestInput {
    *  = not probed. This is what catches a stored-but-invalid key. */
   cloudLlmUsable?: boolean | null
   cloudLlmDetail?: string | null
+  /** hosted answer path (S3-B): the full server chain /converse uses with deferAnswer:false —
+   *  includes Fly co-located Ollama before cloud hops. */
+  serverAnswerUsable?: boolean | null
+  serverAnswerDetail?: string | null
   /** SpeechSynthesis present in this browser. */
   ttsSupported: boolean
   /** an on-device voice is available. */
@@ -269,10 +273,11 @@ export interface SelfTestInput {
 export const WHISPER_START_HINT =
   'Start it with `npm run stt` in adapters/arturita-stt (set ARTURITA_STT_ORIGINS=https://app.7ei.ai to lock down CORS), then re-run the self-test.'
 
-/** The single actionable fix when NO language model can answer — names both
- *  operator options. Shared so the self-test + panel notice say the same thing. */
+/** The single actionable fix when NO language model can answer — names operator options.
+ *  Shared so the self-test + panel notice say the same thing. */
 export const NO_LLM_FIX_HINT =
-  'Either run local Ollama on THIS machine (Ollama started + `OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama), ' +
+  'On app.7ei.ai with empty Pipeline keys, the hosted backend should reach Fly Ollama — run ⚙ Pipeline → “Run self-test”. ' +
+  'On your machine: run local Ollama (`OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama) ' +
   'or add a working cloud key (a free Groq or Gemini key works) in the LLM chain below.'
 
 const ICON: Record<LegSeverity, string> = { ok: '✓', warn: '▲', fail: '✕' }
@@ -289,24 +294,26 @@ export function runSelfTest(input: SelfTestInput): LegResult[] {
   const out: LegResult[] = []
 
   // 0. THE headline question: can Arturita actually produce an answer at all?
-  // She can if EITHER a local Ollama model is reachable from this browser, OR the
-  // backend's cloud chain has a working (valid) key. Neither → she can't answer,
-  // and this is the leg that most often reads as a bare "network error".
+  // She can if a local Ollama model is reachable from this browser, OR the hosted
+  // backend answer chain works (S3-B Fly Ollama before cloud), OR a cloud key works.
   const localAnswers = Array.isArray(input.ollamaModels) && input.ollamaModels.length > 0
+  const hostedAnswers = input.serverAnswerUsable === true
   const cloudAnswers = input.cloudLlmUsable === true
   if (localAnswers) {
     out.push(leg('answers', 'ok', 'Arturita can answer', `A local Ollama model on this machine is ready (${input.ollamaModels![0]}) — free & private.`))
+  } else if (hostedAnswers) {
+    out.push(leg('answers', 'ok', 'Arturita can answer', input.serverAnswerDetail || 'The hosted backend can reach a language model (Fly Ollama or cloud).'))
   } else if (cloudAnswers) {
     out.push(leg('answers', 'ok', 'Arturita can answer', input.cloudLlmDetail || 'A cloud language model is reachable.'))
-  } else if (input.cloudLlmUsable === false) {
-    // Real probe said the cloud key is missing/invalid AND no local model → dead.
-    out.push(leg('answers', 'fail', 'Arturita can’t answer — no reachable language model',
-      input.cloudLlmDetail || 'No local Ollama model here, and no working cloud key.', NO_LLM_FIX_HINT))
+  } else if (input.serverAnswerUsable === false || input.cloudLlmUsable === false) {
+    const detail = input.serverAnswerUsable === false
+      ? (input.serverAnswerDetail || 'The hosted answer chain could not produce a token.')
+      : (input.cloudLlmDetail || 'No local Ollama model here, and no working cloud key.')
+    out.push(leg('answers', 'fail', 'Arturita can’t answer — no reachable language model', detail, NO_LLM_FIX_HINT))
   } else {
-    // Cloud not probed (unknown). Report on local only, don't over-claim.
     out.push(leg('answers', 'warn', 'Answer path unverified',
-      'No local Ollama model on this machine; cloud LLM not checked.',
-      'Nothing to answer with locally — ' + NO_LLM_FIX_HINT))
+      'No local Ollama model on this machine; hosted/cloud LLM not checked.',
+      'Run the self-test below — ' + NO_LLM_FIX_HINT))
   }
 
   // 1. Backend converse (routing + prompt/answer path — required every turn).
@@ -316,8 +323,11 @@ export function runSelfTest(input: SelfTestInput): LegResult[] {
         'Check your connection or the service status. Answers and delegation need the backend unless a local model is running.'))
 
   // 2. Local Ollama (free, on-device answers — optional).
+  const hostedFallback = input.serverAnswerUsable === true
+    ? 'Optional — the hosted backend still answers via Fly Ollama.'
+    : 'Optional — the hosted/cloud chain still answers when configured.'
   if (input.ollamaModels === null) {
-    out.push(leg('local-ollama', 'warn', 'Local Ollama not reachable', 'Optional — the cloud chain still answers.', OLLAMA_HINT))
+    out.push(leg('local-ollama', 'warn', 'Local Ollama not reachable', hostedFallback, OLLAMA_HINT))
   } else if (input.ollamaModels.length === 0) {
     out.push(leg('local-ollama', 'warn', 'Ollama up, no models pulled', 'Reachable, but no models are installed.',
       'Pull a model, e.g. `ollama pull llama3.2:3b`, then reload.'))

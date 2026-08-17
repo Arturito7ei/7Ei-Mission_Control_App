@@ -93,6 +93,18 @@ test('[S3-B] converse with deferAnswer:false reaches server Ollama before cloud 
   assert.equal(captured[0].model, 'llama3.2:3b')
 })
 
+test('[S3-B] llm-status reports answerUsable via hosted Ollama when cloud keys are absent', async () => {
+  const res = await app.inject({
+    method: 'GET', url: `/api/orgs/${ORG}/arturita/llm-status`,
+    headers: { authorization: `Bearer ${OWNER}` },
+  })
+  assert.equal(res.statusCode, 200, res.body)
+  const body = res.json()
+  assert.equal(body.answerUsable, true)
+  assert.equal(body.answerProvider, 'ollama')
+  assert.equal(body.cloudUsable, false)
+})
+
 test('[S3-B] degraded NO_LLM turn persists meta.degraded through GET /thread', async () => {
   process.env.MC_SERVER_OLLAMA = '0'
   try {
