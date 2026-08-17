@@ -38,6 +38,34 @@ test('[J1] destructive intents route to the agent flow regardless of phrasing', 
   assert.equal(sign.approvalType, 'wallet_tx')
 })
 
+test('[J1] conversational "run" stays a direct answer (not machine exec)', () => {
+  for (const t of [
+    'what llm you run on?',
+    'what llm do you run on and what skills and access do you have?',
+    'how do you run tests in CI?',
+    'run me through the onboarding flow',
+    'which models do you run in production?',
+  ]) {
+    const d = decideConverseMode({ transcript: t })
+    assert.equal(d.mode, 'answer', `expected answer for: ${t}`)
+    assert.equal(d.trigger, 'default_answer')
+    assert.equal(d.destructive, false)
+  }
+})
+
+test('[J1] imperative exec still delegates (safety wins)', () => {
+  for (const t of [
+    'run the deploy script',
+    'execute the migration now',
+    'can you run this command for me?',
+  ]) {
+    const d = decideConverseMode({ transcript: t })
+    assert.equal(d.mode, 'delegate', `expected delegate for: ${t}`)
+    assert.equal(d.trigger, 'destructive_intent')
+    assert.equal(d.approvalType, 'machine_exec')
+  }
+})
+
 test('[J1] a destructive request phrased as a question still delegates (safety wins)', () => {
   const d = decideConverseMode({ transcript: 'can you delete the downloads folder?' })
   assert.equal(d.mode, 'delegate')

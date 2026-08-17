@@ -42,6 +42,27 @@ interface KindSpec {
   /** confirmation verb the operator must restate (distinct, not a bare "yes"). */
   confirmVerb: string
   re: RegExp
+  /** Optional override — used for exec where bare `\brun\b` false-positives on
+   *  informational phrasing ("what llm do you run on?"). */
+  match?: (text: string) => boolean
+}
+
+/** Informational uses of "run" / exec verbs — not machine-exec commands. */
+const EXEC_INFO_PATTERNS: RegExp[] = [
+  /\brun\s+on\b/i,
+  /\brun\s+me\s+through\b/i,
+  // Question about what/how something runs, without an imperative object ("run the …").
+  /\b(?:what|which|how|where|when|who)\b[^.?]*\brun\b(?!\s+(?:the|this|that|a|an|my|it|some)\b)/i,
+]
+
+/** Imperative machine-exec phrasing — kept narrow so conversational "run" stays safe. */
+function matchesExecIntent(text: string): boolean {
+  if (EXEC_INFO_PATTERNS.some(p => p.test(text))) return false
+  return /\b(?:exec\b|(?:run|execute|launch|invoke)\s+(?:the|this|that|a|an|my|it|some|\w+))/i.test(text)
+}
+
+function kindSpecMatches(spec: KindSpec, text: string): boolean {
+  return spec.match ? spec.match(text) : spec.re.test(text)
 }
 
 // Order matters: the highest-tier match wins, and within a tier the earliest
@@ -62,7 +83,7 @@ const KIND_SPECS: KindSpec[] = [
   { kind: 'send',      tier: 'destructive', approvalType: 'email_send', confirmVerb: 'send',
     re: /\b(send|email|e-mail|reply[- ]?all|forward)\b/i },
   { kind: 'exec',      tier: 'destructive', approvalType: 'machine_exec', confirmVerb: 'run',
-    re: /\b(run|execute|exec|launch|invoke)\b/i },
+    re: /\b(?:run|execute|exec|launch|invoke)\b/i, match: matchesExecIntent },
 ]
 
 export interface IntentClassification {
@@ -82,7 +103,7 @@ const TIER_RANK: Record<IntentTier, number> = { safe: 0, destructive: 1, critica
  *  highest-tier / earliest one is primary. */
 export function classifyIntent(transcript: string | null | undefined): IntentClassification {
   const text = String(transcript ?? '')
-  const matched = KIND_SPECS.filter(s => s.re.test(text))
+  const matched = KIND_SPECS.filter(s => kindSpecMatches(s, text))
   if (matched.length === 0) {
     return { transcript: text, tier: 'safe', kinds: ['read'], primary: 'read', destructive: false }
   }
