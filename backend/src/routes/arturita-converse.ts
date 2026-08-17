@@ -689,7 +689,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       return creds
     }
     const capUsd = parseCapUsd(org.deployConfig as any, agent.id)
-    const pingBase = { system: 'Reply with the single word: ok', messages: [{ role: 'user', content: 'ping' }], onToken: () => {} }
+    const pingBase = { system: 'Reply with the single word: ok', messages: [{ role: 'user' as const, content: 'ping' }], onToken: () => {} }
     const pingTokens = estimateInputTokens(['ping'])
 
     // Primary — same chain as server-side /converse (incl. hosted Ollama).
