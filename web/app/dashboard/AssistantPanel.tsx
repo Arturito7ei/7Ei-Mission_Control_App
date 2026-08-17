@@ -20,11 +20,11 @@ import { Button, Card, TextInput } from './ui'
 import Reactor from './Reactor'
 import AssistantPipelineConfig from './AssistantPipelineConfig'
 import {
-  resolveVoiceState, toConverseRequest, toArturitaMessage,
+  resolveVoiceState, toConverseRequest, toArturitaMessage, persistedTurnsToMessages,
   revealStepFor, routingBadge, type Message, type ConverseResponse,
   rejectAttachment, attachmentChipLabel, canSendTurn, ATTACH_ACCEPT,
   rejectImage, imageChipLabel, imageMediaType, IMAGE_ACCEPT,
-  ARTURITA_CHOICE, type AttachedDoc, type AttachedImage, type AgentIdentity,
+  ARTURITA_CHOICE, type AttachedDoc, type AttachedImage, type AgentIdentity, toWireAgentId,
 } from './assistant.logic'
 import { AgentAvatar } from './agent/shared'
 import { provenanceChip, reactorChips } from './reactor.logic'
@@ -152,6 +152,21 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { wakeRef.current = wakeWord }, [wakeWord])
   useEffect(() => { recipientRef.current = recipient }, [recipient])
+
+  // GC-2 — hydrate persisted thread on load and when the picker recipient changes.
+  const loadPersistedThread = useCallback(async (choice: string) => {
+    try {
+      const token = await getToken()
+      const wire = toWireAgentId(choice)
+      const q = wire ? `?agentId=${encodeURIComponent(wire)}` : ''
+      const r = await api<{ turns: Parameters<typeof persistedTurnsToMessages>[0]; taskThreadId: string | null }>(
+        `/api/orgs/${orgId}/arturita/thread${q}`, { token })
+      setMessages(persistedTurnsToMessages(r.turns))
+      threadRef.current = r.taskThreadId
+    } catch { /* empty thread is fine on first visit */ }
+  }, [orgId, getToken])
+
+  useEffect(() => { loadPersistedThread(recipient) }, [recipient, loadPersistedThread])
   useEffect(() => { delegateRef.current = delegate }, [delegate])
   useEffect(() => { voiceRef.current = voiceReplies }, [voiceReplies])
 

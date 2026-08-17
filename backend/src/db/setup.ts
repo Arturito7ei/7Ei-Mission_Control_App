@@ -305,5 +305,13 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)`)
   } catch { /* already exists */ }
 
+  // GC-2 — Command Center thread persistence
+  try {
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS command_center_threads (id TEXT PRIMARY KEY, org_id TEXT NOT NULL, target_agent_key TEXT NOT NULL DEFAULT '', task_thread_id TEXT, updated_at INTEGER NOT NULL, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cc_threads_org_target ON command_center_threads(org_id, target_agent_key)`)
+    await dbClient.execute(`CREATE TABLE IF NOT EXISTS command_center_turns (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, org_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, author_user TEXT, meta_json TEXT, created_at INTEGER NOT NULL)`)
+    await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_cc_turns_thread ON command_center_turns(thread_id, created_at)`)
+  } catch { /* already exists */ }
+
   console.log('✅ Database ready')
 }

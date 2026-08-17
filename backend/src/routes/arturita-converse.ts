@@ -39,6 +39,9 @@ import {
   base64Bytes, buildImageContent, checkImage, formatImageBytes, visionChain,
   IMAGE_TOKEN_ALLOWANCE, MAX_IMAGE_BYTES, NO_VISION_MESSAGE, SUPPORTED_IMAGE_EXTS,
 } from '../services/converse-images'
+import {
+  buildUserBubbleText, loadThread, appendTurns, targetAgentKey, turnsToConverseHistory,
+} from '../services/command-center-thread'
 
 const ConverseBody = z.object({
   message: z.string(),
@@ -132,6 +135,26 @@ async function buildContextBlock(orgId: string): Promise<string | null> {
 const CONVERSE_BODY_LIMIT = 8 * 1024 * 1024
 
 export async function arturitaConverseRoutes(app: FastifyInstance) {
+  // GC-2 — load persisted Command Center thread (survives refresh).
+  app.get('/api/orgs/:orgId/arturita/thread', async (req, reply) => {
+    const { orgId } = req.params as any
+    const q = (req.query ?? {}) as any
+    const agent = await ensureArturita(orgId)
+    const requested = q.agentId ? String(q.agentId) : null
+    if (requested && requested !== agent.id) {
+      const err = await assertAgentInOrg(requested, orgId)
+      if (err) return reply.code(404).send({ error: 'Not found' })
+    }
+    const key = targetAgentKey(requested, agent.id)
+    const loaded = await loadThread(orgId, key)
+    return {
+      viewer: (req as any).auth?.userId ?? (req as any).userId ?? null,
+      targetAgentKey: key,
+      taskThreadId: loaded.taskThreadId,
+      turns: loaded.turns,
+    }
+  })
+
   app.post('/api/orgs/:orgId/arturita/converse', { bodyLimit: CONVERSE_BODY_LIMIT }, async (req, reply) => {
     const { orgId } = req.params as any
     let b: z.infer<typeof ConverseBody>
@@ -197,6 +220,46 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
     /** True only when the operator picked someone other than Arturita. */
     const addressedToSpecialist = target.id !== agent.id
+
+    // GC-2 — server thread replaces client `history` when persisted turns exist.
+    const ccKey = targetAgentKey(requestedAgentId, agent.id)
+    const ccLoaded = await loadThread(orgId, ccKey)
+    const ccHistory = turnsToConverseHistory(ccLoaded.turns)
+    const converseHistoryIn = ccHistory.length ? ccHistory : (b.history ?? [])
+    const authorUser = (req as any).auth?.userId ?? (req as any).userId ?? null
+    const userBubble = buildUserBubbleText(
+      message,
+      attachment?.name ? { name: attachment.name } : null,
+      image?.name ? { name: image.name } : null,
+    )
+    const finish = async (payload: Record<string, any>) => {
+      const text = String(payload.reply?.text ?? '').trim()
+      if (!text || payload.deferred) return payload
+      const asstRole = payload.mode === 'agent' ? 'assistant' as const : 'arturita' as const
+      await appendTurns({
+        orgId,
+        targetAgentKey: ccKey,
+        authorUser,
+        user: { content: userBubble },
+        assistant: {
+          role: asstRole,
+          content: text,
+          meta: {
+            mode: payload.mode,
+            via: payload.reply?.provider ?? null,
+            taskId: payload.taskId ?? null,
+            fromAgent: asstRole === 'assistant' ? target.name : null,
+            agent: payload.agent ?? null,
+            assignedTo: payload.assignedTo ?? null,
+            pendingApprovalNote: payload.pendingApprovalNote ?? null,
+            degraded: payload.degraded ?? false,
+            routing: payload.routing ?? null,
+          },
+        },
+        taskThreadId: payload.taskId ?? ccLoaded.taskThreadId ?? b.existingThreadId ?? null,
+      })
+      return payload
+    }
     // Who the transcript should attribute the reply to. Sent on EVERY response shape so
     // both clients render one rule ("show who replied") rather than special-casing.
     const identityOf = (row: typeof agent) => ({
@@ -252,7 +315,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // so it cannot travel with work an agent runs later. Say so rather than let
       // the operator believe the office can see it.
       if (image) ack += ` Note: the photo “${image.name}” stays with this conversation — I didn't attach it to the task, so describe anything in it the office will need.`
-      return {
+      return finish({
         mode: 'delegate',
         routing: { trigger: decision.trigger, reason: decision.reason, workMode: route.workMode, destructive: decision.destructive, approvalType: decision.approvalType ?? null, isFollowUp: route.isFollowUp },
         taskId,
@@ -262,7 +325,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         agent: arturitaIdentity,
         assignedTo: { id: target.id, name: target.name },
         reply: { text: ack, provider: 'arturita' },
-      }
+      })
     }
 
     // ── GC-1 — the turn is addressed to a REAL agent: run the executor ───────────
@@ -324,7 +387,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // History is admitted FENCED where a turn came from an agent (untrusted — it may
       // quote a GitHub issue or an email). An unmarked transcript passes through
       // unchanged, so a client that never sets the marker behaves as it did before.
-      const conversationHistory = admitHistory(b.history)
+      const conversationHistory = admitHistory(converseHistoryIn)
 
       // An attached DOCUMENT rides along: its text is already extracted, and
       // `withAttachmentContext` is the same delimiter the Arturita branch uses.
@@ -348,16 +411,16 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         // The executor throws on a genuine run failure (it has already marked the task
         // `failed` and written a system notice). Answer honestly in the thread rather
         // than 500-ing at a chat box.
-        return {
+        return finish({
           mode: 'agent', agent: identity, taskId, degraded: true,
           routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
           reply: { text: `${target.name} couldn't finish that turn: ${String(e?.message ?? e).slice(0, 300)}`, provider: 'agent_error' },
           error: e?.message ?? 'agent run failed',
-        }
+        })
       }
 
       const note = pendingApprovalNote(result.pendingApprovals ?? 0)
-      return {
+      return finish({
         mode: 'agent',
         agent: identity,
         taskId,
@@ -369,7 +432,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         pendingApprovals: result.pendingApprovals ?? 0,
         pendingApprovalNote: note,
         budgetWarning: result.budgetWarning ?? null,
-      }
+      })
     }
 
     // ── Answer: one conversational LLM turn via the F1 fallback chain ───────────
@@ -384,7 +447,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // quote a GitHub issue, a Jira comment or an email. An unmarked transcript (every
     // pre-GC-1 client, and every thread where the picker was never touched) passes
     // through byte-for-byte, so this is a no-op on the default path.
-    const history = admitHistory(b.history)
+    const history = admitHistory(converseHistoryIn)
     // The attached document rides on THIS turn only — delimited, after the
     // operator's question. It is never added to `history`, so it doesn't re-enter
     // the prompt (and re-bill) on every later turn of the thread.
@@ -440,7 +503,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       // No configured model can see. The operator gets told, in the thread, with
       // the fix — the same shape as NO_LLM_MESSAGE. Silently dropping the image
       // and answering from the text alone is the one thing we must not do.
-      return {
+      return finish({
         mode: 'answer',
         agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
@@ -448,7 +511,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         reply: { text: NO_VISION_MESSAGE, provider: 'text_only' },
         error: 'no vision-capable model configured',
         code: 'no_vision_model',
-      }
+      })
     }
     const capUsd = parseCapUsd(org?.deployConfig as any, agent.id)
     // Price the TEXT of each message — `messageText` skips image parts, whose
@@ -466,22 +529,22 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         inputTokens,
         capUsd,
       })
-      return {
+      return finish({
         mode: 'answer',
         agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         reply: { text: fb.result.output, provider: fb.used.provider, model: fb.used.model },
-      }
+      })
     } catch (e: any) {
       // Failover exhausted / no key configured → honest, non-fatal reply.
-      return {
+      return finish({
         mode: 'answer',
         agent: identity,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         degraded: true,
         reply: { text: NO_LLM_MESSAGE, provider: 'text_only' },
         error: e?.message ?? 'llm unavailable',
-      }
+      })
     }
   })
 
@@ -606,6 +669,10 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
   })
 
+  documentEndpoint('GET', '/api/orgs/:orgId/arturita/thread', {
+    summary: 'Load persisted Command Center thread (GC-2)',
+    tag: 'arturita',
+  })
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/converse', {
     summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow). '
       + `Optionally carries a document (\`attachment\`, text extracted via /attachments/extract) or a photo (\`image\`, raw base64; ${SUPPORTED_IMAGE_EXTS.join('/')}; ≤${formatImageBytes(MAX_IMAGE_BYTES)}) `

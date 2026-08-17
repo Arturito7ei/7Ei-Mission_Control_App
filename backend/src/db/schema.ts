@@ -677,3 +677,26 @@ export const pushTokens = sqliteTable('push_tokens', {
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
 })
+
+// GC-2 — Command Center thread persistence (Arturita /converse surface).
+// One thread per (org, target_agent_key). Arturita default uses '' (empty string)
+// because SQLite UNIQUE treats NULLs as distinct.
+export const commandCenterThreads = sqliteTable('command_center_threads', {
+  id:             text('id').primaryKey(),
+  orgId:          text('org_id').notNull(),
+  targetAgentKey: text('target_agent_key').notNull().default(''),
+  taskThreadId:   text('task_thread_id'),
+  updatedAt:      integer('updated_at', { mode: 'timestamp' }).notNull(),
+  createdAt:      integer('created_at', { mode: 'timestamp' }).notNull(),
+})
+
+export const commandCenterTurns = sqliteTable('command_center_turns', {
+  id:          text('id').primaryKey(),
+  threadId:    text('thread_id').notNull(),
+  orgId:       text('org_id').notNull(),
+  role:        text('role').notNull(),           // user | arturita | assistant
+  content:     text('content').notNull(),
+  authorUser:  text('author_user'),
+  metaJson:    text('meta_json'),                // JSON: mode, via, taskId, agent, …
+  createdAt:   integer('created_at', { mode: 'timestamp' }).notNull(),
+})
