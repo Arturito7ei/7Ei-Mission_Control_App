@@ -154,8 +154,10 @@ export function filterForContext<T extends { mode: LayerMode }>(entries: T[], op
  *  - keep a `provider` entry only when a key is available (`keyAvailable`);
  *  - always append `guaranteed` (the agent's own provider/model, which uses the
  *    backend env key) as the last resort if not already present.
- * On Fly (no local Ollama, no free-tier keys) this collapses to just the
- * guaranteed hop; on a self-hosted/local backend the Ollama hops run first.
+ * For server-side `/converse` (deferAnswer:false) prefer `usableServerLlmChain`,
+ * which keeps co-located Ollama reachable while skipping browser-only `local`
+ * hops. This generic prune still includes every keyless/local entry — useful for
+ * tests and non-converse callers.
  * Pure — `keyAvailable(provider)` is injected by the caller.
  */
 export function usableLlmChain(input: {
@@ -169,6 +171,68 @@ export function usableLlmChain(input: {
   for (const e of input.entries) {
     const keyless = e.mode === 'local' || LOCAL_LLM_PROVIDERS.has(e.provider)
     if (keyless || input.keyAvailable(e.provider)) push({ provider: e.provider, model: e.model })
+  }
+  if (input.guaranteed && input.guaranteed.provider && input.guaranteed.model) push(input.guaranteed)
+  return out
+}
+
+/** OpenAI-compatible base URL for Ollama on the backend host (Fly sidecar, packaged
+ *  bundle, or self-hosted co-location). Browser defer still uses the operator's own
+ *  `localhost:11434`; this is the server-side router only. */
+export const DEFAULT_SERVER_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
+
+/** Resolve the backend's Ollama base URL from env. Pure. */
+export function serverOllamaBaseUrl(env: Record<string, string | undefined> = process.env as any): string {
+  const raw = String(env.OLLAMA_BASE_URL ?? env.SERVER_OLLAMA_BASE_URL ?? '').trim()
+  if (raw) return raw.replace(/\/$/, '').endsWith('/v1') ? raw.replace(/\/$/, '') : `${raw.replace(/\/$/, '')}/v1`
+  return DEFAULT_SERVER_OLLAMA_BASE_URL
+}
+
+/** When false, server-side converse skips every Ollama hop (hosted backend with no
+ *  co-located Ollama). Default: enabled — a missing sidecar fails fast and the
+ *  chain falls through to cloud/guaranteed hops exactly as before. Pure. */
+export function serverOllamaEnabled(env: Record<string, string | undefined> = process.env as any): boolean {
+  const off = String(env.MC_SERVER_OLLAMA ?? '').trim().toLowerCase()
+  if (off === '0' || off === 'false' || off === 'off') return false
+  return true
+}
+
+/**
+ * Server-side LLM chain for `/converse` when `deferAnswer` is false.
+ *
+ * Differs from `usableLlmChain` (the generic prune) in one load-bearing way:
+ * `mode: local` marks browser-defer hops — the operator's machine streams those
+ * via `deferAnswer`. They are NOT dropped from the configured pipeline GET, but
+ * they must not block the backend from reaching co-located Ollama (Fly's healthy
+ * `ollama/llama3.2:3b` sidecar) before the guaranteed cloud hop.
+ *
+ *  - Ollama entries run on the backend when `serverOllama` is true (default);
+ *  - other `mode: local` entries run only when they carry a server `baseUrl`;
+ *  - `provider`-mode entries need a usable key;
+ *  - `guaranteed` is appended last.
+ * Pure — inject `keyAvailable` + optional `serverOllama`.
+ */
+export function usableServerLlmChain(input: {
+  entries: LlmEntry[]
+  keyAvailable: (provider: string) => boolean
+  guaranteed?: ChainLink | null
+  serverOllama?: boolean
+}): ChainLink[] {
+  const serverOllama = input.serverOllama !== false
+  const out: ChainLink[] = []
+  const seen = new Set<string>()
+  const push = (l: ChainLink) => { const k = `${l.provider}/${l.model}`; if (!seen.has(k)) { seen.add(k); out.push(l) } }
+  for (const e of input.entries) {
+    if (e.provider === 'ollama') {
+      if (serverOllama) push({ provider: e.provider, model: e.model })
+      continue
+    }
+    if (e.mode === 'local') {
+      // Custom OpenAI-compatible local endpoints the backend can reach directly.
+      if (e.baseUrl?.trim()) push({ provider: e.provider, model: e.model })
+      continue
+    }
+    if (input.keyAvailable(e.provider)) push({ provider: e.provider, model: e.model })
   }
   if (input.guaranteed && input.guaranteed.provider && input.guaranteed.model) push(input.guaranteed)
   return out

@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parseLlmChain, parseSttChain, parseTtsChain, filterForContext,
-  usableLlmChain, usableCloudProviders, resolvePipeline, validatePipelineConfig,
+  usableLlmChain, usableServerLlmChain, usableCloudProviders, resolvePipeline, validatePipelineConfig,
   DEFAULT_LLM_CHAIN, DEFAULT_STT_CHAIN, DEFAULT_TTS_CHAIN, PIPELINE_KEYS,
+  serverOllamaBaseUrl, serverOllamaEnabled, DEFAULT_SERVER_OLLAMA_BASE_URL,
 } from '../services/arturita-pipeline'
 
 // ─── Free-first defaults when unconfigured ───────────────────────────────────
@@ -206,4 +207,61 @@ test('[talk] usableCloudProviders dedupes and skips local-mode entries even for 
     { provider: 'google', model: 'g', mode: 'local' as const },        // marked local → skipped
   ]
   assert.deepEqual(usableCloudProviders(chain, () => true), ['groq'])
+})
+
+// ─── S3-B: server-side Ollama fallback chain ─────────────────────────────────
+
+test('[S3-B] serverOllamaBaseUrl prefers OLLAMA_BASE_URL and normalizes /v1', () => {
+  assert.equal(serverOllamaBaseUrl({}), DEFAULT_SERVER_OLLAMA_BASE_URL)
+  assert.equal(serverOllamaBaseUrl({ OLLAMA_BASE_URL: 'http://ollama.internal:11434' }), 'http://ollama.internal:11434/v1')
+  assert.equal(serverOllamaBaseUrl({ SERVER_OLLAMA_BASE_URL: 'http://127.0.0.1:11434/v1' }), 'http://127.0.0.1:11434/v1')
+})
+
+test('[S3-B] serverOllamaEnabled honours MC_SERVER_OLLAMA=0', () => {
+  assert.equal(serverOllamaEnabled({}), true)
+  assert.equal(serverOllamaEnabled({ MC_SERVER_OLLAMA: '0' }), false)
+  assert.equal(serverOllamaEnabled({ MC_SERVER_OLLAMA: 'false' }), false)
+})
+
+test('[S3-B] usableServerLlmChain: no cloud keys + server Ollama → ollama hops before guarantee', () => {
+  const chain = usableServerLlmChain({
+    entries: DEFAULT_LLM_CHAIN,
+    keyAvailable: () => false,
+    guaranteed: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
+    serverOllama: true,
+  })
+  assert.deepEqual(chain.slice(0, 2), [
+    { provider: 'ollama', model: 'llama3.2:3b' },
+    { provider: 'ollama', model: 'qwen3:8b' },
+  ])
+  assert.equal(chain[chain.length - 1].provider, 'anthropic')
+})
+
+test('[S3-B] usableServerLlmChain: server Ollama disabled → cloud guarantee only', () => {
+  const chain = usableServerLlmChain({
+    entries: DEFAULT_LLM_CHAIN,
+    keyAvailable: () => false,
+    guaranteed: { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
+    serverOllama: false,
+  })
+  assert.deepEqual(chain, [{ provider: 'anthropic', model: 'claude-sonnet-4-20250514' }])
+})
+
+test('[S3-B] usableServerLlmChain skips browser-only local hops but keeps keyed cloud', () => {
+  const entries = [
+    { provider: 'ollama', model: 'llama3.2:3b', mode: 'local' as const },
+    { provider: 'whisper_local', model: 'x', mode: 'local' as const, baseUrl: 'http://127.0.0.1:8790/v1', custom: true },
+    { provider: 'groq', model: 'llama-3.3-70b-versatile', mode: 'provider' as const },
+  ]
+  const chain = usableServerLlmChain({
+    entries,
+    keyAvailable: p => p === 'groq',
+    guaranteed: { provider: 'anthropic', model: 'claude' },
+  })
+  assert.deepEqual(chain, [
+    { provider: 'ollama', model: 'llama3.2:3b' },
+    { provider: 'whisper_local', model: 'x' },
+    { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+    { provider: 'anthropic', model: 'claude' },
+  ])
 })
