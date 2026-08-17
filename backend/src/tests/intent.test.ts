@@ -20,6 +20,12 @@ const CASES: Array<{ t: string; tier: string; primary: string; approvalType?: st
   { t: 'overwrite the config file', tier: 'destructive', primary: 'overwrite', approvalType: 'file_destructive' },
   { t: 'send that reply to the Fly invoice', tier: 'destructive', primary: 'send', approvalType: 'email_send' },
   { t: 'run the deploy script', tier: 'destructive', primary: 'exec', approvalType: 'machine_exec' },
+  // informational "run" — not machine exec (regression: S3-B smoke / Thierry)
+  { t: 'what llm you run on?', tier: 'safe', primary: 'read' },
+  { t: 'what llm do you run on and what skills and access do you have?', tier: 'safe', primary: 'read' },
+  { t: 'how do you run tests in CI?', tier: 'safe', primary: 'read' },
+  { t: 'run me through the onboarding flow', tier: 'safe', primary: 'read' },
+  { t: 'which models do you run in production?', tier: 'safe', primary: 'read' },
   // safe / read-only
   { t: 'what\'s on my calendar Thursday', tier: 'safe', primary: 'read' },
   { t: 'what is my ETH balance and gas price', tier: 'safe', primary: 'read' },
@@ -36,6 +42,19 @@ for (const c of CASES) {
     assert.equal(r.destructive, c.tier !== 'safe')
   })
 }
+
+test('[A3] imperative exec still routes destructive (question phrasing with object)', () => {
+  for (const t of [
+    'run the deploy script',
+    'execute the migration',
+    'can you run this command for me?',
+    'please launch the worker',
+  ]) {
+    const r = classifyIntent(t)
+    assert.equal(r.tier, 'destructive', `expected destructive for: ${t}`)
+    assert.equal(r.primary, 'exec', `expected exec for: ${t}`)
+  }
+})
 
 test('[A3] critical outranks destructive when both present (delete + move)', () => {
   const r = classifyIntent('move these to trash then delete the originals')
