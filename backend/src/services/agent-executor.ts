@@ -22,8 +22,11 @@ import { parseFallbackChain } from './llm-fallback'
 // `<slug>_api_key_enc` — reading only the plaintext key (as this file used to)
 // meant a custom model saved with a key could never authenticate on a run, since
 // the save path only ever writes the encrypted form.
-import { resolveLlmCreds } from './custom-model'
+import { resolveLlmCreds, keyAvailableFor } from './custom-model'
 import { streamLLMWithFallback } from './llm-fallback-runtime'
+import {
+  parseLlmChain, usableServerLlmChain, serverOllamaBaseUrl, serverOllamaEnabled,
+} from './arturita-pipeline'
 import { resolveVaultForOrg, fetchSharedMemory } from './agent-memory'
 import { isAskMode, buildAskSystemPrompt, ASK_ANSWER_KIND } from './askmode'
 import { renderInstructionsBundle } from './agent-files'
@@ -336,7 +339,16 @@ export async function executeAgentTask(opts: {
     const model    = wakePlan.model
     const provider = wakePlan.provider
     const reasoningEffort = wakePlan.reasoningEffort ?? undefined
-    const { orgApiKey, baseURL } = resolveLlmCreds(org?.deployConfig as any, provider)
+    const resolveExecCreds = (prov: string) => {
+      const creds = resolveLlmCreds(org?.deployConfig as any, prov)
+      // Arturita executor wakes (incl. Command Center connector path) must reach
+      // co-located Ollama the same way `/converse` does (S3-B).
+      if (agent.agentType === 'arturita' && prov === 'ollama' && !creds.baseURL) {
+        return { ...creds, baseURL: serverOllamaBaseUrl() }
+      }
+      return creds
+    }
+    const { orgApiKey, baseURL } = resolveExecCreds(provider)
     const messages = [...conversationHistory, { role: 'user' as const, content: input }]
     const start = Date.now()
     let rawOutput = ''
@@ -346,14 +358,27 @@ export async function executeAgentTask(opts: {
     // Absent a chain this is a single attempt — identical to a bare streamLLM.
     // Failover stays cost-bounded: every hop is dropped if its worst-case wake
     // cost exceeds the per-wake cap.
-    const fbChain = parseFallbackChain(org?.deployConfig as any, agent.id)
-    const effectiveChain = fbChain.length > 0 ? fbChain : [{ provider, model }]
+    //
+    // Arturita rows use the talk-path chain (`arturita_llm_chain` + server Ollama)
+    // so Command Center connector turns preserve the S3-B empty-key contract.
+    let effectiveChain: ReturnType<typeof parseFallbackChain>
+    if (agent.agentType === 'arturita') {
+      effectiveChain = usableServerLlmChain({
+        entries: parseLlmChain(org?.deployConfig as any),
+        keyAvailable: keyAvailableFor(org?.deployConfig as any),
+        guaranteed: { provider, model },
+        serverOllama: serverOllamaEnabled(),
+      })
+    } else {
+      const fbChain = parseFallbackChain(org?.deployConfig as any, agent.id)
+      effectiveChain = fbChain.length > 0 ? fbChain : [{ provider, model }]
+    }
     const wakeCapUsd = parseCapUsd(org?.deployConfig as any, agent.id)
     const wakeInputTokens = estimateInputTokens([systemPrompt, ...messages.map(m => m.content)])
     const fb = await streamLLMWithFallback({
       base: { system: systemPrompt, messages, reasoningEffort, onToken: (chunk) => { rawOutput += chunk; onToken?.(chunk) } },
       chain: effectiveChain,
-      resolveCreds: (prov) => resolveLlmCreds(org?.deployConfig as any, prov),
+      resolveCreds: resolveExecCreds,
       inputTokens: wakeInputTokens,
       capUsd: wakeCapUsd,
     })

@@ -45,6 +45,9 @@ import {
 import {
   buildUserBubbleText, loadThread, appendTurns, targetAgentKey, turnsToConverseHistory,
 } from '../services/command-center-thread'
+import { resolveVaultForOrg, fetchSharedMemory } from '../services/agent-memory'
+import { loadConnectorTools } from '../services/agent-connector-tools'
+import { parseCapabilities } from '../services/governance2'
 
 const ConverseBody = z.object({
   message: z.string(),
@@ -113,19 +116,28 @@ async function ensureArturita(orgId: string): Promise<typeof schema.agents.$infe
 }
 
 // Lightweight system-awareness block (context/knows-current-state — a Jarvis
-// trait). Kept cheap: two counts, no heavy joins. Never blocks the reply.
-async function buildContextBlock(orgId: string): Promise<string | null> {
+// trait). Kept cheap: two counts, no heavy joins. Org/agent vault notes are
+// injected when `GITHUB_VAULT_TOKEN` is configured (Option C / MCA-75).
+async function buildContextBlock(orgId: string, agentName: string): Promise<string | null> {
   try {
     const agents = await db.select({ status: schema.agents.status }).from(schema.agents).where(eq(schema.agents.orgId, orgId))
     const openTasks = await db.select({ id: schema.tasks.id }).from(schema.tasks)
       .where(and(eq(schema.tasks.orgId, orgId), inArray(schema.tasks.status, ['pending', 'in_progress'])))
     const active = agents.filter(a => a.status === 'active').length
-    return [
+    const lines = [
       '=== LIVE SYSTEM AWARENESS (read-only, for grounding your answer) ===',
       `Agent fleet: ${agents.length} agent(s), ${active} active.`,
       `Open work: ${openTasks.length} task(s) pending or in progress.`,
       '=== END SYSTEM AWARENESS ===',
-    ].join('\n')
+    ]
+    try {
+      const vault = await resolveVaultForOrg(orgId)
+      if (vault.token) {
+        const { block } = await fetchSharedMemory(vault.token, vault.cfg, agentName)
+        if (block) lines.push(block)
+      }
+    } catch { /* non-critical — fleet counts still land */ }
+    return lines.join('\n')
   } catch { return null }
 }
 
@@ -223,6 +235,19 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
     /** True only when the operator picked someone other than Arturita. */
     const addressedToSpecialist = target.id !== agent.id
+
+    // Option C — default Arturita turns with configured connectors run through the
+    // same executor + CONN-9 loop as a picked agent. deferAnswer (browser Ollama)
+    // and image turns stay on the lean `/converse` path; vault notes still inject
+    // into that path via buildContextBlock.
+    let arturitaConnectorTools: Awaited<ReturnType<typeof loadConnectorTools>> = []
+    try {
+      arturitaConnectorTools = await loadConnectorTools(
+        orgId, agent.id, parseCapabilities(agent.permissions),
+      )
+    } catch { /* non-critical — lean path still answers */ }
+    const useArturitaExecutor = !addressedToSpecialist && !b.deferAnswer && !image
+      && arturitaConnectorTools.length > 0
 
     // GC-2 — server thread replaces client `history` when persisted turns exist.
     const ccKey = targetAgentKey(requestedAgentId, agent.id)
@@ -331,7 +356,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       })
     }
 
-    // ── GC-1 — the turn is addressed to a REAL agent: run the executor ───────────
+    // ── GC-1 / Option C — executor path: picked agent OR Arturita w/ connectors ──
     //
     // `decideConverseMode` has already had its say and returned `answer`, so this is
     // conversational rather than a build/destructive request — those took the delegate
@@ -353,7 +378,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // `POST /api/agents/:agentId/chat` already accepted. What it DOES add is telling the
     // operator when something parked at that gate, so a gated turn does not read as the
     // agent having gone quiet.
-    if (addressedToSpecialist) {
+    if (addressedToSpecialist || useArturitaExecutor) {
       const taskId = randomUUID()
       await db.insert(schema.tasks).values({
         id: taskId, agentId: target.id, orgId,
@@ -414,18 +439,23 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         // The executor throws on a genuine run failure (it has already marked the task
         // `failed` and written a system notice). Answer honestly in the thread rather
         // than 500-ing at a chat box.
+        const converseMode = addressedToSpecialist ? 'agent' as const : 'answer' as const
+        const converseIdentity = addressedToSpecialist ? identity : arturitaIdentity
+        const speaker = addressedToSpecialist ? target.name : agent.name
         return finish({
-          mode: 'agent', agent: identity, taskId, degraded: true,
+          mode: converseMode, agent: converseIdentity, taskId, degraded: true,
           routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
-          reply: { text: `${target.name} couldn't finish that turn: ${String(e?.message ?? e).slice(0, 300)}`, provider: 'agent_error' },
+          reply: { text: `${speaker} couldn't finish that turn: ${String(e?.message ?? e).slice(0, 300)}`, provider: 'agent_error' },
           error: e?.message ?? 'agent run failed',
         })
       }
 
       const note = pendingApprovalNote(result.pendingApprovals ?? 0)
+      const converseMode = addressedToSpecialist ? 'agent' as const : 'answer' as const
+      const converseIdentity = addressedToSpecialist ? identity : arturitaIdentity
       return finish({
-        mode: 'agent',
-        agent: identity,
+        mode: converseMode,
+        agent: converseIdentity,
         taskId,
         routing: { trigger: decision.trigger, reason: decision.reason, destructive: false },
         reply: { text: result.output, provider: result.provider ?? 'agent', model: null },
@@ -439,7 +469,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
 
     // ── Answer: one conversational LLM turn via the F1 fallback chain ───────────
-    const contextBlock = await buildContextBlock(orgId)
+    const contextBlock = await buildContextBlock(orgId, agent.name)
     const system = buildConverseSystemPrompt({
       agentName: agent.name, orgName: org?.name ?? null,
       orgMission: org?.mission ?? null, orgCulture: org?.culture ?? null,
