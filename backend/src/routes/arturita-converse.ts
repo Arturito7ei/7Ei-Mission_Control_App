@@ -27,7 +27,10 @@ import { executeAgentTask } from '../services/agent-executor'
 import { admitHistory, pendingApprovalNote } from '../services/converse-agent-turn'
 import { streamLLMWithFallback } from '../services/llm-fallback-runtime'
 import { messageText } from '../services/llm-router'
-import { parseLlmChain, usableLlmChain, usableCloudProviders } from '../services/arturita-pipeline'
+import {
+  parseLlmChain, usableLlmChain, usableServerLlmChain, usableCloudProviders,
+  serverOllamaBaseUrl, serverOllamaEnabled,
+} from '../services/arturita-pipeline'
 import { resolveLlmCreds, keyAvailableFor } from '../services/custom-model'
 import { estimateInputTokens, parseCapUsd } from '../services/preflight'
 import { extractText } from '../services/document-ingest'
@@ -489,10 +492,16 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     // the live path never breaks when local Ollama / free-tier keys are absent.
     const deployCfg = (org?.deployConfig ?? {}) as Record<string, any>
     const keyAvailable = keyAvailableFor(deployCfg)  // shared with GET /arturita/llm-status
-    const usable = usableLlmChain({
+    const resolveConverseCreds = (prov: string) => {
+      const creds = resolveLlmCreds(deployCfg, prov)
+      if (prov === 'ollama' && !creds.baseURL) return { ...creds, baseURL: serverOllamaBaseUrl() }
+      return creds
+    }
+    const usable = usableServerLlmChain({
       entries: parseLlmChain(deployCfg),
       keyAvailable,
       guaranteed: { provider, model },
+      serverOllama: serverOllamaEnabled(),
     })
     // MOB-7b — an image turn runs ONLY on hops that can see. The default chain is
     // free-first (local Ollama → groq), all text-only, ahead of the guaranteed
@@ -525,7 +534,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
         base: { system, messages, onToken: () => { /* buffered; the client reveals it */ } },
         chain,
         // Handles plaintext AND encrypted (custom-model) keys + per-provider base URL.
-        resolveCreds: (prov) => resolveLlmCreds(deployCfg, prov),
+        resolveCreds: resolveConverseCreds,
         inputTokens,
         capUsd,
       })
