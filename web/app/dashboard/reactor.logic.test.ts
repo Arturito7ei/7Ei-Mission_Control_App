@@ -66,7 +66,14 @@ test('[J7] provenanceChip names the local model when running on-device (🔒)', 
   assert.match(c.label, /llama3\.2:3b/)
 })
 
-test('[J7] provenanceChip falls back to a cloud chip when no local model (☁)', () => {
+test('[J7] provenanceChip names the hosted model when Fly Ollama answers (🖥)', () => {
+  const c = provenanceChip({ hosted: { model: 'llama3.2:3b' } })
+  assert.equal(c.tone, 'hosted')
+  assert.equal(c.icon, '🖥')
+  assert.match(c.label, /llama3\.2:3b/)
+})
+
+test('[J7] provenanceChip falls back to a cloud chip when no local or hosted model (☁)', () => {
   for (const local of [null, undefined, { model: '   ' }]) {
     const c = provenanceChip({ local: local as any })
     assert.equal(c.tone, 'cloud')

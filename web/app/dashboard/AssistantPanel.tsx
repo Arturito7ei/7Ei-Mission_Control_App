@@ -120,6 +120,8 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // J-prod: browser-direct local Ollama (free, private, real token streaming) —
   // resolved from the pipeline config + a reachability probe; null → use backend.
   const [localLlm, setLocalLlm] = useState<{ model: string; baseUrl: string } | null>(null)
+  /** S3-B — hosted backend can answer via Fly Ollama when browser-local is absent. */
+  const [hostedLlm, setHostedLlm] = useState<{ model: string } | null>(null)
   // GC-1 — WHO the operator is talking to. Defaults to the Arturita sentinel, so the
   // panel renders a correct, honest recipient before the roster has even loaded and
   // never sends a guessed id.
@@ -238,18 +240,30 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   }, [orgId, getToken])
 
   // Resolve a browser-reachable local Ollama from the pipeline config (once).
+  // Also probe the hosted answer chain (S3-B) so the banner/self-test don't falsely
+  // read "cloud fallback" when Fly Ollama is the real path.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const cfg = await api<{ llm: Array<{ provider?: string; model?: string; mode?: string }> }>(`/api/orgs/${orgId}/arturita/pipeline`, { token: await getToken() })
         const primary = (cfg.llm ?? []).find(e => e.mode === 'local' && e.provider === 'ollama' && e.model)
-        if (!primary?.model) return
-        const models = await probeOllama(DEFAULT_OLLAMA_URL)
-        if (cancelled || !models) return
-        const base = String(primary.model).split(':')[0]
-        if (models.some(m => m === primary.model || m.split(':')[0] === base)) setLocalLlm({ model: primary.model!, baseUrl: DEFAULT_OLLAMA_URL })
-      } catch { /* no local Ollama reachable → backend chain handles it */ }
+        if (primary?.model) {
+          const models = await probeOllama(DEFAULT_OLLAMA_URL)
+          if (!cancelled && models) {
+            const base = String(primary.model).split(':')[0]
+            if (models.some(m => m === primary.model || m.split(':')[0] === base)) {
+              setLocalLlm({ model: primary.model!, baseUrl: DEFAULT_OLLAMA_URL })
+            }
+          }
+        }
+        const status = await api<{ answerUsable?: boolean; answerProvider?: string; answerModel?: string }>(
+          `/api/orgs/${orgId}/arturita/llm-status`, { token: await getToken() },
+        )
+        if (!cancelled && status.answerUsable && status.answerProvider === 'ollama' && status.answerModel) {
+          setHostedLlm({ model: status.answerModel })
+        }
+      } catch { /* no local/hosted Ollama reachable → backend chain handles it */ }
     })()
     return () => { cancelled = true }
   }, [orgId, getToken])
@@ -557,7 +571,7 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // attachment from state, so it still has something to work with.
   const submitTyped = () => { const t = typed.trim(); if (!canSendTurn({ typed: t, attachment, image, busy: thinking || attaching || reading })) return; setTyped(''); send(t, delegate) }
 
-  const provenance = provenanceChip({ local: localLlm })
+  const provenance = provenanceChip({ local: localLlm, hosted: localLlm ? null : hostedLlm })
   const reactorChipRow = reactorChips({ provenance, captureLabel: sttEngine === 'none' ? '' : sttEngineLabel(sttEngine), voiceReplies })
 
   return (
@@ -602,7 +616,9 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
         <p style={sxHint}>
           {localLlm
             ? <>🔒 Running on your local <b>{localLlm.model}</b> (Ollama) — free &amp; on-device.</>
-            : <>☁ Using the cloud fallback chain. <span title="Run Ollama with OLLAMA_ORIGINS set to this app's origin to go fully local & free.">Local Ollama not detected.</span></>}
+            : hostedLlm
+              ? <>🖥 Answering via hosted <b>{hostedLlm.model}</b> (Fly Ollama) — free, no cloud key needed.</>
+              : <>☁ Using the cloud fallback chain. <span title="Run Ollama with OLLAMA_ORIGINS set to this app's origin to go fully local & free, or rely on hosted Fly Ollama when Pipeline keys are empty.">Local Ollama not detected on this machine.</span></>}
         </p>
       </div>
 

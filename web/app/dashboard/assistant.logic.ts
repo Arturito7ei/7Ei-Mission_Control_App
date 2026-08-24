@@ -399,9 +399,11 @@ export function toArturitaMessage(input: { id: string; resp: ConverseResponse })
   const mode = resp.mode ?? 'answer'
   const prov = resp.reply?.provider
   const model = resp.reply?.model
-  const via = prov && prov !== 'arturita' && prov !== 'text_only'
-    ? `cloud · ${prov}${model ? ` (${model})` : ''}`
-    : null
+  const via = prov === 'ollama' && model
+    ? `hosted · ${model}`
+    : prov && prov !== 'arturita' && prov !== 'text_only' && prov !== 'agent_error'
+      ? `cloud · ${prov}${model ? ` (${model})` : ''}`
+      : null
   // GC-1 — `mode: 'agent'` means a picked agent ran this turn. `fromAgent` is what
   // marks the reply UNTRUSTED when it is sent back as history; it is set ONLY for a
   // real agent, never for Arturita, so her replies keep re-entering as they always did.

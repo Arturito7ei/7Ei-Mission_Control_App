@@ -148,14 +148,25 @@ test('runSelfTest is all-green when every leg is healthy', () => {
   assert.ok(r.every(x => x.icon === '✓'))
 })
 
-test('runSelfTest FAILS the answers leg when neither local Ollama nor a cloud key works (the live root cause)', () => {
-  const r = runSelfTest({ ...BASE, ollamaModels: null, cloudLlmUsable: false })
+test('runSelfTest FAILS the answers leg when neither local, hosted, nor cloud works', () => {
+  const r = runSelfTest({ ...BASE, ollamaModels: null, cloudLlmUsable: false, serverAnswerUsable: false })
   const ans = r.find(x => x.leg === 'answers')!
   assert.equal(ans.severity, 'fail')
   assert.equal(ans.icon, '✕')
-  assert.match(String(ans.hint), /OLLAMA_ORIGINS/)
+  assert.match(String(ans.hint), /Fly Ollama/)
   assert.match(String(ans.hint), /Groq or Gemini/)
   assert.equal(overallSeverity(r), 'fail')
+})
+
+test('runSelfTest answers leg is OK via hosted Ollama when local is down and cloud keys are empty (S3-B)', () => {
+  const r = runSelfTest({
+    ...BASE, ollamaModels: null, cloudLlmUsable: false,
+    serverAnswerUsable: true,
+    serverAnswerDetail: 'Hosted Ollama reachable via ollama (llama3.2:3b) on the backend.',
+  })
+  const ans = r.find(x => x.leg === 'answers')!
+  assert.equal(ans.severity, 'ok')
+  assert.match(ans.detail, /Hosted Ollama/)
 })
 
 test('runSelfTest answers leg is OK via cloud when local Ollama is down but a cloud key works', () => {

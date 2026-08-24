@@ -47,14 +47,19 @@ export function reactorVisual(state: VoiceState): ReactorVisual {
 // Mirrors the reference's "via 🔒 local · llama3.2:3b" line. Colorblind-safe:
 // icon + label + tone, never colour alone.
 
-export interface ProvenanceChip { icon: string; label: string; tone: 'local' | 'cloud' }
+export interface ProvenanceChip { icon: string; label: string; tone: 'local' | 'hosted' | 'cloud' }
 
 /** Where the language model is running right now, for the reactor caption chip. */
-export function provenanceChip(input: { local?: { model: string } | null }): ProvenanceChip {
-  const model = input.local?.model?.trim()
-  return model
-    ? { icon: '🔒', label: `local · ${model}`, tone: 'local' }
-    : { icon: '☁', label: 'cloud fallback', tone: 'cloud' }
+export function provenanceChip(input: {
+  local?: { model: string } | null
+  /** S3-B — hosted backend reached Fly/co-located Ollama (no browser-local model). */
+  hosted?: { model: string } | null
+}): ProvenanceChip {
+  const localModel = input.local?.model?.trim()
+  if (localModel) return { icon: '🔒', label: `local · ${localModel}`, tone: 'local' }
+  const hostedModel = input.hosted?.model?.trim()
+  if (hostedModel) return { icon: '🖥', label: `hosted · ${hostedModel}`, tone: 'hosted' }
+  return { icon: '☁', label: 'cloud fallback', tone: 'cloud' }
 }
 
 // ─── Status chips row (small capability chips beneath the caption) ────────────

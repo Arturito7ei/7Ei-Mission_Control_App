@@ -80,10 +80,17 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
     // stored-but-invalid key (e.g. an expired Anthropic key) reads as unusable,
     // not a false ✓. null = couldn't run the probe (backend down / error).
     let cloudLlmUsable: boolean | null = null, cloudLlmDetail: string | null = null
+    let serverAnswerUsable: boolean | null = null, serverAnswerDetail: string | null = null
     if (backendOk) {
       try {
-        const s = await api<{ cloudUsable: boolean; detail?: string }>(`/api/orgs/${orgId}/arturita/llm-status`, { token: await getToken() })
+        const s = await api<{
+          cloudUsable: boolean
+          detail?: string
+          answerUsable?: boolean
+          answerDetail?: string
+        }>(`/api/orgs/${orgId}/arturita/llm-status`, { token: await getToken() })
         cloudLlmUsable = !!s.cloudUsable; cloudLlmDetail = s.detail ?? null
+        serverAnswerUsable = s.answerUsable ?? null; serverAnswerDetail = s.answerDetail ?? null
       } catch (e: any) { cloudLlmUsable = null; cloudLlmDetail = e?.message ?? null }
     }
     // 3. local Ollama reachable? (+ configured primary model)
@@ -102,6 +109,7 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
       backendOk, backendDetail,
       ollamaModels, ollamaPrimaryModel: primary ? (primary as LlmEntry).model : null,
       cloudLlmUsable, cloudLlmDetail,
+      serverAnswerUsable, serverAnswerDetail,
       ttsSupported: hasTts, ttsLocalVoice: localVoice,
       sttSupported: hasStt, sttBlocked: brave, whisperReachable,
     }))
@@ -151,7 +159,7 @@ export default function AssistantPipelineConfig({ orgId, getToken }: { orgId: st
                 ))}
                 <p style={{ ...hintStyle, marginTop: 2 }}>
                   {overallSeverity(selfTest) === 'ok' ? '✓ All legs healthy — voice + answers should work end-to-end.'
-                    : overallSeverity(selfTest) === 'warn' ? '▲ Working, with optional legs degraded (Arturita still answers via the cloud chain + text).'
+                    : overallSeverity(selfTest) === 'warn' ? '▲ Working, with optional legs degraded (Arturita still answers via hosted Ollama or the cloud chain).'
                     : '✕ A required leg is down — see the fix hint above.'}
                 </p>
               </div>

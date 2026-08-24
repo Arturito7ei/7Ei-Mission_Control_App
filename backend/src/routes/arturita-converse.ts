@@ -101,9 +101,10 @@ const ConverseBody = z.object({
 // two operator fixes) instead of a vague "network error"/"check config".
 export const NO_LLM_MESSAGE =
   "I can't reach any language model right now, so I can't answer this turn. " +
-  "Two ways to fix it: run local Ollama on the machine you're talking to me from " +
-  "(Ollama started + `OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama), " +
-  "or add a working cloud key (a free Groq or Gemini key works) in ⚙ Pipeline config below."
+  "On app.7ei.ai with empty Pipeline keys, the hosted backend should reach Fly Ollama — " +
+  "open ⚙ Pipeline config below and “Run self-test”; if the hosted leg fails, that's not fixed by adding cloud keys. " +
+  "On your machine: run local Ollama (`OLLAMA_ORIGINS=https://app.7ei.ai`, then restart Ollama) " +
+  "or add a working cloud key (a free Groq or Gemini key works) in Pipeline config."
 
 async function ensureArturita(orgId: string): Promise<typeof schema.agents.$inferSelect> {
   const existing = await db.query.agents.findFirst({
@@ -274,7 +275,9 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
           content: text,
           meta: {
             mode: payload.mode,
-            via: payload.reply?.provider ?? null,
+            via: payload.reply?.provider === 'ollama' && payload.reply?.model
+              ? `ollama/${payload.reply.model}`
+              : (payload.reply?.provider ?? null),
             taskId: payload.taskId ?? null,
             fromAgent: asstRole === 'assistant' ? target.name : null,
             agent: payload.agent ?? null,
@@ -665,12 +668,11 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
   })
 
   // ── Talk-path LLM reachability probe (for the Config self-test) ─────────────
-  // Answers the honest question the reachability-of-`/pipeline` check can't: can
-  // the CLOUD fallback actually produce a token? It runs a tiny real completion
-  // through the usable cloud chain, so a stored-but-INVALID key (e.g. an expired
-  // Anthropic key) is reported as unusable — not a false ✓. Local Ollama is NOT
-  // probed here (it lives on the operator's machine; the browser probes that
-  // directly). Read-only, operator-initiated; capped to a 1-token ping.
+  // Two real 1-token pings:
+  //   • answerUsable — the FULL server chain `deferAnswer:false` /converse uses
+  //     (S3-B: co-located Fly Ollama before cloud/guarantee hops);
+  //   • cloudUsable — cloud-only (browser-local Ollama is probed separately).
+  // Read-only, operator-initiated.
   app.get('/api/orgs/:orgId/arturita/llm-status', async (req, reply) => {
     const { orgId } = req.params as any
     const org = await db.query.organisations.findFirst({ where: eq(schema.organisations.id, orgId) })
@@ -680,31 +682,84 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     const keyAvailable = keyAvailableFor(deployCfg)
     const provider = agent.llmProvider ?? 'anthropic'
     const model = agent.llmModel ?? 'claude-sonnet-4-20250514'
-    // Cloud-only chain: drop local/ollama hops; keep the guaranteed hop (backend
-    // env key) so a working env key still counts even without an org key.
-    const cloudEntries = parseLlmChain(deployCfg).filter(e => e.mode !== 'local' && e.provider !== 'ollama')
-    const chain = usableLlmChain({ entries: cloudEntries, keyAvailable, guaranteed: { provider, model } })
     const configuredProviders = usableCloudProviders(parseLlmChain(deployCfg), keyAvailable)
+    const resolveProbeCreds = (prov: string) => {
+      const creds = resolveLlmCreds(deployCfg, prov)
+      if (prov === 'ollama' && !creds.baseURL) return { ...creds, baseURL: serverOllamaBaseUrl() }
+      return creds
+    }
+    const capUsd = parseCapUsd(org.deployConfig as any, agent.id)
+    const pingBase = { system: 'Reply with the single word: ok', messages: [{ role: 'user' as const, content: 'ping' }], onToken: () => {} }
+    const pingTokens = estimateInputTokens(['ping'])
 
-    if (chain.length === 0) {
-      return { cloudUsable: false, configuredProviders, checked: false, detail: 'No cloud LLM provider with a key is configured.' }
+    // Primary — same chain as server-side /converse (incl. hosted Ollama).
+    const answerChain = usableServerLlmChain({
+      entries: parseLlmChain(deployCfg),
+      keyAvailable,
+      guaranteed: { provider, model },
+      serverOllama: serverOllamaEnabled(),
+    })
+    let answerUsable = false
+    let answerDetail = answerChain.length === 0
+      ? 'No LLM hop is configured for the hosted answer path.'
+      : 'Hosted answer path not probed.'
+    let answerProvider: string | null = null
+    let answerModel: string | null = null
+    if (answerChain.length > 0) {
+      try {
+        const fb = await streamLLMWithFallback({
+          base: pingBase,
+          chain: answerChain,
+          resolveCreds: resolveProbeCreds,
+          inputTokens: pingTokens,
+          capUsd,
+        })
+        answerUsable = true
+        answerProvider = fb.used.provider
+        answerModel = fb.used.model
+        answerDetail = fb.used.provider === 'ollama'
+          ? `Hosted Ollama reachable via ${fb.used.provider} (${fb.used.model}) on the backend.`
+          : `Answer path reachable via ${fb.used.provider} (${fb.used.model}).`
+      } catch (e: any) {
+        const raw = String(e?.message ?? 'provider chain unavailable')
+        answerDetail = /invalid|x-api-key|401|403|authentication/i.test(raw)
+          ? `Hosted answer chain failed — a configured key was rejected. Hops tried: ${answerChain.map(c => c.provider).join(', ')}.`
+          : `Hosted answer chain unreachable: ${raw.slice(0, 160)}`
+      }
+    }
+
+    // Secondary — cloud-only (legacy self-test leg; browser probes local Ollama).
+    const cloudEntries = parseLlmChain(deployCfg).filter(e => e.mode !== 'local' && e.provider !== 'ollama')
+    const cloudChain = usableLlmChain({ entries: cloudEntries, keyAvailable, guaranteed: { provider, model } })
+    if (cloudChain.length === 0) {
+      return {
+        answerUsable, answerDetail, answerProvider, answerModel,
+        cloudUsable: false, configuredProviders, checked: answerChain.length > 0,
+        detail: 'No cloud LLM provider with a key is configured.',
+      }
     }
     try {
       const fb = await streamLLMWithFallback({
-        base: { system: 'Reply with the single word: ok', messages: [{ role: 'user', content: 'ping' }], onToken: () => {} },
-        chain,
+        base: pingBase,
+        chain: cloudChain,
         resolveCreds: (prov) => resolveLlmCreds(deployCfg, prov),
-        inputTokens: estimateInputTokens(['ping']),
-        capUsd: parseCapUsd(org.deployConfig as any, agent.id),
+        inputTokens: pingTokens,
+        capUsd,
       })
-      return { cloudUsable: true, checked: true, provider: fb.used.provider, model: fb.used.model, configuredProviders, detail: `Cloud LLM reachable via ${fb.used.provider} (${fb.used.model}).` }
+      return {
+        answerUsable, answerDetail, answerProvider, answerModel,
+        cloudUsable: true, checked: true, provider: fb.used.provider, model: fb.used.model,
+        configuredProviders, detail: `Cloud LLM reachable via ${fb.used.provider} (${fb.used.model}).`,
+      }
     } catch (e: any) {
       const raw = String(e?.message ?? 'provider chain unavailable')
-      // Surface the common cause plainly without leaking the key/full payload.
       const detail = /invalid|x-api-key|401|403|authentication/i.test(raw)
-        ? `A configured cloud key was rejected (invalid or expired). Providers tried: ${chain.map(c => c.provider).join(', ')}.`
+        ? `A configured cloud key was rejected (invalid or expired). Providers tried: ${cloudChain.map(c => c.provider).join(', ')}.`
         : `Cloud LLM unreachable: ${raw.slice(0, 160)}`
-      return { cloudUsable: false, checked: true, configuredProviders, detail }
+      return {
+        answerUsable, answerDetail, answerProvider, answerModel,
+        cloudUsable: false, checked: true, configuredProviders, detail,
+      }
     }
   })
 
