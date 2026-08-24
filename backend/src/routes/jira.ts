@@ -10,11 +10,11 @@ import { assertAgentInOrg } from '../services/tenant-guard'
 // Project key: O7MC (per ADR + ITERATION_PLAN)
 // Auth: Jira API token (Basic auth: email:token base64)
 
-function jiraAuth(email: string, token: string): string {
+export function jiraAuth(email: string, token: string): string {
   return 'Basic ' + Buffer.from(`${email}:${token}`).toString('base64')
 }
 
-function jiraBase(domain: string): string {
+export function jiraBase(domain: string): string {
   return `https://${domain}.atlassian.net/rest/api/3`
 }
 

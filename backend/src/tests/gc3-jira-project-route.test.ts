@@ -106,3 +106,25 @@ test('[GC-3] GET /jira/projects lists org projects for the picker', async () => 
   const keys = res.json().projects.map((p: any) => p.key)
   assert.deepEqual(keys, ['MCA', 'OS'])
 })
+
+test('[GC-3] PUT /project fails closed when Jira project list is unavailable', async () => {
+  const origFetch = globalThis.fetch
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = String(input)
+    if (url.includes('/project/search')) {
+      return new Response('upstream error', { status: 503 })
+    }
+    return origFetch(input, init)
+  }) as typeof fetch
+  try {
+    const res = await app.inject({
+      method: 'PUT', url: PROJECT,
+      headers: { authorization: `Bearer ${OWNER}` },
+      payload: { projectKey: 'MCA' },
+    })
+    assert.equal(res.statusCode, 502, res.body)
+    assert.equal(res.json().error, 'Jira API error')
+  } finally {
+    globalThis.fetch = origFetch
+  }
+})
