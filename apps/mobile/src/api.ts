@@ -612,12 +612,27 @@ export const Api = {
   /** GC-2 — load persisted Command Center thread. */
   loadCommandCenterThread: (base: string, orgId: string, token: string, agentId?: string | null) => {
     const q = agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''
-    return api<{ viewer?: string | null; taskThreadId: string | null; turns: Array<{
+    return api<{ viewer?: string | null; taskThreadId: string | null; jiraProjectKey?: string | null; turns: Array<{
       id: string; role: 'user' | 'arturita' | 'assistant'; content: string
       meta?: { via?: string | null; fromAgent?: string | null; agent?: PickedAgent | null
         assignedTo?: { id: string; name: string } | null; pendingApprovalNote?: string | null }
     }> }>(base, `/api/orgs/${orgId}/arturita/thread${q}`, { token })
   },
+
+  /** GC-3 — persist Command Center Jira project selection. */
+  saveCommandCenterProject: (base: string, orgId: string, token: string, projectKey: string) =>
+    api<{ jiraProjectKey: string | null }>(base, `/api/orgs/${orgId}/arturita/project`, {
+      token, method: 'PUT', body: JSON.stringify({ projectKey }),
+    }),
+
+  /** GC-3 — list Jira projects for the Command Center picker. */
+  listJiraProjects: (base: string, orgId: string, token: string) =>
+    api<{ projects: Array<{ id: string; key: string; name: string; type?: string | null }> }>(
+      base, `/api/orgs/${orgId}/jira/projects`, { token },
+    ),
+
+  jiraStatus: (base: string, orgId: string, token: string) =>
+    api<{ connected: boolean; defaultProjectKey?: string | null }>(base, `/api/orgs/${orgId}/jira/status`, { token }),
 
   // ─── Push token registration (MOB-3) ──────────────────────────────────────
   // The backend register endpoint is USER-scoped, not org-scoped, and takes the

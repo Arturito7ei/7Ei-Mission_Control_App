@@ -8,6 +8,7 @@ import {
   rejectAttachment, attachmentChipLabel, canSendTurn, formatFileSize,
   ATTACH_EXTS, ATTACH_ACCEPT, ATTACH_MAX_BYTES,
   rejectImage, imageChipLabel, imageMediaType, IMAGE_EXTS, IMAGE_ACCEPT, IMAGE_MAX_BYTES,
+  resolveJiraProjectSelection, jiraProjectLabel,
   type Message, type ConverseResponse,
 } from './assistant.logic.ts'
 
@@ -266,4 +267,14 @@ test('[MOB-7b] a document and a photo can ride the same turn', () => {
     image: { name: 'p.jpg', size: 9, mediaType: 'image/jpeg', data: 'QUJD' },
   })
   assert.ok(r.attachment && r.image, 'the two attach paths are independent, not exclusive')
+})
+
+test('[GC-3] resolveJiraProjectSelection prefers saved, then default, then first', () => {
+  const projects = [
+    { id: '1', key: 'MCA', name: 'Mission Control' },
+    { id: '2', key: 'OS', name: '7Ei OS' },
+  ]
+  assert.equal(resolveJiraProjectSelection(projects, 'OS', 'MCA'), 'OS')
+  assert.equal(resolveJiraProjectSelection(projects, 'GONE', 'MCA'), 'MCA')
+  assert.equal(resolveJiraProjectSelection(projects, null, null), 'MCA')
 })

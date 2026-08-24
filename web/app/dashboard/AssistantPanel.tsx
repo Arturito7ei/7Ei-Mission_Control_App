@@ -25,6 +25,7 @@ import {
   rejectAttachment, attachmentChipLabel, canSendTurn, ATTACH_ACCEPT,
   rejectImage, imageChipLabel, imageMediaType, IMAGE_ACCEPT,
   ARTURITA_CHOICE, type AttachedDoc, type AttachedImage, type AgentIdentity, toWireAgentId,
+  resolveJiraProjectSelection, jiraProjectLabel, type JiraProjectOption,
 } from './assistant.logic'
 import { AgentAvatar } from './agent/shared'
 import { provenanceChip, reactorChips } from './reactor.logic'
@@ -127,6 +128,12 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
   // never sends a guessed id.
   const [recipient, setRecipient] = useState<string>(ARTURITA_CHOICE)
   const [roster, setRoster] = useState<RosterAgent[]>([])
+  // GC-3 — Jira project context for Command Center (org-scoped, persisted server-side).
+  const [jiraProjects, setJiraProjects] = useState<JiraProjectOption[]>([])
+  const [jiraConnected, setJiraConnected] = useState(false)
+  const [jiraDefaultKey, setJiraDefaultKey] = useState<string | null>(null)
+  const [selectedProject, setSelectedProject] = useState('')
+  const [jiraProjectHint, setJiraProjectHint] = useState<string | null>(null)
 
   // GC-1 — the recipient as an identity to RENDER (avatar + name). Resolved from the
   // roster; falls back to Arturita, which is also what an id that has vanished from the
@@ -161,11 +168,54 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
       const token = await getToken()
       const wire = toWireAgentId(choice)
       const q = wire ? `?agentId=${encodeURIComponent(wire)}` : ''
-      const r = await api<{ turns: Parameters<typeof persistedTurnsToMessages>[0]; taskThreadId: string | null }>(
+      const r = await api<{ turns: Parameters<typeof persistedTurnsToMessages>[0]; taskThreadId: string | null; jiraProjectKey?: string | null }>(
         `/api/orgs/${orgId}/arturita/thread${q}`, { token })
       setMessages(persistedTurnsToMessages(r.turns))
       threadRef.current = r.taskThreadId
+      if (jiraProjects.length) {
+        setSelectedProject(resolveJiraProjectSelection(jiraProjects, r.jiraProjectKey, jiraDefaultKey))
+      }
     } catch { /* empty thread is fine on first visit */ }
+  }, [orgId, getToken, jiraProjects, jiraDefaultKey])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        const status = await api<{ connected: boolean; defaultProjectKey?: string | null }>(`/api/orgs/${orgId}/jira/status`, { token })
+        if (cancelled) return
+        setJiraConnected(!!status.connected)
+        setJiraDefaultKey(status.defaultProjectKey ?? null)
+        if (!status.connected) {
+          setJiraProjects([])
+          setSelectedProject('')
+          return
+        }
+        const listed = await api<{ projects: JiraProjectOption[] }>(`/api/orgs/${orgId}/jira/projects`, { token })
+        if (cancelled) return
+        setJiraProjects(listed.projects ?? [])
+        const thread = await api<{ jiraProjectKey?: string | null }>(`/api/orgs/${orgId}/arturita/thread`, { token })
+        if (cancelled) return
+        setSelectedProject(resolveJiraProjectSelection(listed.projects ?? [], thread.jiraProjectKey, status.defaultProjectKey ?? null))
+      } catch {
+        if (!cancelled) setJiraProjectHint('Could not load Jira projects')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, getToken])
+
+  const persistProjectSelection = useCallback(async (projectKey: string) => {
+    if (!projectKey) return
+    try {
+      const token = await getToken()
+      await api<{ jiraProjectKey: string | null }>(`/api/orgs/${orgId}/arturita/project`, {
+        token, method: 'PUT', body: JSON.stringify({ projectKey }),
+      })
+      setJiraProjectHint(null)
+    } catch (e: any) {
+      setJiraProjectHint(e?.message ?? 'Could not save project selection')
+    }
   }, [orgId, getToken])
 
   useEffect(() => { loadPersistedThread(recipient) }, [recipient, loadPersistedThread])
@@ -782,6 +832,35 @@ export default function AssistantPanel({ orgId, getToken }: { orgId: string; get
               ⚡ agent
             </span>
           )}
+        </div>
+        {/* GC-3 — Jira project context. Data source is Jira, not the native projects table. */}
+        <div style={s.recipientBar}>
+          <span style={{ color: tk.muted, fontWeight: 700, fontSize: text.xs.fontSize, letterSpacing: 0.4 }}>PROJECT</span>
+          {!jiraConnected ? (
+            <span style={sxHint}>Connect Jira in Connectors to pick a project</span>
+          ) : jiraProjects.length === 0 ? (
+            <span style={sxHint}>No Jira projects available</span>
+          ) : (
+            <span style={s.recipientWrap}>
+              <select
+                value={selectedProject}
+                onChange={e => {
+                  const next = e.target.value
+                  setSelectedProject(next)
+                  void persistProjectSelection(next)
+                }}
+                aria-label="Choose the Jira project for Command Center context"
+                title="Choose the Jira project for Command Center context"
+                style={s.recipientSelect}
+              >
+                {jiraProjects.map(p => (
+                  <option key={p.id} value={p.key} style={sxOption}>{jiraProjectLabel([p], p.key)}</option>
+                ))}
+              </select>
+              <span aria-hidden style={s.recipientCaret}>▾</span>
+            </span>
+          )}
+          {jiraProjectHint && <span style={{ ...sxHint, color: 'var(--warn)' }}>{jiraProjectHint}</span>}
         </div>
         <div style={{ display: 'flex', gap: space.sm }}>
           {/* The pickers are hidden; the paperclip/frame buttons drive them (a bare

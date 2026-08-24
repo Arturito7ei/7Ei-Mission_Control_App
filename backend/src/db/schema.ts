@@ -686,6 +686,8 @@ export const commandCenterThreads = sqliteTable('command_center_threads', {
   orgId:          text('org_id').notNull(),
   targetAgentKey: text('target_agent_key').notNull().default(''),
   taskThreadId:   text('task_thread_id'),
+  /** GC-3 — org-level Jira project context for Command Center (stored on targetAgentKey=''). */
+  jiraProjectKey: text('jira_project_key'),
   updatedAt:      integer('updated_at', { mode: 'timestamp' }).notNull(),
   createdAt:      integer('created_at', { mode: 'timestamp' }).notNull(),
 })
