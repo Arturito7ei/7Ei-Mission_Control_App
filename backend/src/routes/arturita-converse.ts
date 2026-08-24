@@ -55,9 +55,7 @@ const ProjectBody = z.object({
   projectKey: z.string().nullable().optional(),
 })
 
-type JiraProjectKeysResult =
-  | { ok: true; keys: string[] }
-  | { ok: false; error: string }
+type JiraProjectKeysResult = { ok: boolean; keys: string[]; error?: string }
 
 async function listJiraProjectKeys(orgId: string): Promise<JiraProjectKeysResult> {
   const cfg = await getJiraCfg(orgId)
@@ -65,7 +63,7 @@ async function listJiraProjectKeys(orgId: string): Promise<JiraProjectKeysResult
   const res = await fetch(`${jiraBase(cfg.domain)}/project/search?maxResults=50`, {
     headers: { Authorization: jiraAuth(cfg.email, cfg.apiToken), Accept: 'application/json' },
   })
-  if (!res.ok) return { ok: false, error: 'Jira API error' }
+  if (!res.ok) return { ok: false, keys: [], error: 'Jira API error' }
   const data = await res.json() as any
   return { ok: true, keys: (data.values ?? []).map((p: any) => String(p.key)).filter(Boolean) }
 }
@@ -205,7 +203,7 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
       const cfg = await getJiraCfg(orgId)
       if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
       const listed = await listJiraProjectKeys(orgId)
-      if (!listed.ok) return reply.code(502).send({ error: listed.error })
+      if (!listed.ok) return reply.code(502).send({ error: listed.error ?? 'Jira API error' })
       if (listed.keys.length && !listed.keys.includes(projectKey)) {
         return reply.code(400).send({ error: 'Unknown Jira project key for this org' })
       }

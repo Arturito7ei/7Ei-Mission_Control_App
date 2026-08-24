@@ -185,10 +185,11 @@ allow-list is not doing anything, and the day something starts relying on it, it
 fly secrets set ALLOWED_ORIGINS='https://app.7ei.ai' -a 7ei-backend
 ```
 
-**5. Branch protection is NOT enabled on `main`.** Confirmed: the API returns
-`404 Branch not protected`. Combined with the standing `--squash --admin` merge convention, **no
-check gates any merge** — CI reports, it does not block. Both halves need fixing to change that:
-turn protection on, and stop making `--admin` routine.
+**5. Branch protection is enabled on `main` (verified 2026-08-24).** Ten required status
+contexts, `strict: true`, `enforce_admins: true`, `required_linear_history: true`,
+`allow_force_pushes: false`, `required_conversation_resolution: true`. CI gates merge — a PR with
+a failing required check stays `BLOCKED`. Do not rely on this doc for live protection config; use
+`gh api repos/Arturito7ei/7Ei-Mission_Control_App/branches/main/protection`.
 
 **6. A zombie Dispatch prompt needs dismissing on the device — not a code issue.** A
 "Disconnected / Approve once" card recurs from the dead MOB-5a sessions. **Fully diagnosed:** it is
