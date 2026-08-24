@@ -46,7 +46,7 @@ import {
   buildUserBubbleText, loadThread, appendTurns, targetAgentKey, turnsToConverseHistory,
   getOrgJiraProjectKey, setOrgJiraProjectKey, parseJiraProjectKey,
 } from '../services/command-center-thread'
-import { getJiraCfg } from './jira'
+import { getJiraCfg, jiraAuth, jiraBase } from './jira'
 import { resolveVaultForOrg, fetchSharedMemory } from '../services/agent-memory'
 import { loadConnectorTools } from '../services/agent-connector-tools'
 import { parseCapabilities } from '../services/governance2'
@@ -55,18 +55,19 @@ const ProjectBody = z.object({
   projectKey: z.string().nullable().optional(),
 })
 
-async function listJiraProjectKeys(orgId: string): Promise<string[]> {
+type JiraProjectKeysResult =
+  | { ok: true; keys: string[] }
+  | { ok: false; error: string }
+
+async function listJiraProjectKeys(orgId: string): Promise<JiraProjectKeysResult> {
   const cfg = await getJiraCfg(orgId)
-  if (!cfg) return []
-  const res = await fetch(`https://${cfg.domain}.atlassian.net/rest/api/3/project/search?maxResults=50`, {
-    headers: {
-      Authorization: 'Basic ' + Buffer.from(`${cfg.email}:${cfg.apiToken}`).toString('base64'),
-      Accept: 'application/json',
-    },
+  if (!cfg) return { ok: true, keys: [] }
+  const res = await fetch(`${jiraBase(cfg.domain)}/project/search?maxResults=50`, {
+    headers: { Authorization: jiraAuth(cfg.email, cfg.apiToken), Accept: 'application/json' },
   })
-  if (!res.ok) return []
+  if (!res.ok) return { ok: false, error: 'Jira API error' }
   const data = await res.json() as any
-  return (data.values ?? []).map((p: any) => String(p.key)).filter(Boolean)
+  return { ok: true, keys: (data.values ?? []).map((p: any) => String(p.key)).filter(Boolean) }
 }
 
 const ConverseBody = z.object({
@@ -203,8 +204,9 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     if (projectKey) {
       const cfg = await getJiraCfg(orgId)
       if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
-      const keys = await listJiraProjectKeys(orgId)
-      if (keys.length && !keys.includes(projectKey)) {
+      const listed = await listJiraProjectKeys(orgId)
+      if (!listed.ok) return reply.code(502).send({ error: listed.error })
+      if (listed.keys.length && !listed.keys.includes(projectKey)) {
         return reply.code(400).send({ error: 'Unknown Jira project key for this org' })
       }
     }

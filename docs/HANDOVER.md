@@ -199,11 +199,10 @@ works: the grant is single-use and needs a live process to consume it (see the z
 diagnostic at the end of this file). **Resolution is operator-side on the device:** swipe the card
 away, or toggle the Dispatch connection off and back on in the desktop app.
 
-**7. `npm audit` is permanently red — 5 vulnerabilities (4 moderate, 1 high).** All pre-existing,
-in `drizzle-kit` and `form-data` (transitive dev-tooling). This is *why* the Security Scan
-workflow fails on every branch and why nothing gates on it. It is a known-and-accepted state, not
-a new regression — but it means "the security check is red" carries no signal, which is its own
-hazard. Worth clearing so the signal comes back.
+**7. `npm audit` checks are green on `main` (verified 2026-08-24 @ `570b1d8`).** Backend, web,
+and `apps/mobile` audit steps all pass in CI. This item previously claimed five permanent
+vulnerabilities in `drizzle-kit` / `form-data` — that state is stale; treat a future red audit as
+a real signal again.
 
 ---
 
@@ -213,8 +212,8 @@ hazard. Worth clearing so the signal comes back.
 **dies on refresh**. Deferred because GC-1 deliberately avoided a server-side provenance store;
 adding one is the whole of GC-2, not a slice of it. This is the most user-visible gap on the list.
 
-**GC-3 — Jira-backed project selector.** The picker binds to Jira projects rather than the native
-table. Deferred as a separate story.
+**GC-3 — Jira-backed project selector.** Shipped in #368 — picker binds to Jira projects,
+selection persists in the GC-2 thread row.
 
 **GC-4 — project-scoped retrieval.** Expensive: it needs a project dimension threaded through the
 knowledge store *and* Pinecone. Deferred on cost, not on design.
