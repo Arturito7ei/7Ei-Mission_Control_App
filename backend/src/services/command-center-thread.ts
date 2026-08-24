@@ -5,6 +5,30 @@ import { db, schema } from '../db/client'
 
 export const MAX_TURNS = 200
 export const HISTORY_LIMIT = 20
+/** Mirrors connector-jira PROJECT_KEY_RE — Jira project keys are short alphanumerics. */
+export const JIRA_PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_]{0,63}$/
+
+export function parseJiraProjectKey(raw: unknown): string | null {
+  if (raw == null || raw === '') return null
+  const key = String(raw).trim()
+  if (!key) return null
+  if (!JIRA_PROJECT_KEY_RE.test(key)) throw new Error('invalid Jira project key')
+  return key
+}
+
+/** GC-3 — org-level Command Center project (stored on the Arturita default thread row). */
+export async function getOrgJiraProjectKey(orgId: string): Promise<string | null> {
+  const thread = await db.query.commandCenterThreads.findFirst({
+    where: and(eq(schema.commandCenterThreads.orgId, orgId), eq(schema.commandCenterThreads.targetAgentKey, '')),
+  })
+  return thread?.jiraProjectKey ?? null
+}
+
+export async function setOrgJiraProjectKey(orgId: string, projectKey: string | null): Promise<void> {
+  const thread = await getOrCreateThread(orgId, '', new Date())
+  await db.update(schema.commandCenterThreads).set({ jiraProjectKey: projectKey, updatedAt: new Date() } as any)
+    .where(eq(schema.commandCenterThreads.id, thread.id))
+}
 
 /** Wire / DB key for the GC-1 picker. Arturita default = '' (never NULL in UNIQUE). */
 export function targetAgentKey(requestedAgentId: string | null | undefined, arturitaId: string): string {

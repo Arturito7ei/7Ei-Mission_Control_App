@@ -464,3 +464,24 @@ export function routingBadge(msg: Pick<Message, 'mode' | 'routing'>): RoutingBad
   if (msg.mode === 'agent') return { icon: '⚡', label: 'Answered by agent', tone: 'delegate' }
   return { icon: '💬', label: 'Answered directly', tone: 'answer' }
 }
+
+// ─── GC-3 — Jira project picker (Command Center context) ─────────────────────
+
+export type JiraProjectOption = { id: string; key: string; name: string; type?: string | null }
+
+/** Pick the saved key when still valid, else Jira default, else first project. */
+export function resolveJiraProjectSelection(
+  projects: ReadonlyArray<JiraProjectOption>,
+  savedKey: string | null | undefined,
+  defaultKey: string | null | undefined,
+): string {
+  const keys = new Set(projects.map(p => p.key))
+  if (savedKey && keys.has(savedKey)) return savedKey
+  if (defaultKey && keys.has(defaultKey)) return defaultKey
+  return projects[0]?.key ?? ''
+}
+
+export function jiraProjectLabel(projects: ReadonlyArray<JiraProjectOption>, key: string): string {
+  const hit = projects.find(p => p.key === key)
+  return hit ? `${hit.key} — ${hit.name}` : (key || 'No project')
+}

@@ -58,6 +58,9 @@ import {
   ARTURITA_CHOICE, pickableAgents, resolveRecipient, toWireAgentId,
   type PickedAgent,
 } from '../agentPicker'
+import {
+  jiraProjectLabel, resolveJiraProjectSelection, type JiraProjectOption,
+} from '../jiraProjectPicker'
 import { useAuth } from '../auth'
 import {
   attachmentChipLabel, canSendTurn, imageChipLabel, rejectAttachment, rejectImage,
@@ -153,6 +156,12 @@ export default function CommandCenterScreen() {
   const [recipient, setRecipient] = useState<string>(ARTURITA_CHOICE)
   const [roster, setRoster] = useState<Agent[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
+  // GC-3 — Jira project context (org-scoped, persisted server-side).
+  const [jiraProjects, setJiraProjects] = useState<JiraProjectOption[]>([])
+  const [jiraConnected, setJiraConnected] = useState(false)
+  const [selectedProject, setSelectedProject] = useState('')
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false)
+  const [jiraDefaultKey, setJiraDefaultKey] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -213,10 +222,40 @@ export default function CommandCenterScreen() {
           pendingApprovalNote: t.meta?.pendingApprovalNote ?? null,
           assignedTo: t.meta?.assignedTo ?? null,
         })))
+        if (jiraProjects.length) {
+          setSelectedProject(resolveJiraProjectSelection(jiraProjects, r.jiraProjectKey, jiraDefaultKey))
+        }
       } catch { /* first visit */ }
     })()
     return () => { cancelled = true }
-  }, [orgId, apiUrl, getToken, recipient])
+  }, [orgId, apiUrl, getToken, recipient, jiraProjects, jiraDefaultKey])
+
+  useEffect(() => {
+    if (!orgId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getToken()
+        if (!token || cancelled) return
+        const status = await Api.jiraStatus(apiUrl, orgId, token)
+        if (cancelled) return
+        setJiraConnected(!!status.connected)
+        setJiraDefaultKey(status.defaultProjectKey ?? null)
+        if (!status.connected) {
+          setJiraProjects([])
+          setSelectedProject('')
+          return
+        }
+        const listed = await Api.listJiraProjects(apiUrl, orgId, token)
+        if (cancelled) return
+        setJiraProjects(listed.projects ?? [])
+        const thread = await Api.loadCommandCenterThread(apiUrl, orgId, token, null)
+        if (cancelled) return
+        setSelectedProject(resolveJiraProjectSelection(listed.projects ?? [], thread.jiraProjectKey, status.defaultProjectKey ?? null))
+      } catch { /* non-fatal */ }
+    })()
+    return () => { cancelled = true }
+  }, [orgId, apiUrl, getToken])
 
   const recorderAvailable = !!getAv()
   const captureEngine = resolveCaptureEngine({ recorderAvailable, sttConfigured })
@@ -951,6 +990,61 @@ export default function CommandCenterScreen() {
               Arturita answers directly. Another agent runs the turn itself — its own memory,
               tools and connectors — and anything irreversible still needs your approval.
             </Text>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* GC-3 — Jira project context. Data source is Jira, not the native projects table. */}
+      <Pressable
+        style={s.recipientBar}
+        onPress={() => { if (jiraConnected && jiraProjects.length) setProjectPickerOpen(true) }}
+        accessibilityRole="button"
+        accessibilityLabel={
+          jiraConnected && selectedProject
+            ? `Project ${selectedProject}. Tap to choose a different Jira project.`
+            : 'Jira project context unavailable'
+        }
+      >
+        <Text style={s.recipientLabel}>PROJECT</Text>
+        <Text style={s.recipientName} numberOfLines={1}>
+          {jiraConnected
+            ? (selectedProject ? jiraProjectLabel(jiraProjects, selectedProject) : 'No Jira projects')
+            : 'Connect Jira in Connectors'}
+        </Text>
+        {jiraConnected && jiraProjects.length ? <Text style={s.recipientCaret}>▾</Text> : null}
+      </Pressable>
+
+      <Modal visible={projectPickerOpen} transparent animationType="fade" onRequestClose={() => setProjectPickerOpen(false)}>
+        <Pressable style={s.modalBackdrop} onPress={() => setProjectPickerOpen(false)}>
+          <Pressable style={s.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={s.modalTitle}>Which Jira project?</Text>
+            <ScrollView style={{ maxHeight: 380 }}>
+              {jiraProjects.map((p) => {
+                const on = p.key === selectedProject
+                return (
+                  <Pressable
+                    key={p.id}
+                    style={[s.optionRow, on ? s.optionRowOn : null]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    onPress={async () => {
+                      setSelectedProject(p.key)
+                      setProjectPickerOpen(false)
+                      try {
+                        const token = await getToken()
+                        if (token && orgId) await Api.saveCommandCenterProject(apiUrl, orgId, token, p.key)
+                      } catch { /* selection stays local until next reload */ }
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.optionName}>{p.key}</Text>
+                      <Text style={s.optionRole}>{p.name}</Text>
+                    </View>
+                    {on ? <Text style={s.optionTick}>✓</Text> : null}
+                  </Pressable>
+                )
+              })}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>

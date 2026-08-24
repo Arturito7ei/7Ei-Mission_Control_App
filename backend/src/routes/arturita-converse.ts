@@ -44,10 +44,30 @@ import {
 } from '../services/converse-images'
 import {
   buildUserBubbleText, loadThread, appendTurns, targetAgentKey, turnsToConverseHistory,
+  getOrgJiraProjectKey, setOrgJiraProjectKey, parseJiraProjectKey,
 } from '../services/command-center-thread'
+import { getJiraCfg } from './jira'
 import { resolveVaultForOrg, fetchSharedMemory } from '../services/agent-memory'
 import { loadConnectorTools } from '../services/agent-connector-tools'
 import { parseCapabilities } from '../services/governance2'
+
+const ProjectBody = z.object({
+  projectKey: z.string().nullable().optional(),
+})
+
+async function listJiraProjectKeys(orgId: string): Promise<string[]> {
+  const cfg = await getJiraCfg(orgId)
+  if (!cfg) return []
+  const res = await fetch(`https://${cfg.domain}.atlassian.net/rest/api/3/project/search?maxResults=50`, {
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(`${cfg.email}:${cfg.apiToken}`).toString('base64'),
+      Accept: 'application/json',
+    },
+  })
+  if (!res.ok) return []
+  const data = await res.json() as any
+  return (data.values ?? []).map((p: any) => String(p.key)).filter(Boolean)
+}
 
 const ConverseBody = z.object({
   message: z.string(),
@@ -163,12 +183,33 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
     }
     const key = targetAgentKey(requested, agent.id)
     const loaded = await loadThread(orgId, key)
+    const jiraProjectKey = await getOrgJiraProjectKey(orgId)
     return {
       viewer: (req as any).auth?.userId ?? (req as any).userId ?? null,
       targetAgentKey: key,
       taskThreadId: loaded.taskThreadId,
+      jiraProjectKey,
       turns: loaded.turns,
     }
+  })
+
+  // GC-3 — persist the org's Jira project selection in the GC-2 store (no second table).
+  app.put('/api/orgs/:orgId/arturita/project', async (req, reply) => {
+    const { orgId } = req.params as any
+    let body: z.infer<typeof ProjectBody>
+    try { body = ProjectBody.parse(req.body ?? {}) } catch (e: any) { return reply.code(400).send({ error: e?.message ?? 'invalid body' }) }
+    let projectKey: string | null
+    try { projectKey = parseJiraProjectKey(body.projectKey) } catch (e: any) { return reply.code(400).send({ error: e?.message ?? 'invalid project key' }) }
+    if (projectKey) {
+      const cfg = await getJiraCfg(orgId)
+      if (!cfg) return reply.code(400).send({ error: 'Jira not connected' })
+      const keys = await listJiraProjectKeys(orgId)
+      if (keys.length && !keys.includes(projectKey)) {
+        return reply.code(400).send({ error: 'Unknown Jira project key for this org' })
+      }
+    }
+    await setOrgJiraProjectKey(orgId, projectKey)
+    return { jiraProjectKey: projectKey }
   })
 
   app.post('/api/orgs/:orgId/arturita/converse', { bodyLimit: CONVERSE_BODY_LIMIT }, async (req, reply) => {
@@ -764,8 +805,12 @@ export async function arturitaConverseRoutes(app: FastifyInstance) {
   })
 
   documentEndpoint('GET', '/api/orgs/:orgId/arturita/thread', {
-    summary: 'Load persisted Command Center thread (GC-2)',
+    summary: 'Load persisted Command Center thread (GC-2) and org Jira project (GC-3)',
     tag: 'arturita',
+  })
+  documentEndpoint('PUT', '/api/orgs/:orgId/arturita/project', {
+    summary: 'Persist Command Center Jira project selection (GC-3)',
+    tag: 'arturita', body: ProjectBody,
   })
   documentEndpoint('POST', '/api/orgs/:orgId/arturita/converse', {
     summary: 'Conversational front door — Arturita answers directly (F1 fallback chain) unless the operator explicitly delegates/builds (→ task/agent flow). '

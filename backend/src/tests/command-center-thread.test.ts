@@ -8,7 +8,7 @@ process.env.SECRETS_ENC_KEY = 'gc2-thread-key'
 
 import {
   targetAgentKey, buildUserBubbleText, turnsToConverseHistory,
-  appendTurns, loadThread,
+  appendTurns, loadThread, parseJiraProjectKey,
 } from '../services/command-center-thread'
 
 test('[GC-2] targetAgentKey: Arturita default is empty string', () => {
@@ -49,4 +49,23 @@ test('[GC-2] appendTurns + loadThread round-trip', { concurrency: false }, async
   assert.equal(loaded.turns[0].content, 'Hello')
   assert.equal(loaded.turns[1].content, 'Hi there')
   assert.equal(loaded.taskThreadId, 'task-1')
+})
+
+test('[GC-3] setOrgJiraProjectKey persists on the Arturita default thread row', { concurrency: false }, async () => {
+  const ORG = `gc3-org-${randomUUID()}`
+  const { db, schema } = await import('../db/client')
+  await (await import('../db/setup')).setupDatabase()
+  await db.insert(schema.organisations).values({ id: ORG, name: 'GC3 Org', ownerId: 'u1', createdAt: new Date() })
+  const { setOrgJiraProjectKey, getOrgJiraProjectKey } = await import('../services/command-center-thread')
+  assert.equal(await getOrgJiraProjectKey(ORG), null)
+  await setOrgJiraProjectKey(ORG, 'MCA')
+  assert.equal(await getOrgJiraProjectKey(ORG), 'MCA')
+  await setOrgJiraProjectKey(ORG, null)
+  assert.equal(await getOrgJiraProjectKey(ORG), null)
+})
+
+test('[GC-3] parseJiraProjectKey rejects malformed keys', () => {
+  assert.throws(() => parseJiraProjectKey('bad key'), /invalid/)
+  assert.equal(parseJiraProjectKey('  MCA  '), 'MCA')
+  assert.equal(parseJiraProjectKey(null), null)
 })

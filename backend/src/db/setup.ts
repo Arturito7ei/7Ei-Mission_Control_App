@@ -313,5 +313,10 @@ export async function setupDatabase() {
     await dbClient.execute(`CREATE INDEX IF NOT EXISTS idx_cc_turns_thread ON command_center_turns(thread_id, created_at)`)
   } catch { /* already exists */ }
 
+  // GC-3 — Jira project selection on the GC-2 org prefs row (target_agent_key='')
+  try {
+    await dbClient.execute(`ALTER TABLE command_center_threads ADD COLUMN jira_project_key TEXT`)
+  } catch { /* already exists */ }
+
   console.log('✅ Database ready')
 }
