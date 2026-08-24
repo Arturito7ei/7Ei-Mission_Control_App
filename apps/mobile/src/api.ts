@@ -233,6 +233,18 @@ export type Approval = {
   payload?: any
 }
 
+/** MCA-PC A3 / MCA-84 — attention rows from GET /inbox (blocked, failed, review, attention). */
+export type InboxItem = {
+  taskId: string
+  title: string
+  kind: string
+  priority: string
+  agentName: string
+  agentEmoji: string
+  retryable?: boolean
+  error?: string | null
+}
+
 /**
  * Prior turns sent with a /converse call — the web's default, mirrored.
  *
@@ -462,6 +474,24 @@ export const Api = {
     api<{ approvals: Approval[] }>(base, `/api/orgs/${orgId}/approvals?status=pending`, {
       token,
     }).then((r) => r.approvals ?? []),
+
+  // S6 — the desk's unified inbox queue (attention rows + pending approvals).
+  inbox: (base: string, token: string, orgId: string) =>
+    api<{ items: InboxItem[]; approvals: Approval[]; count: number }>(
+      base,
+      `/api/orgs/${orgId}/inbox`,
+      { token },
+    ),
+
+  dismissInboxItem: (base: string, token: string, orgId: string, taskId: string) =>
+    api<{ ok: boolean }>(base, `/api/orgs/${orgId}/inbox/dismiss`, {
+      token,
+      method: 'POST',
+      body: JSON.stringify({ taskId }),
+    }),
+
+  retryTask: (base: string, token: string, taskId: string) =>
+    api<unknown>(base, `/api/tasks/${taskId}/execute`, { token, method: 'POST' }),
 
   // Decide an approval. For a DANGEROUS type approved from the phone, the backend
   // requires STEP-UP: a fresh Arturita command-session token presented in the

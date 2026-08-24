@@ -108,6 +108,12 @@ export async function taskRoutes(app: FastifyInstance) {
     inboxState: schema.tasks.inboxState, priority: schema.tasks.priority,
     agentId: schema.tasks.agentId, output: schema.tasks.output, createdAt: schema.tasks.createdAt,
   }
+  // S5 hygiene — badge poll only needs kind classification; never haul agent output.
+  const inboxCountCols = {
+    id: schema.tasks.id, title: schema.tasks.title, status: schema.tasks.status,
+    inboxState: schema.tasks.inboxState, priority: schema.tasks.priority,
+    agentId: schema.tasks.agentId, createdAt: schema.tasks.createdAt,
+  }
   const dismissedSet = async (orgId: string, userId: string) => new Set(
     (await db.select({ taskId: schema.inboxDismissals.taskId }).from(schema.inboxDismissals)
       .where(and(eq(schema.inboxDismissals.orgId, orgId), eq(schema.inboxDismissals.userId, userId)))).map(d => d.taskId))
@@ -140,7 +146,7 @@ export async function taskRoutes(app: FastifyInstance) {
     const { orgId } = req.params as any
     const userId = (req as any).userId ?? 'anon'
     const [tasks, dismissed, pendingApprovals] = await Promise.all([
-      db.select(inboxCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).limit(300),
+      db.select(inboxCountCols).from(schema.tasks).where(eq(schema.tasks.orgId, orgId)).limit(300),
       dismissedSet(orgId, userId),
       db.select({ id: schema.approvalRequests.id }).from(schema.approvalRequests).where(and(eq(schema.approvalRequests.orgId, orgId), eq(schema.approvalRequests.status, 'pending'))),
     ])

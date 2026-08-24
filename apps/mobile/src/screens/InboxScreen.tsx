@@ -8,8 +8,8 @@
 // segmented control, approvals under Inbox and the Task Log under Tasks.
 //
 // The panes themselves are untouched:
-//   * Inbox → ApprovalsPane — the pre-fold InboxScreen, carried across verbatim.
-//     THE MOB-4 STEP-UP FLOW IS UNCHANGED, deliberately: approve/reject/
+//   * Inbox → InboxSegmentPane — attention queue (S6) + ApprovalsPane. THE MOB-4
+//     STEP-UP FLOW inside ApprovalsPane is UNCHANGED, deliberately: approve/reject/
 //     request-changes and the on-device step-up gate are the same code they were,
 //     because a layout change must not reach into the gate that gets dangerous
 //     actions approved from a phone.
@@ -28,7 +28,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { INBOX_SEGMENTS, isInboxSegment, resolveInboxSegment } from '../inboxSegments'
 import { font, space, theme } from '../theme'
 import type { ScreenNav } from '../navigation'
-import ApprovalsPane from './ApprovalsPane'
+import InboxSegmentPane from './InboxSegmentPane'
 import ChatPane from './ChatPane'
 import TasksScreen from './TasksScreen'
 
@@ -86,7 +86,7 @@ export default function InboxScreen({
         ) : segment === 'tasks' ? (
           <TasksScreen onOpenTab={openTab} />
         ) : (
-          <ApprovalsPane />
+          <InboxSegmentPane />
         )}
       </View>
     </View>

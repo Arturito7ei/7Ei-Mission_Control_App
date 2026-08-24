@@ -40,7 +40,15 @@ import StepUpModal from './StepUpModal'
  *  a "what did I just decide" tail, not a history view — that is the Activity tab. */
 const DECIDED_LIMIT = 10
 
-export default function ApprovalsPane() {
+export default function ApprovalsPane({
+  header,
+  onRefreshExtra,
+}: {
+  /** S6 — attention queue rendered above the approvals list (layout hook only). */
+  header?: React.ReactNode
+  /** S6 — reload attention rows on pull-to-refresh alongside approvals. */
+  onRefreshExtra?: () => void | Promise<void>
+} = {}) {
   const { apiUrl, getToken, orgId } = useAuth()
   const [items, setItems] = useState<Approval[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -82,8 +90,9 @@ export default function ApprovalsPane() {
       setError(e?.message ?? 'Failed to load approvals.')
       setItems([])
     }
+    await onRefreshExtra?.()
     loadDecisions()
-  }, [apiUrl, getToken, orgId, loadDecisions])
+  }, [apiUrl, getToken, orgId, loadDecisions, onRefreshExtra])
 
   useEffect(() => {
     load()
@@ -159,6 +168,7 @@ export default function ApprovalsPane() {
         <RefreshControl refreshing={items === null} onRefresh={load} tintColor={theme.blue} />
       }
     >
+      {header}
       {error ? (
         <View style={{ marginBottom: space.lg }}>
           <Banner kind="error">{error}</Banner>
