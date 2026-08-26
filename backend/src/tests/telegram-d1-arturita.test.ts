@@ -105,7 +105,7 @@ test('[D1] setup-webhook refuses registration when no signing secret is configur
   try {
     const res = await app.inject({ method: 'POST', url: '/api/telegram/setup-webhook' })
     assert.equal(res.statusCode, 400)
-    assert.match(res.body, /TELEGRAM_WEBHOOK_SECRET|WEBHOOK_SIGNING_SECRET/)
+    assert.match(res.body, /TELEGRAM_WEBHOOK_SECRET/)
   } finally {
     if (prevTelegram !== undefined) process.env.TELEGRAM_WEBHOOK_SECRET = prevTelegram
     if (prevWebhook !== undefined) process.env.WEBHOOK_SIGNING_SECRET = prevWebhook

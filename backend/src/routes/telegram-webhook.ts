@@ -94,7 +94,7 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
     const webhookSecret = resolveTelegramWebhookSecret()
     if (!webhookSecret) {
       return reply.code(400).send({
-        error: 'TELEGRAM_WEBHOOK_SECRET or WEBHOOK_SIGNING_SECRET must be set before registering the webhook',
+        error: 'TELEGRAM_WEBHOOK_SECRET must be set before registering the webhook',
       })
     }
 

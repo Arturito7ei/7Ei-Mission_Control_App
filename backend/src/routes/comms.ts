@@ -4,12 +4,8 @@ import { db, schema } from '../db/client'
 import { eq, desc, and } from 'drizzle-orm'
 import { randomUUID } from 'crypto'
 import { getGoogleConnectorCfg } from './connectors'
-import { checkWebhook, deriveWebhookSecret, webhookFailClosed } from '../services/webhook-auth'
+import { checkWebhook, deriveWebhookSecret, webhookFailClosed, resolveTelegramWebhookSecret } from '../services/webhook-auth'
 import { assertAgentInOrg } from '../services/tenant-guard'
-
-// Signing secret for per-org inbound webhook receivers. Falls back to the legacy
-// TELEGRAM_WEBHOOK_SECRET so deployments that already secured Telegram keep working.
-const telegramSigningSecret = () => process.env.WEBHOOK_SIGNING_SECRET ?? process.env.TELEGRAM_WEBHOOK_SECRET
 
 // ─── Unified Inbox ────────────────────────────────────────────────────────────
 // Aggregates messages across channels into a single feed per org.
@@ -161,7 +157,7 @@ export async function commsRoutes(app: FastifyInstance) {
       // register a per-org secret_token — Telegram echoes it back on every update
       // in the x-telegram-bot-api-secret-token header, which the receiver verifies.
       const webhookUrl = `${process.env.PUBLIC_URL ?? 'https://api.7ei.ai'}/api/telegram/webhook/${orgId}`
-      const secret = telegramSigningSecret()
+      const secret = resolveTelegramWebhookSecret()
       const setWebhookUrl = new URL(`https://api.telegram.org/bot${botToken}/setWebhook`)
       setWebhookUrl.searchParams.set('url', webhookUrl)
       if (secret) setWebhookUrl.searchParams.set('secret_token', deriveWebhookSecret(secret, 'telegram', orgId))
@@ -222,7 +218,7 @@ export async function commsWebhookRoutes(app: FastifyInstance) {
     // closed) — this receiver writes user-role rows into agent threads, so an
     // open posture in prod was unauthenticated message injection.
     const provided = req.headers['x-telegram-bot-api-secret-token'] as string | undefined
-    const { authorized } = checkWebhook(telegramSigningSecret(), 'telegram', orgId, provided, webhookFailClosed(process.env.NODE_ENV))
+    const { authorized } = checkWebhook(resolveTelegramWebhookSecret(), 'telegram', orgId, provided, webhookFailClosed(process.env.NODE_ENV))
     if (!authorized) return reply.code(403).send({ error: 'Invalid webhook signature' })
 
     const update = req.body as any
