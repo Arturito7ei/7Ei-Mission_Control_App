@@ -5,10 +5,9 @@
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
 import { eq } from 'drizzle-orm'
-import { randomUUID } from 'crypto'
-import { TelegramBot, formatAgentResponse } from '../services/telegram-bot'
-import { webhookFailClosed } from '../services/webhook-auth'
-import { executeAgentTask } from '../services/agent-executor'
+import { TelegramBot } from '../services/telegram-bot'
+import { webhookFailClosed, resolveTelegramWebhookSecret } from '../services/webhook-auth'
+import { runArturitaConverseTurn, NO_LLM_MESSAGE } from '../services/arturita-converse-turn'
 import {
   parseCommand, handleStart, handleStatus, handleAgents,
   handleTasks, handleHelp, resolveOrgFromChat,
@@ -19,10 +18,7 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
   // POST /api/telegram/webhook — receive Telegram updates
   app.post('/api/telegram/webhook', async (req, reply) => {
     // MCC-2 (audit finding 1): same fail-closed rule as the per-org receivers.
-    // This route resolves an org from the chat id and DRIVES executeAgentTask —
-    // an open posture in prod was unauthenticated task injection + LLM spend.
-    // Honours WEBHOOK_SIGNING_SECRET as fallback, like routes/comms.ts does.
-    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET ?? process.env.WEBHOOK_SIGNING_SECRET
+    const webhookSecret = resolveTelegramWebhookSecret()
     if (!webhookSecret && webhookFailClosed(process.env.NODE_ENV)) {
       return reply.code(403).send({ error: 'Webhook signing secret not configured' })
     }
@@ -72,7 +68,7 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
           case 'tasks': await handleTasks(ctx); break
           case 'help': await handleHelp(ctx); break
           case 'ask':
-            if (cmd.args) await routeToAgent(bot, chatId, cmd.args, orgCtx)
+            if (cmd.args) await routeToArturita(bot, chatId, cmd.args, orgCtx)
             else await bot.sendMessage(chatId, 'Usage: /ask <your question>')
             break
           default:
@@ -81,8 +77,8 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
         return reply.code(200).send({ ok: true })
       }
 
-      // Plain text → route to Arturito
-      await routeToAgent(bot, chatId, text, orgCtx)
+      // D1 — bound chat plain text → Arturita /converse (same contract as mobile)
+      await routeToArturita(bot, chatId, text, orgCtx)
     } catch (err) {
       console.error('Telegram webhook error:', err)
     }
@@ -95,7 +91,13 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
     const botToken = process.env.TELEGRAM_BOT_TOKEN
     if (!botToken) return reply.code(400).send({ error: 'TELEGRAM_BOT_TOKEN not set' })
 
-    const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET ?? randomUUID()
+    const webhookSecret = resolveTelegramWebhookSecret()
+    if (!webhookSecret) {
+      return reply.code(400).send({
+        error: 'TELEGRAM_WEBHOOK_SECRET or WEBHOOK_SIGNING_SECRET must be set before registering the webhook',
+      })
+    }
+
     const baseUrl = process.env.PUBLIC_URL ?? 'https://7ei-backend.fly.dev'
     const webhookUrl = `${baseUrl}/api/telegram/webhook`
 
@@ -106,9 +108,6 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
       ok: result.ok,
       webhookUrl,
       description: result.description,
-      hint: webhookSecret !== process.env.TELEGRAM_WEBHOOK_SECRET
-        ? `Set TELEGRAM_WEBHOOK_SECRET=${webhookSecret} as an env var`
-        : undefined,
     }
   })
 
@@ -121,74 +120,46 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
   })
 }
 
-// Route a message to the org's Arturito agent
-async function routeToAgent(
+// D1 — route bound chat text through Arturita /converse (not the Arturito task executor).
+async function routeToArturita(
   bot: TelegramBot,
   chatId: number,
   text: string,
   orgCtx: { orgId: string; userId: string } | null,
-  agentId?: string,
 ) {
   if (!orgCtx) {
-    await bot.sendMessage(chatId, 'Not linked to an org yet. Use /start first.')
+    await bot.sendMessage(chatId, 'Not linked to an org yet. Use /start YOUR-CODE first.')
     return
   }
 
-  // Show typing indicator
   await bot.sendChatAction(chatId, 'typing')
 
-  // Find agent — default to Arturito (first agent with 'orchestrator' or 'chief of staff' in role)
-  let agent: any
-  if (agentId) {
-    agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
-  } else {
-    const agents = await db.select().from(schema.agents).where(eq(schema.agents.orgId, orgCtx.orgId))
-    agent = agents.find(a =>
-      a.role.toLowerCase().includes('orchestrator') ||
-      a.role.toLowerCase().includes('chief of staff') ||
-      a.name === 'Arturito'
-    ) ?? agents[0]
-  }
-
-  if (!agent) {
-    await bot.sendMessage(chatId, 'No agents found in your org. Create one in the app first.')
-    return
-  }
-
-  // Create task and execute
-  const taskId = randomUUID()
-  await db.insert(schema.tasks).values({
-    id: taskId,
-    agentId: agent.id,
-    orgId: orgCtx.orgId,
-    title: `[Telegram] ${text.slice(0, 80)}`,
-    input: text,
-    status: 'pending',
-    priority: 'medium',
-    createdAt: new Date(),
-  })
-
   try {
-    const result = await executeAgentTask({
-      agentId: agent.id,
-      taskId,
-      input: text,
+    const result = await runArturitaConverseTurn({
+      orgId: orgCtx.orgId,
+      authorUser: orgCtx.userId,
+      body: { message: text },
     })
 
-    // Send response (split if too long — Telegram has 4096 char limit)
-    const response = result.output
-    if (response.length <= 4000) {
-      await bot.sendMessage(chatId, `${agent.avatarEmoji} *${agent.name}*\n\n${response}`)
+    const replyText = String(result.reply?.text ?? '').trim() || NO_LLM_MESSAGE
+    const name = result.agent?.name ?? 'Arturita'
+    const emoji = result.agent?.avatarEmoji ?? '✨'
+    let body = `${emoji} *${name}*\n\n${replyText}`
+    if (result.pendingApprovalNote) {
+      body += `\n\n_${result.pendingApprovalNote}_`
+    }
+
+    if (body.length <= 4000) {
+      await bot.sendMessage(chatId, body)
     } else {
-      // Split into chunks
-      for (let i = 0; i < response.length; i += 4000) {
-        const chunk = response.slice(i, i + 4000)
-        const prefix = i === 0 ? `${agent.avatarEmoji} *${agent.name}*\n\n` : ''
+      for (let i = 0; i < body.length; i += 4000) {
+        const chunk = body.slice(i, i + 4000)
+        const prefix = i === 0 ? '' : '…'
         await bot.sendMessage(chatId, prefix + chunk)
       }
     }
   } catch (err: any) {
-    await bot.sendMessage(chatId, `❌ Error: ${err.message?.slice(0, 200) ?? 'Agent execution failed'}`)
+    await bot.sendMessage(chatId, `❌ Error: ${err.message?.slice(0, 200) ?? 'Arturita could not reply'}`)
   }
 }
 
@@ -207,8 +178,8 @@ async function handleCallbackQuery(bot: TelegramBot, query: any) {
     const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     if (agent && orgCtx) {
       await bot.sendMessage(chatId, `Now chatting with ${agent.avatarEmoji} *${agent.name}*. Send your message:`)
-      // Note: subsequent messages will still route to Arturito by default.
-      // Full agent switching would need chat state management.
+      // Note: subsequent messages still route to Arturita by default.
+      // Per-agent picker is a follow-up (D2 / GC-1 parity).
     }
   }
 }

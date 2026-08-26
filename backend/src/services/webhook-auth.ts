@@ -53,6 +53,16 @@ export function checkWebhook(
   return { authorized: verifyWebhookSecret(provided, expected), enforced: true }
 }
 
+/** Resolve the Telegram global webhook secret — inbound verify and setup-webhook must agree. */
+export function resolveTelegramWebhookSecret(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const explicit = env.TELEGRAM_WEBHOOK_SECRET?.trim()
+  if (explicit) return explicit
+  const fallback = env.WEBHOOK_SIGNING_SECRET?.trim()
+  return fallback || undefined
+}
+
 /** When does a missing signing secret REFUSE deliveries? For any explicit
  *  non-dev environment — matching only the literal 'production' would let a
  *  typo ('prod') or a staging env silently reopen an internet-facing receiver
