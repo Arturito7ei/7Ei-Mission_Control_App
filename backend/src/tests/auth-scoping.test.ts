@@ -32,7 +32,7 @@ import { multiOrgRoutes } from '../routes/multi-org'
 import { usageRoutes } from '../middleware/ratelimit'
 import { scheduledRoutes, routineTriggerRoutes } from '../routes/scheduled'
 import { webhookRoutes } from '../routes/webhooks'
-import { telegramWebhookRoutes } from '../routes/telegram-webhook'
+import { telegramWebhookReceiverRoutes, telegramWebhookAdminRoutes } from '../routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { arturitaVoiceRoutes } from '../routes/arturita-voice'
@@ -109,6 +109,7 @@ async function bootLikeIndex() {
     await secured.register(auditLogQueryRoutes)
     await secured.register(telemetryQueryRoutes)
     await secured.register(activityRoutes)          // ACT-1 — GET /orgs/:orgId/activity
+    await secured.register(telegramWebhookAdminRoutes)
   })
 
   await app.register(commsWebhookRoutes)
@@ -117,6 +118,7 @@ async function bootLikeIndex() {
   await app.register(adapterRegistryRoutes)     // Epic ONB — public: the static adapter taxonomy
   await app.register(agentInviteDocRoutes)      // Epic ONB / ONB2 — public: the token-addressed doc
   await app.register(agentJoinRoutes)           // Epic ONB / ONB3 — public: the join request (mints nothing)
+  await app.register(telegramWebhookReceiverRoutes)
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)
@@ -421,4 +423,46 @@ test('[MCA-85] secured scope enforces 401; public webhook receiver is not gated'
   assert.deepEqual(receiver.json(), { ok: true })
 
   await app.close()
+})
+
+test('[MCC-2] global telegram setup/info reject unauthenticated callers', async () => {
+  const app = Fastify({ logger: false })
+  await app.register(async (secured) => {
+    secured.addHook('onRequest', createClerkAuth(async () => { throw new Error('no session') }))
+    await secured.register(telegramWebhookAdminRoutes)
+  })
+  await app.ready()
+
+  const setup = await app.inject({ method: 'POST', url: '/api/telegram/setup-webhook' })
+  assert.equal(setup.statusCode, 401, 'setup-webhook must require Clerk session')
+
+  const info = await app.inject({ method: 'GET', url: '/api/telegram/webhook-info' })
+  assert.equal(info.statusCode, 401, 'webhook-info must require Clerk session')
+
+  await app.close()
+})
+
+test('[MCA-85] telegram admin routes are Clerk-tagged in the route table', async () => {
+  resetOpenApi()
+  const app = Fastify({ logger: false })
+  app.addHook('onRoute', (r) => recordRoute('none', r.method, r.url))
+  await app.register(async (secured) => {
+    secured.addHook('onRoute', (r) => recordRoute('clerk', r.method, r.url))
+    await secured.register(telegramWebhookAdminRoutes)
+  })
+  await app.register(telegramWebhookReceiverRoutes)
+  await app.ready()
+  await app.close()
+
+  const clerk = (method: string, url: string) => {
+    const r = collectedRoutes().find(x => x.method === method && x.url === url)
+    assert.ok(r, `route missing: ${method} ${url}`)
+    assert.equal(r!.auth, 'clerk', `${method} ${url} must be Clerk-secured`)
+  }
+  clerk('POST', '/api/telegram/setup-webhook')
+  clerk('GET', '/api/telegram/webhook-info')
+
+  const recv = collectedRoutes().find(r => r.method === 'POST' && r.url === '/api/telegram/webhook')
+  assert.ok(recv)
+  assert.equal(recv!.auth, 'none', 'POST /api/telegram/webhook stays public for Telegram delivery')
 })

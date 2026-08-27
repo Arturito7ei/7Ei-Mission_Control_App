@@ -26,7 +26,7 @@ import { scheduledRoutes, routineTriggerRoutes } from './routes/scheduled'
 import { agentDetailRoutes } from './routes/agent-detail'
 import { agentChatRoutes } from './routes/agent-chat'
 import { webhookRoutes } from './routes/webhooks'
-import { telegramWebhookRoutes } from './routes/telegram-webhook'
+import { telegramWebhookReceiverRoutes, telegramWebhookAdminRoutes } from './routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from './routes/arturita'
 import { arturitaWalletRoutes } from './routes/arturita-wallet'
 import { arturitaVoiceRoutes } from './routes/arturita-voice'
@@ -231,6 +231,7 @@ async function start() {
     // per-caller inside the handler, so this composes the existing gates rather than
     // becoming a side door around them.
     await secured.register(activityRoutes)
+    await secured.register(telegramWebhookAdminRoutes) // POST setup-webhook, GET webhook-info (Clerk-secured)
   })
 
   // ─── Public / externally-called routes ──────────────────────────────────
@@ -263,7 +264,7 @@ async function start() {
   // endpoint: `TOKEN_CLAIM_IMPLEMENTED` is false and `auth-scoping.test.ts` fails if
   // one appears before ONB4.
   await app.register(agentJoinRoutes)
-  await app.register(telegramWebhookRoutes)
+  await app.register(telegramWebhookReceiverRoutes) // POST /api/telegram/webhook (Telegram delivery)
   // Agent-facing API (MCA-EXT): external runtimes authenticate with an agent
   // token via this plugin's own onRequest hook, not Clerk. Wrapped in a scope
   // so an onRoute hook can tag these routes with the agentToken security scheme.

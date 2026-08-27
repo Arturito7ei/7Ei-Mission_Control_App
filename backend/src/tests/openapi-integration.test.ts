@@ -22,7 +22,7 @@ import { usageRoutes } from '../middleware/ratelimit'
 import { modelRoutes } from '../routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from '../routes/scheduled'
 import { webhookRoutes } from '../routes/webhooks'
-import { telegramWebhookRoutes } from '../routes/telegram-webhook'
+import { telegramWebhookReceiverRoutes, telegramWebhookAdminRoutes } from '../routes/telegram-webhook'
 import { agentApiRoutes } from '../routes/agent-api'
 import { recordRoute, collectedRoutes, endpointDocs, buildOpenApiSpec } from '../services/openapi'
 
@@ -52,12 +52,13 @@ test('[MCA-85 D1] /api/openapi.json is a rich, correctly-authed spec', async () 
     await secured.register(webhookRoutes)
     await secured.register(usageRoutes)
     await secured.register(skillRoutes)
+    await secured.register(telegramWebhookAdminRoutes)
   })
 
   await app.register(commsWebhookRoutes)
   await app.register(jiraWebhookRoutes)
   await app.register(modelRoutes)
-  await app.register(telegramWebhookRoutes)
+  await app.register(telegramWebhookReceiverRoutes)
   await app.register(async (agentScope) => {
     agentScope.addHook('onRoute', (r) => recordRoute('agentToken', r.method, r.url))
     await agentScope.register(agentApiRoutes)
