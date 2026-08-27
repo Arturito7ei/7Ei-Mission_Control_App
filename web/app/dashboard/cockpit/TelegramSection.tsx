@@ -22,6 +22,19 @@ type WebhookInfo = {
   pending_update_count?: number
   last_error_message?: string
   error?: string
+  hint?: string
+}
+
+function operatorFacingError(payload: { error?: string; hint?: string }, fallback: string): string {
+  const msg = payload.error ?? fallback
+  if (payload.hint) return `${msg} ${payload.hint}`
+  if (/TELEGRAM_BOT_TOKEN/i.test(msg)) {
+    return `${msg} Set TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET on Fly (7ei-backend), redeploy, then try again.`
+  }
+  if (/TELEGRAM_WEBHOOK_SECRET/i.test(msg)) {
+    return `${msg} Set TELEGRAM_WEBHOOK_SECRET on Fly alongside the bot token, redeploy, then try again.`
+  }
+  return msg
 }
 
 export default function TelegramSection({ orgId, getToken, onChanged }: {
@@ -36,6 +49,16 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
   const [minted, setMinted] = useState<MintedBindCode | null>(null)
   const [copied, setCopied] = useState(false)
   const [tick, setTick] = useState(() => Date.now())
+  const [webhookNote, setWebhookNote] = useState<string | null>(null)
+
+  const loadWebhookInfo = useCallback(async () => {
+    try {
+      const w = await api<WebhookInfo>('/api/telegram/webhook-info', { token: await getToken() })
+      setWebhook(w)
+    } catch (e: any) {
+      setWebhook({ error: operatorFacingError({}, e?.message ?? 'Could not read webhook status') })
+    }
+  }, [getToken])
 
   const load = useCallback(async () => {
     setErr(null)
@@ -45,14 +68,9 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
     } catch (e: any) {
       setErr(e?.message ?? 'Could not load connection status')
     }
-    try {
-      const w = await api<WebhookInfo>('/api/telegram/webhook-info', { token: await getToken() })
-      setWebhook(w)
-    } catch {
-      setWebhook(null)
-    }
+    await loadWebhookInfo()
     setLoading(false)
-  }, [orgId, getToken])
+  }, [orgId, getToken, loadWebhookInfo])
 
   useEffect(() => { load() }, [load])
 
@@ -61,6 +79,24 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
     const id = window.setInterval(() => setTick(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [minted, tick])
+
+  const registerWebhook = async () => {
+    setBusy(true); setErr(null); setWebhookNote(null)
+    try {
+      const r = await api<{ ok?: boolean; webhookUrl?: string; description?: string; error?: string; hint?: string }>(
+        '/api/telegram/setup-webhook', { token: await getToken(), method: 'POST' },
+      )
+      if (r.ok) {
+        setWebhookNote(`Webhook registered${r.webhookUrl ? ` → ${r.webhookUrl}` : ''}${r.description ? ` (${r.description})` : ''}`)
+        await loadWebhookInfo()
+      } else {
+        setErr(operatorFacingError(r, 'Registration failed'))
+      }
+    } catch (e: any) {
+      setErr(operatorFacingError({}, e?.message ?? 'Could not register webhook'))
+    }
+    setBusy(false)
+  }
 
   const mintCode = async () => {
     setBusy(true); setErr(null)
@@ -158,7 +194,9 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
           <div>
             <div style={{ fontWeight: 600, fontSize: text.md.fontSize, marginBottom: space.xs }}>Webhook reachability</div>
             {webhook.error ? (
-              <p style={{ ...sx.hint, margin: 0, color: 'var(--warn)' }}>{webhook.error}</p>
+              <p style={{ ...sx.hint, margin: 0, color: 'var(--warn)' }}>
+                {operatorFacingError(webhook, 'Webhook status unavailable')}
+              </p>
             ) : (
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: text.sm.fontSize, color: tk.muted, lineHeight: 1.7 }}>
                 <li>{webhook.url ? `Registered: ${webhook.url}` : 'No webhook URL registered yet'}</li>
@@ -170,9 +208,15 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
                 )}
               </ul>
             )}
-            <p style={{ ...sx.hint, margin: `${space.sm}px 0 0` }}>
-              Read-only. Webhook registration stays a Fly/CLI step — not exposed in this UI.
-            </p>
+            {isOwner && (
+              <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap', marginTop: space.sm }}>
+                <Button variant="default" disabled={busy} onClick={registerWebhook}>Register webhook</Button>
+                <Button variant="default" disabled={busy} onClick={loadWebhookInfo}>Refresh status</Button>
+              </div>
+            )}
+            {webhookNote && (
+              <p style={{ ...sx.hint, margin: `${space.sm}px 0 0`, color: 'var(--ok)' }}>{webhookNote}</p>
+            )}
           </div>
         )}
 
