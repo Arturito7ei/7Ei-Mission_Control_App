@@ -136,9 +136,9 @@ export async function handleHelp(ctx: CommandContext): Promise<void> {
     `/status — Org health summary\n` +
     `/agents — List agents \\(tap to chat\\)\n` +
     `/tasks — View recent tasks\n` +
-    `/ask \\<question\\> — Ask Arturito directly\n` +
+    `/ask \\<question\\> — Ask Arturita directly\n` +
     `/help — Show this message\n\n` +
-    `Or just type any message to chat with Arturito\\!`,
+    `Or just type any message to chat with Arturita\\!`,
     { parseMode: 'MarkdownV2' })
 }
 

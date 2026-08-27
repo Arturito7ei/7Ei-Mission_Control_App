@@ -96,6 +96,17 @@ test('[MCA-85] checkWebhook rejects a token minted for a different org or channe
 
 // ── Receiver integration: enforcement when a signing secret is configured ─────
 
+async function withTelegramWebhookSecret(value: string, fn: () => Promise<void>) {
+  const prevTelegram = process.env.TELEGRAM_WEBHOOK_SECRET
+  process.env.TELEGRAM_WEBHOOK_SECRET = value
+  try {
+    await fn()
+  } finally {
+    if (prevTelegram === undefined) delete process.env.TELEGRAM_WEBHOOK_SECRET
+    else process.env.TELEGRAM_WEBHOOK_SECRET = prevTelegram
+  }
+}
+
 async function withSigningSecret(value: string, fn: () => Promise<void>) {
   const prevWebhook = process.env.WEBHOOK_SIGNING_SECRET
   const prevTelegram = process.env.TELEGRAM_WEBHOOK_SECRET
@@ -113,7 +124,7 @@ async function withSigningSecret(value: string, fn: () => Promise<void>) {
 }
 
 test('[MCA-85] telegram receiver: rejects a forged/absent secret, accepts the derived one', async () => {
-  await withSigningSecret('test-signing-secret', async () => {
+  await withTelegramWebhookSecret('test-telegram-secret', async () => {
     const app = Fastify({ logger: false })
     await app.register(commsWebhookRoutes)
     await app.ready()
@@ -130,7 +141,7 @@ test('[MCA-85] telegram receiver: rejects a forged/absent secret, accepts the de
     })
     assert.equal(forged.statusCode, 403, 'forged secret must be rejected')
 
-    const good = deriveWebhookSecret('test-signing-secret', 'telegram', 'o1')
+    const good = deriveWebhookSecret('test-telegram-secret', 'telegram', 'o1')
     const ok = await app.inject({
       method: 'POST', url: '/api/telegram/webhook/o1',
       payload: {}, headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': good },
@@ -139,7 +150,7 @@ test('[MCA-85] telegram receiver: rejects a forged/absent secret, accepts the de
     assert.deepEqual(ok.json(), { ok: true })
 
     // A secret minted for another org must not unlock o1.
-    const crossOrg = deriveWebhookSecret('test-signing-secret', 'telegram', 'o2')
+    const crossOrg = deriveWebhookSecret('test-telegram-secret', 'telegram', 'o2')
     const replay = await app.inject({
       method: 'POST', url: '/api/telegram/webhook/o1',
       payload: {}, headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': crossOrg },
