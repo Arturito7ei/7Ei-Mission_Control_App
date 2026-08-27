@@ -1,6 +1,7 @@
-// ─── Telegram Webhook Route ──────────────────────────────────────────────────────
-// POST /api/telegram/webhook — receives Telegram updates
-// POST /api/telegram/setup-webhook — configures the webhook URL
+// ─── Telegram Webhook Routes ──────────────────────────────────────────────────────
+// POST /api/telegram/webhook — receives Telegram updates (public; HMAC header)
+// POST /api/telegram/setup-webhook — configure webhook URL (Clerk-secured scope)
+// GET /api/telegram/webhook-info — probe Telegram webhook state (Clerk-secured scope)
 
 import { FastifyInstance } from 'fastify'
 import { db, schema } from '../db/client'
@@ -14,10 +15,12 @@ import {
   type CommandContext,
 } from './telegram-commands'
 
-export async function telegramWebhookRoutes(app: FastifyInstance) {
-  // POST /api/telegram/webhook — receive Telegram updates
+const FLY_SECRETS_HINT =
+  'Operator action: set TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET on Fly (7ei-backend), then redeploy.'
+
+/** Inbound receiver — Telegram POSTs here with no Clerk session. */
+export async function telegramWebhookReceiverRoutes(app: FastifyInstance) {
   app.post('/api/telegram/webhook', async (req, reply) => {
-    // MCC-2 (audit finding 1): same fail-closed rule as the per-org receivers.
     const webhookSecret = resolveTelegramWebhookSecret()
     if (!webhookSecret && webhookFailClosed(process.env.NODE_ENV)) {
       return reply.code(403).send({ error: 'Webhook signing secret not configured' })
@@ -30,26 +33,23 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
     }
 
     const botToken = process.env.TELEGRAM_BOT_TOKEN
-    if (!botToken) return reply.code(200).send({ ok: true }) // silently ignore without token
+    if (!botToken) return reply.code(200).send({ ok: true })
 
     const bot = new TelegramBot(botToken)
     const update = req.body as any
 
     try {
-      // Handle callback queries (inline keyboard taps)
       if (update.callback_query) {
         await handleCallbackQuery(bot, update.callback_query)
         return reply.code(200).send({ ok: true })
       }
 
-      // Handle messages
       const message = update.message
       if (!message?.text) return reply.code(200).send({ ok: true })
 
       const chatId = message.chat.id
       const text = message.text.trim()
 
-      // Resolve org context
       const orgCtx = await resolveOrgFromChat(chatId)
       const ctx: CommandContext = {
         bot, chatId, text,
@@ -58,7 +58,6 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
         orgName: orgCtx?.orgName,
       }
 
-      // Parse and route commands
       const cmd = parseCommand(text)
       if (cmd) {
         switch (cmd.command) {
@@ -77,7 +76,6 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
         return reply.code(200).send({ ok: true })
       }
 
-      // D1 — bound chat plain text → Arturita /converse (same contract as mobile)
       await routeToArturita(bot, chatId, text, orgCtx)
     } catch (err) {
       console.error('Telegram webhook error:', err)
@@ -85,16 +83,24 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
 
     return reply.code(200).send({ ok: true })
   })
+}
 
-  // POST /api/telegram/setup-webhook — configure webhook URL
+/** Deploy-time registration probes — register inside the Clerk-secured scope (index.ts). */
+export async function telegramWebhookAdminRoutes(app: FastifyInstance) {
   app.post('/api/telegram/setup-webhook', async (req, reply) => {
     const botToken = process.env.TELEGRAM_BOT_TOKEN
-    if (!botToken) return reply.code(400).send({ error: 'TELEGRAM_BOT_TOKEN not set' })
+    if (!botToken) {
+      return reply.code(400).send({
+        error: 'TELEGRAM_BOT_TOKEN is not set on the backend.',
+        hint: FLY_SECRETS_HINT,
+      })
+    }
 
     const webhookSecret = resolveTelegramWebhookSecret()
     if (!webhookSecret) {
       return reply.code(400).send({
-        error: 'TELEGRAM_WEBHOOK_SECRET must be set before registering the webhook',
+        error: 'TELEGRAM_WEBHOOK_SECRET must be set before registering the webhook.',
+        hint: FLY_SECRETS_HINT,
       })
     }
 
@@ -111,16 +117,20 @@ export async function telegramWebhookRoutes(app: FastifyInstance) {
     }
   })
 
-  // GET /api/telegram/webhook-info
   app.get('/api/telegram/webhook-info', async () => {
     const botToken = process.env.TELEGRAM_BOT_TOKEN
-    if (!botToken) return { error: 'TELEGRAM_BOT_TOKEN not set' }
+    if (!botToken) return { error: 'TELEGRAM_BOT_TOKEN is not set on the backend.', hint: FLY_SECRETS_HINT }
     const bot = new TelegramBot(botToken)
     return bot.getWebhookInfo()
   })
 }
 
-// D1 — route bound chat text through Arturita /converse (not the Arturito task executor).
+/** @deprecated Register `telegramWebhookReceiverRoutes` (public) and `telegramWebhookAdminRoutes` (secured). */
+export async function telegramWebhookRoutes(app: FastifyInstance) {
+  await telegramWebhookReceiverRoutes(app)
+  await telegramWebhookAdminRoutes(app)
+}
+
 async function routeToArturita(
   bot: TelegramBot,
   chatId: number,
@@ -163,7 +173,6 @@ async function routeToArturita(
   }
 }
 
-// Handle inline keyboard callbacks
 async function handleCallbackQuery(bot: TelegramBot, query: any) {
   const chatId = query.message?.chat?.id
   const data = query.data as string
@@ -171,15 +180,12 @@ async function handleCallbackQuery(bot: TelegramBot, query: any) {
 
   await bot.answerCallbackQuery(query.id)
 
-  // chat_<agentId> — start chat with specific agent
   if (data.startsWith('chat_')) {
     const agentId = data.slice(5)
     const orgCtx = await resolveOrgFromChat(chatId)
     const agent = await db.query.agents.findFirst({ where: eq(schema.agents.id, agentId) })
     if (agent && orgCtx) {
       await bot.sendMessage(chatId, `Now chatting with ${agent.avatarEmoji} *${agent.name}*. Send your message:`)
-      // Note: subsequent messages still route to Arturita by default.
-      // Per-agent picker is a follow-up (D2 / GC-1 parity).
     }
   }
 }

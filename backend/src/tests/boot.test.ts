@@ -25,7 +25,7 @@ import { usageRoutes } from '../middleware/ratelimit'
 import { modelRoutes } from '../routes/models'
 import { scheduledRoutes, routineTriggerRoutes } from '../routes/scheduled'
 import { webhookRoutes } from '../routes/webhooks'
-import { telegramWebhookRoutes } from '../routes/telegram-webhook'
+import { telegramWebhookReceiverRoutes, telegramWebhookAdminRoutes } from '../routes/telegram-webhook'
 import { arturitaRoutes, arturitaPublicRoutes } from '../routes/arturita'
 import { arturitaWalletRoutes } from '../routes/arturita-wallet'
 import { customModelRoutes } from '../routes/custom-models'
@@ -69,6 +69,7 @@ test('app boots: all route groups register without collision', async () => {
     await secured.register(agentInviteRoutes)
     await secured.register(activityRoutes)      // ACT-1 — unified activity feed
     await secured.register(agentChatRoutes)     // MCC-1 — org-scoped agent chat threads
+    await secured.register(telegramWebhookAdminRoutes)
   })
 
   // Public / externally-called route groups.
@@ -79,7 +80,7 @@ test('app boots: all route groups register without collision', async () => {
   await app.register(adapterRegistryRoutes)
   await app.register(agentInviteDocRoutes)   // Epic ONB / ONB2 — token-addressed onboarding doc
   await app.register(agentJoinRoutes)        // Epic ONB / ONB3 — public join request
-  await app.register(telegramWebhookRoutes)
+  await app.register(telegramWebhookReceiverRoutes)
   await app.register(agentApiRoutes)
   await app.register(routineTriggerRoutes)
   await app.register(authRoutes)
