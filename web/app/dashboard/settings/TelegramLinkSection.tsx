@@ -27,6 +27,7 @@ export default function TelegramLinkSection({ orgId, getToken }: { orgId: string
   const [minted, setMinted] = useState<MintedBindCode | null>(null)
   const [copied, setCopied] = useState<'code' | 'command' | null>(null)
   const [tick, setTick] = useState(() => Date.now())
+  const [webhookNote, setWebhookNote] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setErr(null)
@@ -69,6 +70,40 @@ export default function TelegramLinkSection({ orgId, getToken }: { orgId: string
       await load()
     } catch (e: any) {
       setErr(e?.message ?? 'Could not unlink')
+    }
+    setBusy(false)
+  }
+
+  const registerWebhook = async () => {
+    setBusy(true); setErr(null); setWebhookNote(null)
+    try {
+      const r = await api<{ ok?: boolean; webhookUrl?: string; description?: string; error?: string }>(
+        '/api/telegram/setup-webhook', { token: await getToken(), method: 'POST' },
+      )
+      setWebhookNote(r.ok
+        ? `Webhook registered${r.webhookUrl ? ` → ${r.webhookUrl}` : ''}${r.description ? ` (${r.description})` : ''}`
+        : r.error ?? 'Registration failed')
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not register webhook')
+    }
+    setBusy(false)
+  }
+
+  const checkWebhook = async () => {
+    setBusy(true); setErr(null); setWebhookNote(null)
+    try {
+      const r = await api<Record<string, unknown>>('/api/telegram/webhook-info', { token: await getToken() })
+      const url = typeof r.url === 'string' ? r.url : null
+      const pending = typeof r.pending_update_count === 'number' ? r.pending_update_count : null
+      setWebhookNote(
+        r.error
+          ? String(r.error)
+          : url
+            ? `Telegram webhook: ${url}${pending != null ? ` · pending updates: ${pending}` : ''}`
+            : JSON.stringify(r),
+      )
+    } catch (e: any) {
+      setErr(e?.message ?? 'Could not read webhook info')
     }
     setBusy(false)
   }
@@ -127,6 +162,23 @@ export default function TelegramLinkSection({ orgId, getToken }: { orgId: string
           </p>
         )}
 
+        {isOwner && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>
+            <span style={{ fontSize: text.sm.fontSize, fontWeight: 600 }}>Backend webhook (owner)</span>
+            <p style={{ margin: 0, fontSize: text.sm.fontSize, color: tk.muted, lineHeight: 1.6 }}>
+              Fly must have <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_WEBHOOK_SECRET</code> set first.
+              Then register the webhook here — no curl needed.
+            </p>
+            <div style={{ display: 'flex', gap: space.sm, flexWrap: 'wrap' }}>
+              <Button variant="default" disabled={busy} onClick={registerWebhook}>Register webhook</Button>
+              <Button variant="default" disabled={busy} onClick={checkWebhook}>Check webhook status</Button>
+            </div>
+            {webhookNote && (
+              <p style={{ margin: 0, fontSize: text.sm.fontSize, color: tk.muted }}>{webhookNote}</p>
+            )}
+          </div>
+        )}
+
         {isOwner && !state?.bound && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>
             <Button variant="primary" disabled={busy} onClick={mintCode} style={{ width: 'fit-content' }}>
@@ -174,7 +226,7 @@ export default function TelegramLinkSection({ orgId, getToken }: { orgId: string
 
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: text.sm.fontSize, color: tk.muted, lineHeight: 1.7 }}>
               <li>Create a bot in BotFather if you do not have one yet (not <code>@Cursor7EI_bot</code>).</li>
-              <li>Ask ops to set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_WEBHOOK_SECRET</code> on the backend, then register the webhook.</li>
+              <li>Set Fly secrets, then use <strong>Register webhook</strong> above.</li>
               <li>Send <code>/start YOUR-CODE</code> in Telegram within 10 minutes — codes are single-use.</li>
               <li>After linking, plain text in that chat routes to Arturita.</li>
             </ol>
