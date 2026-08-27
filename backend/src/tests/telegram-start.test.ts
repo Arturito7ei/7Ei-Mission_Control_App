@@ -16,6 +16,7 @@ describe('[CRIT-01] telegram /start linking policy', () => {
 
   it('unlinkedStartMessage refuses auto-connect', () => {
     assert.match(unlinkedStartMessage(), /does not auto\\-connect/)
+    assert.match(unlinkedStartMessage(), /Settings → \*Telegram\*/)
     assert.match(unlinkedStartMessage(), /\/start YOUR\\-CODE/)
   })
 

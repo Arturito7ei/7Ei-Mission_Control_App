@@ -13,7 +13,7 @@ export function unlinkedStartMessage(): string {
     '🤖 *Welcome to 7Ei Mission Control\\!*\n\n' +
     'This bot does not auto\\-connect to an organisation\\.\n\n' +
     'To link Telegram:\n' +
-    '1\\. Open Mission Control → Arturita → *Link Telegram*\n' +
+    '1\\. Open Mission Control → Settings → *Telegram*\n' +
     '2\\. Copy the one\\-time bind code\n' +
     '3\\. Send `/start YOUR\\-CODE` here\n\n' +
     'Codes expire in 10 minutes and are single\\-use\\.'

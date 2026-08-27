@@ -18,6 +18,7 @@ import { allSurfaces, isPlaceholder, isSection, navSectionKey, navPageTabs, navS
 import { DEFAULT_AGENT_TAB, agentRouteHash, parseAgentRoute, type AgentRoute, type AgentTab } from '@/lib/agentRoute'
 import { AgentAvatar } from './agent/shared'
 import InviteAgentDialog from './cockpit/InviteAgentDialog'
+import TelegramLinkSection from './settings/TelegramLinkSection'
 import { useOrgRole } from './useOrgRole'
 import { useTheme } from '../theme'
 import { CommandPalette, type Command } from './CommandPalette'
@@ -606,7 +607,7 @@ export default function DashboardPage() {
           <div style={s.page}>
             <h1 style={s.h1}>Communications Hub</h1>
             <div style={s.commsGrid}>
-              {[{ icon: '📬', title: 'Unified Inbox', desc: 'All agent messages in one place.' }, { icon: '📧', title: 'Gmail', desc: 'Connect via Google OAuth to read and send email.' }, { icon: '✈️', title: 'Telegram', desc: 'Register a bot token in Org Settings.' }, { icon: '📹', title: 'Google Meet', desc: 'Generate meeting links via the API.' }]
+              {[{ icon: '📬', title: 'Unified Inbox', desc: 'All agent messages in one place.' }, { icon: '📧', title: 'Gmail', desc: 'Connect via Google OAuth to read and send email.' }, { icon: '✈️', title: 'Telegram', desc: 'Link your chat in Settings → Telegram (Arturita).' }, { icon: '📹', title: 'Google Meet', desc: 'Generate meeting links via the API.' }]
                 .map(ch => <div key={ch.title} style={s.commsCard}><span style={{ fontSize: 36 }}>{ch.icon}</span><div style={{ fontWeight: 700, fontSize: 16, marginTop: 8 }}>{ch.title}</div><div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6, lineHeight: 1.6 }}>{ch.desc}</div></div>)}
             </div>
           </div>
@@ -706,6 +707,8 @@ export default function DashboardPage() {
                 {settingsSaved && <span style={{ color: 'var(--ok)', fontSize: 13 }}>✓ Saved</span>}
               </div>
             </div>
+
+            {org && <TelegramLinkSection orgId={org.id} getToken={getToken} />}
           </div>
         )}
       </main>
