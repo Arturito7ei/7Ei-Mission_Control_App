@@ -160,6 +160,7 @@ export const NAV_GROUPS: NavGroup[] = [
         tabs: [
           { id: 'adapters', label: 'Adapters', icon: '🧷', kind: 'placeholder', paperclip: 'Adapter registry', note: 'BYO-runtime adapter registry + model catalogs + probes. Not yet built — Epic-P gap.' },
           { id: 'secrets', label: 'Secrets', icon: '🔐', kind: 'section', section: 'secrets', paperclip: 'Secrets' },
+          { id: 'telegram', label: 'Telegram', icon: '💬', kind: 'section', section: 'telegram', paperclip: 'Telegram / Arturita remote control' },
         ],
       },
     ],

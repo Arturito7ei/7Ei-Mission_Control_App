@@ -28,6 +28,7 @@ const FOLDED: Record<string, string> = {
   comms: 'inbox',
   adapters: 'settings',
   secrets: 'settings',
+  telegram: 'settings',
 }
 
 test('[P0-web] groups are in Paperclip order', () => {
@@ -109,6 +110,7 @@ test('[P1-nav] each parent page exposes exactly the expected tab bar, itself fir
     { id: 'settings', label: 'Settings' },
     { id: 'adapters', label: 'Adapters' },
     { id: 'secrets', label: 'Secrets' },
+    { id: 'telegram', label: 'Telegram' },
   ])
   // Pages that host nothing get no tab bar (PageTabs renders null under 2 tabs).
   for (const id of ['overview', 'assistant', 'agents', 'memory', 'usage', 'governance']) {
@@ -248,13 +250,13 @@ test('[P0-web] placeholders are flagged and explain themselves (no faked feature
 
 test('[P0b-web] promoted Cockpit sections are first-class areas with valid keys', () => {
   // Keys CockpitPanel knows how to render focused (CockpitSectionKey union).
-  const COCKPIT_KEYS = new Set(['inbox', 'voice', 'agents', 'activity', 'org', 'goals', 'budgets', 'secrets', 'workspaces', 'plugins', 'tasks'])
+  const COCKPIT_KEYS = new Set(['inbox', 'voice', 'agents', 'activity', 'org', 'goals', 'budgets', 'secrets', 'telegram', 'workspaces', 'plugins', 'tasks'])
   const sections = allSurfaces().filter(i => i.kind === 'section')
   // The 8 Cockpit sections we promoted out of the Operations stack — same eight
   // after P1; some are rail items, some tabs, some off-rail.
   assert.deepEqual(
     sections.map(i => i.id).sort(),
-    ['activity', 'budgets', 'goals', 'inbox', 'org', 'plugins', 'secrets', 'workspaces'].sort(),
+    ['activity', 'budgets', 'goals', 'inbox', 'org', 'plugins', 'secrets', 'telegram', 'workspaces'].sort(),
   )
   for (const sec of sections) {
     assert.equal(isSection(sec.id), true)
