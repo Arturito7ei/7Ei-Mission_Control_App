@@ -385,6 +385,16 @@ export const NAV_GROUPS: NavGroup[] = [
         webHosted: 'settings',
       },
       {
+        id: 'telegram',
+        label: 'Telegram',
+        glyph: '💬',
+        status: 'planned',
+        story: 'MOB-6m',
+        // Same posture as secrets: status and bind flow only — never tokens or webhook secrets.
+        blurb: 'Link Telegram to Arturita. Bind codes and status only — never bot tokens or webhook secrets.',
+        webHosted: 'settings',
+      },
+      {
         id: 'adapters',
         label: 'Adapters',
         glyph: '🧷',

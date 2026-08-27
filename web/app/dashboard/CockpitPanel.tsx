@@ -19,6 +19,7 @@ import GoalsSection from './cockpit/GoalsSection'
 import BudgetsSection from './cockpit/BudgetsSection'
 import PreflightSection from './cockpit/PreflightSection'
 import SecretsSection from './cockpit/SecretsSection'
+import TelegramSection from './cockpit/TelegramSection'
 import WorkspacesSection from './cockpit/WorkspacesSection'
 import PluginsSection from './cockpit/PluginsSection'
 import TaskBoard from './cockpit/TaskBoard'
@@ -35,7 +36,7 @@ import type { ActivityEvent } from '@/lib/activityKinds'
 // (by key); `title` labels a focused area. Absent → the full stack, as before.
 export type CockpitSectionKey =
   | 'inbox' | 'voice' | 'agents' | 'activity' | 'org' | 'goals'
-  | 'budgets' | 'secrets' | 'workspaces' | 'plugins' | 'tasks'
+  | 'budgets' | 'secrets' | 'telegram' | 'workspaces' | 'plugins' | 'tasks'
 
 export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent, only, title }: { orgId: string; getToken: Getter; onOpenTask?: (taskId: string) => void; onOpenAgent?: (agentId: string) => void; only?: CockpitSectionKey[]; title?: string }) {
   const [data, setData] = useState<Cockpit | null>(null)
@@ -248,6 +249,7 @@ export default function CockpitPanel({ orgId, getToken, onOpenTask, onOpenAgent,
     { key: 'goals', node: <GoalsSection orgId={orgId} getToken={getToken} goals={goals} onChanged={load} /> },
     { key: 'budgets', node: <><BudgetsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} budgets={budgets} onDelete={delBudget} onChanged={load} /><PreflightSection orgId={orgId} getToken={getToken} preflight={preflight} onChanged={load} /></> },
     { key: 'secrets', node: <SecretsSection orgId={orgId} getToken={getToken} agents={data?.agents ?? []} secrets={secrets} onDelete={delSecret} onChanged={load} /> },
+    { key: 'telegram', node: <TelegramSection orgId={orgId} getToken={getToken} onChanged={load} /> },
     { key: 'workspaces', node: <WorkspacesSection orgId={orgId} getToken={getToken} workspaces={workspaces} onDelete={delWorkspace} onChanged={load} /> },
     { key: 'plugins', node: <PluginsSection orgId={orgId} getToken={getToken} plugins={plugins} onToggle={togglePlugin} onDelete={delPlugin} onChanged={load} /> },
     { key: 'tasks', node: <TaskBoard tasks={data?.tasks ?? []} agentName={agentName} nextUp={data?.nextUp ?? null} onOpen={openTask} /> },
