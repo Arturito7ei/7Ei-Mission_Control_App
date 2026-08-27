@@ -118,6 +118,14 @@ test('[A1] confirmBinding: happy path binds the chat and clears the code (single
   assert.equal(res.patch!.bindCodeExpiresAt, null)
 })
 
+test('[A1] confirmBinding normalises code case (matches /start path)', () => {
+  const code = 'ABCD1234'
+  const rec = beginBinding({ operatorUserId: 'user_1', code, now: T0 })
+  const res = confirmBinding(rec, { code: '  abcd1234  ', telegramChatId: '55501', now: at(1000) })
+  assert.equal(res.ok, true)
+  assert.equal(res.patch!.telegramChatId, '55501')
+})
+
 test('[A1] confirmBinding fails closed on wrong code, expiry, no-binding, revoked', () => {
   const code = 'GOODCODE'
   const rec = beginBinding({ operatorUserId: 'user_1', code, now: T0 })

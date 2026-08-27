@@ -21,6 +21,7 @@
 //    cancel runs + revoke every session), so making it easy to trigger is safe.
 
 import { randomBytes, createHash, timingSafeEqual } from 'crypto'
+import { normalizeBindCode } from './telegram-start'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -213,7 +214,8 @@ export function confirmBinding(
   if (binding.revokedAt) return { ok: false, error: 'binding revoked' }
   if (!binding.bindCodeHash || !binding.bindCodeExpiresAt) return { ok: false, error: 'no pending bind code' }
   if (now.getTime() >= binding.bindCodeExpiresAt.getTime()) return { ok: false, error: 'bind code expired' }
-  if (!hashesEqual(hashToken(input.code), binding.bindCodeHash)) return { ok: false, error: 'invalid bind code' }
+  const code = normalizeBindCode(input.code)
+  if (!code || !hashesEqual(hashToken(code), binding.bindCodeHash)) return { ok: false, error: 'invalid bind code' }
   if (!String(input.telegramChatId).trim()) return { ok: false, error: 'telegram chat id required' }
   return {
     ok: true,
