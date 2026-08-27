@@ -267,7 +267,7 @@ export default function TelegramSection({ orgId, getToken, onChanged }: {
               </div>
             ))}
             <div style={{ fontSize: text.sm.fontSize, color: tk.muted, marginTop: space.xs }}>
-              Plain text in a linked chat also routes to Arturita (after #371 on backend).
+              In a linked chat, plain text goes to Arturita.
             </div>
           </div>
         </div>
