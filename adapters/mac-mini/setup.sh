@@ -11,7 +11,7 @@
 #   MC_AGENT_TOKEN=mca_... ./setup.sh --preset nvidia-minimax --yes
 #
 # Flags:
-#   --preset <name>   codex | gemini | nvidia-minimax | shell | http  (default: shell)
+#   --preset <name>   codex | gemini | nvidia-minimax | ollama | shell | http  (default: shell)
 #   --no-shell        force MC_ALLOW_SHELL=0 (safer; shell executor disabled)
 #   --yes             non-interactive; don't prompt, load launchd at the end
 #   --no-launchd      install + smoke test only; skip launchctl load
@@ -54,7 +54,7 @@ MC_AGENT_TOKEN="${MC_AGENT_TOKEN:-}"
 if [ "$ASSUME_YES" = "0" ]; then
   read -r -p "MC_BASE_URL   [$MC_BASE_URL]: " _v; MC_BASE_URL="${_v:-$MC_BASE_URL}"
   read -r -p "MC_WORKDIR    [$MC_WORKDIR]: " _v; MC_WORKDIR="${_v:-$MC_WORKDIR}"
-  read -r -p "Executor preset (codex|gemini|nvidia-minimax|shell|http) [$PRESET]: " _v; PRESET="${_v:-$PRESET}"
+  read -r -p "Executor preset (codex|gemini|nvidia-minimax|ollama|shell|http) [$PRESET]: " _v; PRESET="${_v:-$PRESET}"
 fi
 
 if [ -z "$MC_AGENT_TOKEN" ]; then
@@ -79,16 +79,19 @@ else
   [ "$PRESET" = "shell" ] || say "no preset file for '$PRESET'; writing minimal mc.env"
 fi
 
-# strip any keys we are about to (re)write, then append the resolved config
+# strip the host-specific keys we overlay below, then append the resolved config.
+# KEEP the preset's own MC_EXECUTOR (an llm preset like ollama/gemini must stay on
+# the llm executor — `auto` falls back to SHELL for a keyless local brain such as
+# Ollama). The 'shell' preset ships no file, so we set its executor explicitly.
 _tmp="$(mktemp)"
-grep -vE '^(MC_BASE_URL|MC_AGENT_TOKEN|MC_WORKDIR|MC_ALLOW_SHELL|MC_EXECUTOR)=' "$ENV_FILE" > "$_tmp" 2>/dev/null || true
+grep -vE '^(MC_BASE_URL|MC_AGENT_TOKEN|MC_WORKDIR|MC_ALLOW_SHELL)=' "$ENV_FILE" > "$_tmp" 2>/dev/null || true
 mv "$_tmp" "$ENV_FILE"
 {
   echo "MC_BASE_URL=$MC_BASE_URL"
   echo "MC_AGENT_TOKEN=$MC_AGENT_TOKEN"
   echo "MC_WORKDIR=$MC_WORKDIR"
   echo "MC_ALLOW_SHELL=$ALLOW_SHELL"
-  # 'shell' preset -> force shell executor; otherwise leave preset/auto in place
+  # 'shell' preset -> force shell executor; llm presets keep their own MC_EXECUTOR=llm
   [ "$PRESET" = "shell" ] && echo "MC_EXECUTOR=shell"
 } >> "$ENV_FILE"
 chmod 600 "$ENV_FILE"

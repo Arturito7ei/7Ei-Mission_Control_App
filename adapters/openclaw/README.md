@@ -65,7 +65,9 @@ Keep it alive with launchd: edit + install `com.7ei.mc-adapter.plist` to
   loop**: the model may emit one ```` ```bash ```` block, the adapter executes it
   (when `MC_ALLOW_SHELL=1`), feeds the `OBSERVATION:` back, and loops up to
   `MC_MAX_STEPS` until the model returns a final answer. Configure with
-  `MC_LLM_BASE_URL`, `MC_LLM_API_KEY`, `MC_LLM_MODEL`.
+  `MC_LLM_BASE_URL`, `MC_LLM_API_KEY`, `MC_LLM_MODEL`. For a **local Ollama** brain
+  set `MC_LLM_BASE_URL=http://localhost:11434/v1` and leave `MC_LLM_API_KEY` empty
+  (local hosts need no key) — see [`../presets/ollama.env`](../presets/ollama.env).
 - **`auto`** (default) — `llm` when `MC_LLM_API_KEY` is set, else `shell`.
 
 So the agent gets real reasoning + the host's tools, not just raw shell.

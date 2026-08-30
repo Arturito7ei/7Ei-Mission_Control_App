@@ -23,7 +23,7 @@ MC_AGENT_TOKEN=mca_xxx ./setup.sh --preset nvidia-minimax --yes
 
 | flag | effect |
 |------|--------|
-| `--preset <name>` | `codex` \| `gemini` \| `nvidia-minimax` \| `shell` \| `http` (default `shell`) |
+| `--preset <name>` | `codex` \| `gemini` \| `nvidia-minimax` \| `ollama` \| `shell` \| `http` (default `shell`) |
 | `--no-shell` | force `MC_ALLOW_SHELL=0` (adapter won't run shell commands) |
 | `--yes` | non-interactive; loads launchd at the end |
 | `--no-launchd` | install + smoke test only |
